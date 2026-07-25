@@ -22,6 +22,7 @@ AI_VENDORS = [
     {"name": "Notion AI", "patterns": ["notion"], "appIds": []},
     {"name": "Jasper", "patterns": ["jasper.ai", "jasper ai"], "appIds": []},
     {"name": "Writer", "patterns": ["writer.com"], "appIds": []},
+    {"name": "Skywork AI", "patterns": ["skywork"], "appIds": []},
     {"name": "Otter.ai", "patterns": ["otter.ai"], "appIds": []},
     {"name": "Fireflies", "patterns": ["fireflies"], "appIds": []},
     {"name": "ElevenLabs", "patterns": ["elevenlabs"], "appIds": []},

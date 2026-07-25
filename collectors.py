@@ -50,14 +50,16 @@ def collect_service_principals(graph, home_tenant: str) -> list[dict]:
         vendor, confidence = _match_vendor(sp)
         if not vendor:
             continue
+        owner = sp.get("appOwnerOrganizationId")
         out.append({
             "sp_id": sp["id"],
             "app_id": sp.get("appId"),
             "display_name": sp.get("displayName"),
             "publisher": sp.get("publisherName") or "—",
             "verified_publisher": bool(sp.get("verifiedPublisher")),
-            "owner_tenant": sp.get("appOwnerOrganizationId"),
+            "owner_tenant": owner,
             "third_party": _is_third_party(sp, home_tenant),
+            "first_party_microsoft": owner in MICROSOFT_OWNER_TENANTS,
             "vendor": vendor,
             "confidence": confidence,
             "scopes": [],           # sonra doldurulur
