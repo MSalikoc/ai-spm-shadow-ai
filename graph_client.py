@@ -10,8 +10,9 @@ class GraphClient:
         self._headers = {"Authorization": f"Bearer {token}",
                          "ConsistencyLevel": "eventual"}
 
-    def get_all(self, path: str, params: dict | None = None) -> list[dict]:
-        """@odata.nextLink'i takip ederek tüm sayfaları toplar."""
+    def get_all(self, path: str, params: dict | None = None,
+                max_items: int | None = None) -> list[dict]:
+        """@odata.nextLink'i takip ederek sayfaları toplar. max_items ile üst sınır."""
         url = path if path.startswith("http") else f"{GRAPH_BASE}{path}"
         items: list[dict] = []
         first = True
@@ -27,6 +28,8 @@ class GraphClient:
                 raise RuntimeError(f"Graph {resp.status_code} @ {url}: {resp.text[:400]}")
             body = resp.json()
             items.extend(body.get("value", []))
+            if max_items is not None and len(items) >= max_items:
+                return items[:max_items]
             url = body.get("@odata.nextLink")
         return items
 

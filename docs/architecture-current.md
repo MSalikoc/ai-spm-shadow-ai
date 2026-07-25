@@ -27,7 +27,7 @@ Python 3.11), authenticates with a system-assigned Managed Identity, and is **re
 | --- | --- |
 | `function_app.py` | Azure Functions app: triggers + HTTP endpoints. Entry point. |
 | `pipeline.py` | Shared scan flow: `run()` (discover → enrich → score) and `summary()`. |
-| `collectors.py` | Graph queries: service principals, delegated OAuth grants, **and application (app-only) permissions** (`appRoleAssignments`, GUID→name resolution incl. custom APIs); tags `third_party`, `first_party_microsoft`, `has_app_only_access`. |
+| `collectors.py` | Graph queries: service principals, delegated OAuth grants, application (app-only) permissions (`appRoleAssignments`, GUID→name), **and real sign-in activity** (`auditLogs/signIns`, delegated vs service-principal, 7/30/90d usage; P1-gated, degrades gracefully). Tags `third_party`, `first_party_microsoft`, `has_app_only_access`, per-app `usage`. |
 | `scoring.py` | Transparent 0–100 risk score, level, reasons, remediation. |
 | `config.py` | AI vendor catalog + sensitive-scope weights + Microsoft owner tenants. Single tuning point. |
 | `report.py` | Dashboard HTML (light/dark) + JSON rendering. |

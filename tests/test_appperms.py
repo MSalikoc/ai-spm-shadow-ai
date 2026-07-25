@@ -97,6 +97,6 @@ def test_report_renders_app_only_cards_and_filter():
                                           "resource": "Microsoft Graph", "permission_id": "g"}]}]
     doc = report.html_string(apps, "t")
     assert "App-only erişim (kullanıcısız)" in doc      # kart
-    assert 'data-filter="apponly"' in doc               # filtre butonu
+    assert 'data-group="perm" data-value="apponly"' in doc  # filtre butonu
     assert "Directory.ReadWrite.All" in doc             # app perm bulguda
     assert 'data-perm="apponly"' in doc                 # satır etiketi

@@ -6,6 +6,19 @@ All notable changes to AI-SPM are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **Real usage / sign-in activity** from Graph `auditLogs/signIns` (uses the already-granted
+  `AuditLog.Read.All`; requires Entra ID P1):
+  - `collectors.enrich_with_signin_activity()` separates delegated user sign-ins from
+    service-principal (app-only) sign-ins; per-app `usage` with active users 7/30/90d,
+    last delegated/SP sign-in, successful/failed sign-ins (30d), unique users/IPs/countries,
+    `last_used_date`, `never_used`, `inactive_30d/90d`, `growth_7d`, `daily_active_30d`.
+  - Distinguishes **consent count vs actual active users**; flags unused/inactive apps.
+  - Dashboard: usage cards (active usage, inactive apps, app-only active, growing), an
+    active-user **trend sparkline**, most-used and fastest-growing bars, per-finding usage
+    block + usage chip, and a **usage filter** (active / inactive / unused).
+  - **Graceful degradation** (criterion 10): if sign-in logs are unavailable (no P1 / 403),
+    `usage` is `None` and the assessment continues; dashboard shows a P1 notice.
+  - `graph_client.get_all()` gained `max_items` to bound sign-in paging. `tests/test_activity.py`.
 - **Application (app-only) permission discovery** alongside delegated OAuth consent:
   - `collectors.enrich_with_app_role_assignments()` reads
     `/servicePrincipals/{id}/appRoleAssignments`; resolves each `appRoleId` GUID to a

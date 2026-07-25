@@ -6,7 +6,10 @@ Ana fikir:
   2) Microsoft/first-party olmayanları (3. parti) ayıkla.
   3) Bunlardan AI vendor'a benzeyenleri işaretle.
   4) Her SP için verilmiş delegated OAuth consent'lerini (scope'lar) eşle.
+  5) Application (app-only) permission'ları ve gerçek sign-in aktivitesini ekle.
 """
+from datetime import datetime, timedelta, timezone
+
 from config import AI_VENDORS, GENERIC_AI_HINTS, MICROSOFT_OWNER_TENANTS
 
 
@@ -162,3 +165,123 @@ def enrich_with_app_role_assignments(graph, discovered: list[dict]) -> None:
             })
         app["application_permissions"] = perms
         app["has_app_only_access"] = bool(perms)
+
+
+# --- Gerçek kullanım / sign-in aktivitesi -----------------------------------
+def _parse_dt(s):
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+
+
+def _app_usage(graph, app, now, iso90):
+    """Bir app için sign-in loglarından kullanım metriklerini üretir."""
+    app_id = app.get("app_id")
+    if not app_id:
+        return None
+    date_flt = f"createdDateTime ge {iso90}"
+    try:
+        user_si = graph.get_all("/auditLogs/signIns",
+                                {"$filter": f"appId eq '{app_id}' and {date_flt}",
+                                 "$top": "999"}, max_items=5000)
+    except Exception:
+        user_si = []
+    try:
+        sp_si = graph.get_all(
+            "/auditLogs/signIns",
+            {"$filter": f"appId eq '{app_id}' and signInEventTypes/any(t:t eq 'servicePrincipal') and {date_flt}",
+             "$top": "999"}, max_items=5000)
+    except Exception:
+        sp_si = []
+
+    w7, w30, w90 = now - timedelta(days=7), now - timedelta(days=30), now - timedelta(days=90)
+    prev7_lo, prev7_hi = now - timedelta(days=14), now - timedelta(days=7)
+    u7, u30, u90, uprev7 = set(), set(), set(), set()
+    users_all, ips, countries = set(), set(), set()
+    ok30 = fail30 = 0
+    last_deleg = None
+    daily = {}  # gün-index(0..29) → set(user)
+
+    for s in user_si:
+        dt = _parse_dt(s.get("createdDateTime"))
+        if not dt:
+            continue
+        uid = s.get("userId") or s.get("userPrincipalName") or ""
+        last_deleg = dt if last_deleg is None or dt > last_deleg else last_deleg
+        if uid:
+            users_all.add(uid)
+            if dt >= w7:
+                u7.add(uid)
+            if dt >= w30:
+                u30.add(uid)
+            if dt >= w90:
+                u90.add(uid)
+            if prev7_lo <= dt < prev7_hi:
+                uprev7.add(uid)
+            didx = (now.date() - dt.date()).days
+            if 0 <= didx < 30:
+                daily.setdefault(29 - didx, set()).add(uid)
+        if s.get("ipAddress"):
+            ips.add(s["ipAddress"])
+        country = (s.get("location") or {}).get("countryOrRegion")
+        if country:
+            countries.add(country)
+        if dt >= w30:
+            if (s.get("status") or {}).get("errorCode", 0) == 0:
+                ok30 += 1
+            else:
+                fail30 += 1
+
+    last_sp = None
+    for s in sp_si:
+        dt = _parse_dt(s.get("createdDateTime"))
+        if dt and (last_sp is None or dt > last_sp):
+            last_sp = dt
+
+    last_used = max([d for d in (last_deleg, last_sp) if d], default=None)
+    daily_active = [len(daily.get(i, set())) for i in range(30)]
+
+    return {
+        "available": True,
+        "consent_user_count": app.get("user_count", 0),
+        "active_users_7d": len(u7),
+        "active_users_30d": len(u30),
+        "active_users_90d": len(u90),
+        "last_delegated_signin": last_deleg.isoformat() if last_deleg else None,
+        "last_service_principal_signin": last_sp.isoformat() if last_sp else None,
+        "successful_signins_30d": ok30,
+        "failed_signins_30d": fail30,
+        "unique_user_count": len(users_all),
+        "unique_ip_count": len(ips),
+        "country_count": len(countries),
+        "last_used_date": last_used.isoformat() if last_used else None,
+        "never_used": last_used is None,
+        "inactive_30d": last_used is None or last_used < w30,
+        "inactive_90d": last_used is None or last_used < w90,
+        "growth_7d": len(u7) - len(uprev7),
+        "daily_active_30d": daily_active,
+    }
+
+
+def enrich_with_signin_activity(graph, discovered, now=None):
+    """
+    Sign-in loglarından (Entra ID P1 gerekir) gerçek kullanım metriklerini ekler.
+    Kriter 10: activity çalışmazsa (P1 yok / 403) her app usage=None olur ve
+    assessment kesintisiz devam eder.
+    """
+    now = now or datetime.now(timezone.utc)
+    iso90 = (now - timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:  # önce erişilebilirlik probu
+        graph.get_all("/auditLogs/signIns", {"$top": "1"}, max_items=1)
+    except Exception:
+        for app in discovered:
+            app["usage"] = None
+        return
+    for app in discovered:
+        try:
+            app["usage"] = _app_usage(graph, app, now, iso90)
+        except Exception:
+            app["usage"] = None

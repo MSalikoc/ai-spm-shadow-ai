@@ -91,6 +91,73 @@ _PERM_CHIP = {"both": ("delegated + app-only", "#7c3aed"),
               "delegated": ("delegated", "#0f6cbd"),
               "none": ("izin yok", "#6b7280")}
 
+_USAGE_CHIP = {"active": ("aktif", "#2e8b57"), "inactive": ("30g+ pasif", "#b45309"),
+               "unused": ("hiç kullanılmamış", "#c0392b"), "unknown": ("aktivite yok", "#6b7280")}
+
+
+def _usage_type(app):
+    u = app.get("usage")
+    if not u or not u.get("available"):
+        return "unknown"
+    if u.get("never_used"):
+        return "unused"
+    if u.get("inactive_30d"):
+        return "inactive"
+    return "active"
+
+
+def _days_ago(iso):
+    dt = None
+    try:
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00")) if iso else None
+    except (ValueError, AttributeError):
+        dt = None
+    if not dt:
+        return None
+    return (datetime.now(timezone.utc) - dt).days
+
+
+def _trend_svg(values, width=680, height=84):
+    if not values or max(values) == 0:
+        return '<div class="empty">Aktivite verisi yok (Entra ID P1 gerekir)</div>'
+    n = len(values)
+    maxv = max(values) or 1
+    dx = width / (n - 1) if n > 1 else width
+    pts = [(i * dx, height - (v / maxv) * (height - 16) - 8) for i, v in enumerate(values)]
+    line = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
+    area = f"0,{height} {line} {width},{height}"
+    lx, ly = pts[-1]
+    return (f'<svg viewBox="0 0 {width} {height}" width="100%" height="{height}" '
+            f'preserveAspectRatio="none" class="trend" role="img">'
+            f'<polygon points="{area}" fill="var(--accent)" opacity="0.12"/>'
+            f'<polyline points="{line}" fill="none" stroke="var(--accent)" stroke-width="2"/>'
+            f'<circle cx="{lx:.1f}" cy="{ly:.1f}" r="3.5" fill="var(--accent)"/></svg>')
+
+
+def _usage_block(app):
+    u = app.get("usage")
+    if not u or not u.get("available"):
+        return '<h4>Kullanım</h4><p class="f-pub">Aktivite verisi yok (Entra ID P1)</p>'
+    if u.get("never_used"):
+        last = "hiç kullanılmamış"
+    else:
+        d = _days_ago(u.get("last_used_date"))
+        last = f"{d} gün önce" if d is not None else "—"
+    sp = ""
+    if app.get("has_app_only_access") and u.get("last_service_principal_signin"):
+        dsp = _days_ago(u["last_service_principal_signin"])
+        sp = f'<li>Son SP (app-only) sign-in: {dsp} gün önce</li>' if dsp is not None else ""
+    return (
+        '<h4>Kullanım</h4><ul>'
+        f'<li>Son kullanım: <b>{html.escape(last)}</b></li>'
+        f'<li>Aktif kullanıcı: {u.get("active_users_7d",0)} (7g) · '
+        f'{u.get("active_users_30d",0)} (30g) · {u.get("active_users_90d",0)} (90g)</li>'
+        f'<li>Consent: {u.get("consent_user_count",0)} kullanıcı</li>'
+        f'<li>Sign-in (30g): {u.get("successful_signins_30d",0)} başarılı / '
+        f'{u.get("failed_signins_30d",0)} başarısız</li>'
+        f'<li>{u.get("unique_ip_count",0)} IP · {u.get("country_count",0)} ülke</li>'
+        f'{sp}</ul>')
+
 
 def _finding_row(app):
     color = LEVEL_COLORS.get(app["risk_level"], "#555")
@@ -102,6 +169,8 @@ def _finding_row(app):
     ver = "✓ doğrulanmış" if app.get("verified_publisher") else "⚠ doğrulanmamış"
     ptype = _perm_type(app)
     chip_label, chip_color = _PERM_CHIP[ptype]
+    utype = _usage_type(app)
+    u_label, u_color = _USAGE_CHIP[utype]
 
     app_perms = app.get("application_permissions", [])
     if app_perms:
@@ -114,18 +183,20 @@ def _finding_row(app):
         app_block = ""
 
     return (
-        f'<details class="finding" data-perm="{ptype}">'
+        f'<details class="finding" data-perm="{ptype}" data-usage="{utype}">'
         f'<summary>'
         f'<span class="pill" style="background:{color}">{app["risk_score"]}</span>'
         f'<span class="f-name">{html.escape(app.get("display_name") or "—")}'
         f'<span class="f-vendor">{html.escape(app.get("vendor",""))}</span></span>'
         f'<span class="ptype" style="background:{chip_color}">{chip_label}</span>'
+        f'<span class="ptype" style="background:{u_color}">{u_label}</span>'
         f'<span class="f-meta">{tag} · {html.escape(consent)} · {app.get("user_count",0)} kullanıcı</span>'
         f'<span class="f-level" style="color:{color}">{html.escape(app["risk_level"])}</span>'
         f'</summary>'
         f'<div class="f-body">'
         f'<div class="f-col"><h4>Delegated izinler</h4><code>{scopes}</code>'
         f'{app_block}<p class="f-pub">{ver}</p></div>'
+        f'<div class="f-col">{_usage_block(app)}</div>'
         f'<div class="f-col"><h4>Neden riskli</h4><ul>{reasons}</ul></div>'
         f'<div class="f-col"><h4>Öneri</h4><ul>{remed}</ul></div>'
         f'</div></details>')
@@ -194,8 +265,9 @@ main{max-width:1120px;margin:0 auto;padding:22px}
 .f-vendor{display:block;font-size:12px;color:var(--muted);font-weight:400}
 .f-meta{font-size:12px;color:var(--muted);text-align:right}
 .f-level{font-weight:600;min-width:56px;text-align:right}
-.f-body{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px;padding:4px 16px 16px;
- border-top:1px solid var(--line)}
+.f-body{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:18px;
+ padding:4px 16px 16px;border-top:1px solid var(--line)}
+.trend{display:block}
 .f-body h4{margin:12px 0 6px;font-size:12px;color:var(--muted);text-transform:uppercase}
 .f-body ul{margin:0;padding-left:16px}.f-body li{margin:3px 0}
 .f-body code{font-size:12px;word-break:break-word;color:var(--ink)}
@@ -220,13 +292,16 @@ THEME_JS = """
 b.onclick=function(){var r=document.documentElement;
 var d=(r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'))==='dark';
 r.setAttribute('data-theme',d?'light':'dark');b.textContent=d?'\\u263C':'\\u263E';};
-var fb=document.querySelectorAll('.filters button');
-fb.forEach(function(btn){btn.onclick=function(){
- fb.forEach(function(x){x.classList.remove('active')});btn.classList.add('active');
- var f=btn.getAttribute('data-filter');
+var state={perm:'all',usage:'all'};
+document.querySelectorAll('.filters button').forEach(function(btn){btn.onclick=function(){
+ var g=btn.getAttribute('data-group'),v=btn.getAttribute('data-value');state[g]=v;
+ btn.parentNode.querySelectorAll('button').forEach(function(x){x.classList.remove('active')});
+ btn.classList.add('active');
  document.querySelectorAll('.finding').forEach(function(el){
-  el.style.display=(f==='all'||el.getAttribute('data-perm')===f
-   ||(f==='apponly'&&el.getAttribute('data-perm')==='both'))?'':'none';});};});
+  var dp=el.getAttribute('data-perm'),du=el.getAttribute('data-usage');
+  var pm=(state.perm==='all')||dp===state.perm||(state.perm==='apponly'&&dp==='both');
+  var um=(state.usage==='all')||du===state.usage;
+  el.style.display=(pm&&um)?'':'none';});};});
 })();
 """
 
@@ -272,6 +347,57 @@ def html_string(apps: list[dict], tenant_id: str) -> str:
         1 for a in shadow
         if any(_scope_weight(p["permission"].lower()) >= 8
                for p in a.get("application_permissions", [])))
+
+    # Kullanım / aktivite (Entra ID P1 — yoksa graceful)
+    activity_available = any((a.get("usage") or {}).get("available") for a in shadow)
+    active_users_30d = sum((a.get("usage") or {}).get("active_users_30d", 0) for a in shadow)
+    inactive_apps = sum(1 for a in shadow if (a.get("usage") or {}).get("inactive_30d"))
+    apponly_active = sum(
+        1 for a in shadow if a.get("has_app_only_access")
+        and (a.get("usage") or {}).get("last_service_principal_signin")
+        and not (a.get("usage") or {}).get("inactive_30d"))
+    # aggregate günlük aktif kullanıcı trendi (30g)
+    trend = [0] * 30
+    for a in shadow:
+        d = (a.get("usage") or {}).get("daily_active_30d") or []
+        for i, v in enumerate(d[:30]):
+            trend[i] += v
+    most_used = sorted(shadow, key=lambda a: (a.get("usage") or {}).get("active_users_30d", 0),
+                       reverse=True)
+    most_used = [a for a in most_used if (a.get("usage") or {}).get("active_users_30d", 0) > 0][:6]
+    growing = sorted(shadow, key=lambda a: (a.get("usage") or {}).get("growth_7d", 0),
+                     reverse=True)
+    growing = [a for a in growing if (a.get("usage") or {}).get("growth_7d", 0) > 0][:6]
+    most_used_bars = _bars([(a.get("display_name") or "—", a.get("vendor", ""),
+                             (a.get("usage") or {}).get("active_users_30d", 0), "#2e8b57")
+                            for a in most_used], max(((a.get("usage") or {}).get("active_users_30d", 0)
+                                                      for a in most_used), default=1))
+    growing_bars = _bars([(a.get("display_name") or "—", "son 7g artış",
+                           (a.get("usage") or {}).get("growth_7d", 0), "#7c3aed")
+                          for a in growing], max(((a.get("usage") or {}).get("growth_7d", 0)
+                                                  for a in growing), default=1))
+
+    if activity_available:
+        usage_section = f"""
+  <h3 style="margin:22px 4px 10px;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)">Kullanım & Aktivite (gerçek sign-in)</h3>
+  <div class="grid cols-4">
+    <div class="card kpi"><span class="n">{active_users_30d}</span><span class="l">Aktif AI kullanımı (30g)</span></div>
+    <div class="card kpi crit"><span class="n">{inactive_apps}</span><span class="l">Kullanılmayan uygulama (30g+)</span></div>
+    <div class="card kpi"><span class="n">{apponly_active}</span><span class="l">App-only aktif uygulama</span></div>
+    <div class="card kpi"><span class="n">{len(growing)}</span><span class="l">Yükselen uygulama</span></div>
+  </div>
+  <div class="grid cols-2" style="margin-top:16px">
+    <div class="card"><h3>Aktif kullanıcı trendi (son 30 gün)</h3>{_trend_svg(trend)}</div>
+    <div class="card"><h3>En çok kullanılan uygulamalar</h3>{most_used_bars}</div>
+  </div>
+  <div class="card" style="margin-top:16px"><h3>En hızlı büyüyen uygulamalar (7g)</h3>{growing_bars}</div>
+"""
+    else:
+        usage_section = ('<div class="card" style="margin-top:16px">'
+                         '<h3>Kullanım & Aktivite</h3>'
+                         '<p class="governed">Sign-in aktivitesi alınamadı — gerçek kullanım '
+                         'metrikleri için <b>Entra ID P1/P2</b> lisansı gerekir. '
+                         'Assessment kesintisiz devam ediyor; consent/permission bulguları geçerli.</p></div>')
 
     findings_html = "".join(_finding_row(a) for a in shadow) or \
         '<div class="empty">Shadow AI bulgusu yok.</div>'
@@ -340,14 +466,20 @@ def html_string(apps: list[dict], tenant_id: str) -> str:
     <div class="card kpi"><span class="n">{both_n}</span><span class="l">Her iki erişim tipi</span></div>
     <div class="card kpi crit"><span class="n">{highpriv_apponly}</span><span class="l">Yüksek ayrıcalıklı app-only</span></div>
   </div>
-
+  {usage_section}
   <div class="card" style="margin-top:16px">
     <h3>Bulgular ({len(shadow)})</h3>
     <div class="filters">
-      <button data-filter="all" class="active">Tümü</button>
-      <button data-filter="delegated">Delegated</button>
-      <button data-filter="apponly">App-only</button>
-      <button data-filter="both">Her ikisi</button>
+      <button data-group="perm" data-value="all" class="active">İzin: Tümü</button>
+      <button data-group="perm" data-value="delegated">Delegated</button>
+      <button data-group="perm" data-value="apponly">App-only</button>
+      <button data-group="perm" data-value="both">Her ikisi</button>
+    </div>
+    <div class="filters">
+      <button data-group="usage" data-value="all" class="active">Kullanım: Tümü</button>
+      <button data-group="usage" data-value="active">Aktif</button>
+      <button data-group="usage" data-value="inactive">Pasif (30g+)</button>
+      <button data-group="usage" data-value="unused">Hiç kullanılmamış</button>
     </div>
     <div class="findings">{findings_html}</div>
   </div>
