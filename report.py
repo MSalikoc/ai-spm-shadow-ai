@@ -74,6 +74,24 @@ def _bars(rows, maxv):
     return "".join(out) or '<div class="empty">Veri yok</div>'
 
 
+def _perm_type(app):
+    delegated = bool(app.get("delegated_permissions") or app.get("scopes"))
+    apponly = bool(app.get("has_app_only_access"))
+    if delegated and apponly:
+        return "both"
+    if apponly:
+        return "apponly"
+    if delegated:
+        return "delegated"
+    return "none"
+
+
+_PERM_CHIP = {"both": ("delegated + app-only", "#7c3aed"),
+              "apponly": ("app-only", "#b45309"),
+              "delegated": ("delegated", "#0f6cbd"),
+              "none": ("izin yok", "#6b7280")}
+
+
 def _finding_row(app):
     color = LEVEL_COLORS.get(app["risk_level"], "#555")
     scopes = ", ".join(html.escape(s) for s in app.get("scopes", [])) or "—"
@@ -82,18 +100,32 @@ def _finding_row(app):
     consent = app.get("consent_type") or "consent yok"
     tag = "3. parti" if app.get("third_party") else "iç/first-party"
     ver = "✓ doğrulanmış" if app.get("verified_publisher") else "⚠ doğrulanmamış"
+    ptype = _perm_type(app)
+    chip_label, chip_color = _PERM_CHIP[ptype]
+
+    app_perms = app.get("application_permissions", [])
+    if app_perms:
+        rows = "".join(
+            f'<li><b>{html.escape(p.get("permission",""))}</b> '
+            f'<span class="res">({html.escape(p.get("resource",""))})</span></li>'
+            for p in app_perms)
+        app_block = (f'<h4>App-only izinler (kullanıcısız)</h4><ul class="apperms">{rows}</ul>')
+    else:
+        app_block = ""
+
     return (
-        f'<details class="finding">'
+        f'<details class="finding" data-perm="{ptype}">'
         f'<summary>'
         f'<span class="pill" style="background:{color}">{app["risk_score"]}</span>'
         f'<span class="f-name">{html.escape(app.get("display_name") or "—")}'
         f'<span class="f-vendor">{html.escape(app.get("vendor",""))}</span></span>'
+        f'<span class="ptype" style="background:{chip_color}">{chip_label}</span>'
         f'<span class="f-meta">{tag} · {html.escape(consent)} · {app.get("user_count",0)} kullanıcı</span>'
         f'<span class="f-level" style="color:{color}">{html.escape(app["risk_level"])}</span>'
         f'</summary>'
         f'<div class="f-body">'
-        f'<div class="f-col"><h4>Verilen izinler</h4><code>{scopes}</code>'
-        f'<p class="f-pub">{ver}</p></div>'
+        f'<div class="f-col"><h4>Delegated izinler</h4><code>{scopes}</code>'
+        f'{app_block}<p class="f-pub">{ver}</p></div>'
         f'<div class="f-col"><h4>Neden riskli</h4><ul>{reasons}</ul></div>'
         f'<div class="f-col"><h4>Öneri</h4><ul>{remed}</ul></div>'
         f'</div></details>')
@@ -171,17 +203,31 @@ main{max-width:1120px;margin:0 auto;padding:22px}
 .governed{font-size:13px;color:var(--muted)}
 .governed summary{cursor:pointer;font-weight:600;color:var(--ink)}
 .governed ul{columns:2;margin:10px 0 0;padding-left:18px}
+.ptype{color:#fff;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;white-space:nowrap}
+.apperms{margin:4px 0 0}.apperms b{font-weight:600}.apperms .res{color:var(--muted);font-size:12px}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 14px}
+.filters button{cursor:pointer;border:1px solid var(--line);background:transparent;color:var(--ink);
+ border-radius:999px;padding:5px 14px;font-size:13px}
+.filters button.active{background:var(--accent);color:#fff;border-color:var(--accent)}
 .foot{color:var(--muted);font-size:12px;text-align:center;padding:18px}
 @media(max-width:820px){.cols-4,.cols-2{grid-template-columns:1fr}
  .f-body{grid-template-columns:1fr}.bar-label{width:130px}
- .f-meta{display:none}}
+ .f-meta,.ptype{display:none}}
 """
 
 THEME_JS = """
 (function(){var b=document.getElementById('tg');
 b.onclick=function(){var r=document.documentElement;
 var d=(r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'))==='dark';
-r.setAttribute('data-theme',d?'light':'dark');b.textContent=d?'\\u263C':'\\u263E';};})();
+r.setAttribute('data-theme',d?'light':'dark');b.textContent=d?'\\u263C':'\\u263E';};
+var fb=document.querySelectorAll('.filters button');
+fb.forEach(function(btn){btn.onclick=function(){
+ fb.forEach(function(x){x.classList.remove('active')});btn.classList.add('active');
+ var f=btn.getAttribute('data-filter');
+ document.querySelectorAll('.finding').forEach(function(el){
+  el.style.display=(f==='all'||el.getAttribute('data-perm')===f
+   ||(f==='apponly'&&el.getAttribute('data-perm')==='both'))?'':'none';});};});
+})();
 """
 
 
@@ -216,6 +262,16 @@ def html_string(apps: list[dict], tenant_id: str) -> str:
     admin = sum(1 for a in shadow if a.get("consent_type") == "AllPrincipals")
     persist = sum(1 for a in shadow if "offline_access" in a.get("scopes", []))
     unverified = sum(1 for a in shadow if not a.get("verified_publisher"))
+
+    # Permission-type dağılımı (delegated / app-only / both)
+    delegated_n = sum(1 for a in shadow if a.get("delegated_permissions") or a.get("scopes"))
+    apponly_n = sum(1 for a in shadow if a.get("has_app_only_access"))
+    both_n = sum(1 for a in shadow
+                 if (a.get("delegated_permissions") or a.get("scopes")) and a.get("has_app_only_access"))
+    highpriv_apponly = sum(
+        1 for a in shadow
+        if any(_scope_weight(p["permission"].lower()) >= 8
+               for p in a.get("application_permissions", [])))
 
     findings_html = "".join(_finding_row(a) for a in shadow) or \
         '<div class="empty">Shadow AI bulgusu yok.</div>'
@@ -277,8 +333,22 @@ def html_string(apps: list[dict], tenant_id: str) -> str:
     <div class="card kpi"><span class="n">{unverified}</span><span class="l">Doğrulanmamış publisher</span></div>
   </div>
 
+  <h3 style="margin:22px 4px 10px;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)">Erişim tipi</h3>
+  <div class="grid cols-4">
+    <div class="card kpi"><span class="n">{delegated_n}</span><span class="l">Delegated erişim</span></div>
+    <div class="card kpi high"><span class="n">{apponly_n}</span><span class="l">App-only erişim (kullanıcısız)</span></div>
+    <div class="card kpi"><span class="n">{both_n}</span><span class="l">Her iki erişim tipi</span></div>
+    <div class="card kpi crit"><span class="n">{highpriv_apponly}</span><span class="l">Yüksek ayrıcalıklı app-only</span></div>
+  </div>
+
   <div class="card" style="margin-top:16px">
     <h3>Bulgular ({len(shadow)})</h3>
+    <div class="filters">
+      <button data-filter="all" class="active">Tümü</button>
+      <button data-filter="delegated">Delegated</button>
+      <button data-filter="apponly">App-only</button>
+      <button data-filter="both">Her ikisi</button>
+    </div>
     <div class="findings">{findings_html}</div>
   </div>
   {ms_section}

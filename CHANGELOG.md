@@ -6,6 +6,19 @@ All notable changes to AI-SPM are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **Application (app-only) permission discovery** alongside delegated OAuth consent:
+  - `collectors.enrich_with_app_role_assignments()` reads
+    `/servicePrincipals/{id}/appRoleAssignments`; resolves each `appRoleId` GUID to a
+    readable permission name via the resource SP's `appRoles` (falls back to the GUID if
+    unresolvable — never lost). Supports custom (non-Graph) enterprise APIs.
+  - New fields: `delegated_permissions` (`[{resource, permission, consent_type}]`),
+    `application_permissions` (`[{resource, permission, permission_id}]`),
+    `has_app_only_access`. Existing `scopes`/`consent_type`/`user_count` unchanged.
+  - Scoring now factors app-only permissions (higher weight: no user, tenant-wide) —
+    closes the blind spot where app-only apps scored 0.
+  - Dashboard: access-type cards (delegated / app-only / both / high-privilege app-only),
+    a permission-type filter, and per-finding app-only permission list + type chip.
+  - `tests/test_appperms.py`.
 - Minimal test infrastructure: `tests/test_smoke.py` (module-import smoke tests +
   scoring/report/notify behavior), `pyproject.toml` (pytest config).
 - `.github/workflows/ci.yml` — CI on pull requests (compileall + import smoke + pytest).

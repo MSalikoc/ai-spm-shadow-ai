@@ -57,7 +57,19 @@ def score_app(app: dict) -> dict:
         score += 6
         reasons.append("offline_access: kalıcı erişim (refresh token) — iptal edilmedikçe sürer")
 
-    # 5) Düşük güvenli tespit için not
+    # 5) Application (app-only) permission'lar — kullanıcı gerektirmez, 7/24, tenant-geneli.
+    #    Delegated'dan daha tehlikeli olabilir; bu yüzden ağırlığı yüksek.
+    app_perms = app.get("application_permissions", [])
+    if app_perms:
+        ap_weighted = sorted((_scope_weight(p["permission"].lower()) for p in app_perms),
+                             reverse=True)
+        score += min(sum(ap_weighted[:4]) * 4, 45)
+        hot_ap = [p["permission"] for p in app_perms
+                  if _scope_weight(p["permission"].lower()) >= 6][:3]
+        note = f": {', '.join(hot_ap)}" if hot_ap else ""
+        reasons.append(f"App-only erişim (kullanıcı gerekmez, tüm tenant){note}")
+
+    # 6) Düşük güvenli tespit için not
     if app["confidence"] == "low":
         reasons.append("AI olduğu jenerik eşleşmeyle tahmin edildi — manuel doğrula")
 
@@ -78,6 +90,8 @@ def _remediation(app: dict) -> list[str]:
         steps.append("Doğrulanmamış publisher: kullanımı onayla veya engelle (app consent policy)")
     if any(_scope_weight(s) >= 9 for s in app["scopes"]):
         steps.append("Yüksek izinli scope'ları revoke et; least-privilege alternatifini değerlendir")
+    if any(_scope_weight(p["permission"].lower()) >= 8 for p in app.get("application_permissions", [])):
+        steps.append("App-only application permission'ları gözden geçir — kullanıcısız, tenant-geneli erişim")
     steps.append("Gerekmiyorsa: Enterprise app'i sil veya kullanıcı atamalarını kaldır")
     steps.append("User consent'i kısıtla: yalnızca doğrulanmış publisher + düşük riskli izinler")
     return steps

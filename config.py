@@ -52,6 +52,10 @@ SENSITIVE_SCOPES = {
     "contacts.read": 5,
     "user.read.all": 7, "directory.read.all": 8, "group.read.all": 6,
     "mailboxsettings.readwrite": 6,
+    # Yüksek-ayrıcalıklı application (app-only) permission'lar
+    "directory.readwrite.all": 10, "application.readwrite.all": 10,
+    "rolemanagement.readwrite.directory": 10, "group.readwrite.all": 8,
+    "user.readwrite.all": 9,
     "notes.read.all": 6,
     "offline_access": 4,  # kalıcı erişim (refresh token) → blast radius büyütür
     "openid": 0, "profile": 0, "email": 0, "user.read": 1,

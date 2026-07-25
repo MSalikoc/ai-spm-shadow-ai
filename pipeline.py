@@ -9,7 +9,8 @@ import scoring
 def run(graph, tenant_id: str) -> list[dict]:
     """Graph istemcisiyle tam taramayı çalıştırır, risk-sıralı bulguları döner."""
     discovered = collectors.collect_service_principals(graph, tenant_id)
-    collectors.enrich_with_oauth_grants(graph, discovered)
+    collectors.enrich_with_oauth_grants(graph, discovered)        # delegated
+    collectors.enrich_with_app_role_assignments(graph, discovered)  # application (app-only)
     return scoring.score_all(discovered)
 
 
@@ -21,6 +22,10 @@ def summary(scored: list[dict]) -> dict:
         "high": sum(1 for a in scored if a["risk_level"] == "Yüksek"),
         "medium": sum(1 for a in scored if a["risk_level"] == "Orta"),
         "low": sum(1 for a in scored if a["risk_level"] == "Düşük"),
+        "delegated_access": sum(1 for a in scored if a.get("delegated_permissions")),
+        "app_only_access": sum(1 for a in scored if a.get("has_app_only_access")),
+        "both_access": sum(1 for a in scored
+                           if a.get("delegated_permissions") and a.get("has_app_only_access")),
         "top": [
             {"name": a["display_name"], "vendor": a["vendor"],
              "score": a["risk_score"], "level": a["risk_level"]}

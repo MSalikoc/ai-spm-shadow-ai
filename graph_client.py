@@ -29,3 +29,16 @@ class GraphClient:
             items.extend(body.get("value", []))
             url = body.get("@odata.nextLink")
         return items
+
+    def get(self, path: str, params: dict | None = None) -> dict:
+        """Tekil obje GET (ör. bir servicePrincipal). Hata olursa {} döner."""
+        url = path if path.startswith("http") else f"{GRAPH_BASE}{path}"
+        for _ in range(4):
+            resp = requests.get(url, headers=self._headers, params=params, timeout=60)
+            if resp.status_code == 429:
+                time.sleep(int(resp.headers.get("Retry-After", "5")))
+                continue
+            if resp.status_code >= 400:
+                return {}
+            return resp.json()
+        return {}
