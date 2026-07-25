@@ -9,12 +9,15 @@ Gerekli app ayarları:
 MI'ın Graph 'Mail.Send' application iznine sahip olması gerekir. Güvenlik için
 Exchange Application Access Policy ile yalnızca AISPM_MAIL_SENDER kutusuna kısıtla.
 """
+import base64
 import html
 import os
+from datetime import datetime, timezone
 
 import requests
 
 import auth
+import report
 
 LEVEL_COLORS = {"Kritik": "#c0392b", "Yüksek": "#d35400", "Orta": "#b8860b", "Düşük": "#2e8b57"}
 
@@ -69,7 +72,11 @@ def _digest_html(scored, tenant_id, report_url):
   {button}
   <h3 style="margin:18px 0 8px;font-size:15px">Dikkat gerektiren uygulamalar</h3>
   <table style="border-collapse:collapse;width:100%">{rows}</table>
-  <p style="color:#8b98a6;font-size:12px;margin-top:22px">
+  <p style="background:#eef4fb;border-radius:8px;padding:12px 14px;margin:20px 0 0;
+     font:13px Segoe UI,sans-serif;color:#0f4c81">
+    📎 <b>Tam rapor ekte:</b> <code>shadow-ai-report.html</code> — tarayıcıda açarak
+    tüm bulguları, gerekçeleri ve öneri adımlarını interaktif dashboard'da görün.</p>
+  <p style="color:#8b98a6;font-size:12px;margin-top:16px">
     AI-SPM · read-only Entra/Graph taraması. Bu e-posta otomatik oluşturuldu.</p>
 </div>"""
 
@@ -86,11 +93,23 @@ def send_email_digest(scored, tenant_id):
     subject = f"[AI-SPM] Haftalık Shadow AI özeti — {len(shadow)} uygulama, {crit} kritik"
 
     body = _digest_html(scored, tenant_id, os.environ.get("AISPM_REPORT_URL"))
+
+    # Tam dashboard'u HTML eki olarak iliştir (okunurluk için)
+    dashboard = report.html_string(scored, tenant_id)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+    attachment = {
+        "@odata.type": "#microsoft.graph.fileAttachment",
+        "name": f"shadow-ai-report-{stamp}.html",
+        "contentType": "text/html",
+        "contentBytes": base64.b64encode(dashboard.encode("utf-8")).decode("ascii"),
+    }
+
     msg = {
         "message": {
             "subject": subject,
             "body": {"contentType": "HTML", "content": body},
             "toRecipients": recipients,
+            "attachments": [attachment],
         },
         "saveToSentItems": False,
     }
