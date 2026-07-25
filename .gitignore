@@ -13,3 +13,6 @@ obj/
 # Çıktılar
 out/
 *.zip
+
+# Yerel test yardımcıları (yayınlanmaz)
+demo.py
