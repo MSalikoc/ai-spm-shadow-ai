@@ -60,3 +60,14 @@ def scan_now(req: func.HttpRequest) -> func.HttpResponse:
         logging.exception("scan_now hata")
         return func.HttpResponse(json.dumps({"error": str(e)}),
                                  mimetype="application/json", status_code=500)
+
+
+@app.route(route="report", auth_level=func.AuthLevel.FUNCTION)
+def report_view(req: func.HttpRequest) -> func.HttpResponse:
+    """En son dashboard'u canlı HTML olarak sunar (tarayıcıda aç)."""
+    doc = storage.read_latest("latest.html")
+    if doc is None:
+        return func.HttpResponse(
+            "Henüz rapor yok. Önce /api/scan çalıştırın.",
+            status_code=404, mimetype="text/plain")
+    return func.HttpResponse(doc, mimetype="text/html", status_code=200)

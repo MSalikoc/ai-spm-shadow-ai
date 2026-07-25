@@ -12,6 +12,21 @@ from datetime import datetime, timezone
 import report
 
 
+def read_latest(name: str = "latest.html") -> str | None:
+    """En son yayınlanan raporu Blob'dan okur (report endpoint için). Yoksa None."""
+    conn = os.environ.get("AzureWebJobsStorage") or os.environ.get("REPORT_STORAGE_CONNECTION")
+    if not conn:
+        return None
+    try:
+        from azure.storage.blob import BlobServiceClient
+        container = os.environ.get("REPORT_CONTAINER", "aispm-reports")
+        svc = BlobServiceClient.from_connection_string(conn)
+        bc = svc.get_blob_client(container, name)
+        return bc.download_blob().readall().decode("utf-8")
+    except Exception:
+        return None
+
+
 def publish(scored: list[dict], tenant_id: str) -> dict:
     html = report.html_string(scored, tenant_id)
     js = report.json_string(scored)

@@ -38,6 +38,7 @@ MI="$(az functionapp identity show -g "$RG" -n "$FUNC" --query principalId -o ts
 echo "    Managed Identity: $MI"
 "$ROOT/scripts/grant_graph_roles.sh" "$MI"
 
-echo "==> 3/3 Tamam. İlk taramayı tetiklemek için:"
-echo "    KEY=\$(az functionapp keys list -g $RG -n $FUNC --query functionKeys.default -o tsv)"
-echo "    curl -s \"https://$FUNC.azurewebsites.net/api/scan?code=\$KEY\" ; echo"
+KEY="$(az functionapp keys list -g "$RG" -n "$FUNC" --query functionKeys.default -o tsv 2>/dev/null || true)"
+echo "==> 3/3 Tamam."
+echo "    İlk taramayı tetikle:  curl -s \"https://$FUNC.azurewebsites.net/api/scan?code=$KEY\""
+echo "    Dashboard'u aç      :  https://$FUNC.azurewebsites.net/api/report?code=$KEY"
