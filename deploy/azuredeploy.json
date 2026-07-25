@@ -25,6 +25,21 @@
       "defaultValue": "aispm-reports",
       "metadata": { "description": "Raporların yazılacağı Blob container adı." }
     },
+    "emailSchedule": {
+      "type": "string",
+      "defaultValue": "0 0 8 * * 1",
+      "metadata": { "description": "Haftalık digest NCRONTAB. Varsayılan Pazartesi 08:00 UTC." }
+    },
+    "mailSender": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": { "description": "Digest gönderen mailbox (UPN). Boş bırakılırsa mail gönderilmez; portaldan doldurulabilir." }
+    },
+    "mailTo": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": { "description": "Digest alıcı(lar), virgülle ayrılmış. Portaldan doldurulabilir." }
+    },
     "location": {
       "type": "string",
       "defaultValue": "[resourceGroup().location]",
@@ -82,7 +97,11 @@
             { "name": "ENABLE_ORYX_BUILD", "value": "true" },
             { "name": "AISPM_TENANT_ID", "value": "[parameters('tenantId')]" },
             { "name": "SCAN_SCHEDULE", "value": "[parameters('scanSchedule')]" },
-            { "name": "REPORT_CONTAINER", "value": "[parameters('reportContainer')]" }
+            { "name": "REPORT_CONTAINER", "value": "[parameters('reportContainer')]" },
+            { "name": "EMAIL_SCHEDULE", "value": "[parameters('emailSchedule')]" },
+            { "name": "AISPM_MAIL_SENDER", "value": "[parameters('mailSender')]" },
+            { "name": "AISPM_MAIL_TO", "value": "[parameters('mailTo')]" },
+            { "name": "AISPM_REPORT_URL", "value": "" }
           ]
         }
       }
