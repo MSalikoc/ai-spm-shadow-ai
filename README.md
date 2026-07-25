@@ -169,9 +169,23 @@ storage.py      → report publishing to Blob (latest.* + history)
 auth.py         → Entra token (Managed Identity / device code / client credentials)
 graph_client.py → Microsoft Graph paging + throttling
 main.py         → command-line entry point
+notify.py       → weekly digest email via Microsoft Graph sendMail
 deploy/         → azuredeploy.json (ARM template, one-click Deploy to Azure)
-scripts/        → grant_graph_roles.{sh,ps1} (Managed Identity Graph roles)
+scripts/        → postdeploy.sh, grant_graph_roles.{sh,ps1}
+.github/        → deploy.yml (CI/CD: auto-deploy on push to main)
 ```
+
+## Continuous deployment (optional)
+
+Pushes to `main` auto-deploy to your Function App via GitHub Actions. To enable it on
+your own deployment, set once:
+
+- Repository **variable** `AZURE_FUNCTIONAPP_NAME` = your function app name
+- Repository **secret** `AZURE_FUNCTIONAPP_PUBLISH_PROFILE` = the app's publish profile
+  (`az functionapp deployment list-publishing-profiles -g <RG> -n <FUNC> --xml`)
+
+Without these, the deploy workflow is skipped — the one-click button + `postdeploy.sh`
+remain the primary path.
 
 ---
 
