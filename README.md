@@ -32,30 +32,39 @@ secrets), and produces a ranked, explainable posture report on every run.
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FMSalikoc%2Fai-spm-shadow-ai%2Fmain%2Fdeploy%2Fazuredeploy.json)
 
-One click provisions everything — Function App, system-assigned Managed Identity, and
-Storage — and loads the application code from the published release package. The portal
-form lets you set the target tenant, scan schedule, and report container.
+One click provisions the infrastructure — Function App, system-assigned Managed Identity,
+and Storage. The portal form lets you set the target tenant, scan schedule, and report
+container.
 
-### Post-deployment (one step)
+### Post-deployment (one step, in Azure Cloud Shell)
 
-Grant the Managed Identity the Microsoft Graph application permissions it needs to read
-your directory. This is the only step that cannot be performed by the template.
+Run the post-deploy script once. It deploys the application code (remote build) and grants
+the Managed Identity the read-only Microsoft Graph permissions it needs.
 
 ```bash
-# Get the Managed Identity principal ID (also shown in the ARM deployment outputs):
-az functionapp identity show -g <RESOURCE_GROUP> -n <FUNCTION_APP> --query principalId -o tsv
-
-# Assign the required Graph roles:
-./scripts/grant_graph_roles.sh <PRINCIPAL_ID>        # Bash (az CLI)
-# or
-./scripts/grant_graph_roles.ps1 -ManagedIdentityObjectId <PRINCIPAL_ID>   # PowerShell (Microsoft.Graph)
+git clone https://github.com/MSalikoc/ai-spm-shadow-ai.git
+cd ai-spm-shadow-ai
+./scripts/postdeploy.sh <RESOURCE_GROUP> <FUNCTION_APP_NAME>
 ```
 
-Required Microsoft Graph **application** permissions:
-`Directory.Read.All`, `Application.Read.All`, `AuditLog.Read.All`.
+The script performs:
+1. `func azure functionapp publish` — deploys the code (Python is built remotely; Linux
+   Consumption does not support URL-based run-from-package).
+2. Assigns Graph **application** permissions to the Managed Identity:
+   `Directory.Read.All`, `Application.Read.All`, `AuditLog.Read.All`.
 
-That's it. On the next scheduled run (06:00 UTC by default) AI-SPM scans your tenant and
-writes `latest.html` plus a timestamped history to the `aispm-reports` Blob container.
+> Assigning Graph roles requires a directory role that can grant app permissions
+> (e.g. Privileged Role Administrator / Global Administrator).
+
+Trigger the first scan immediately (or wait for the schedule):
+
+```bash
+KEY=$(az functionapp keys list -g <RESOURCE_GROUP> -n <FUNCTION_APP_NAME> --query functionKeys.default -o tsv)
+curl -s "https://<FUNCTION_APP_NAME>.azurewebsites.net/api/scan?code=$KEY" ; echo
+```
+
+On each run (06:00 UTC by default) AI-SPM scans your tenant and writes `latest.html` plus
+a timestamped history to the `aispm-reports` Blob container.
 
 ---
 
@@ -65,10 +74,9 @@ writes `latest.html` plus a timestamped history to the `aispm-reports` Blob cont
 [Deploy to Azure]  ──►  ARM template
         │
         ├─ Storage + Consumption plan
-        ├─ Function App (Python 3.11, system-assigned Managed Identity)
-        └─ Application code loaded from the published release package
+        └─ Function App (Python 3.11, system-assigned Managed Identity)
         ▼
-[post-deploy]  grant_graph_roles  ──►  Managed Identity gets read-only Graph roles
+[post-deploy]  postdeploy.sh  ──►  deploy code (remote build) + grant read-only Graph roles
         ▼
 [daily 06:00 UTC]  timer  ──►  enumerate AI apps  ──►  map OAuth consents
                             ──►  score risk  ──►  publish HTML + JSON to Blob
