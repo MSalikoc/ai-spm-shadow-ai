@@ -32,10 +32,9 @@ secrets), and produces a ranked, explainable posture report on every run.
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FMSalikoc%2Fai-spm-shadow-ai%2Fmain%2Fdeploy%2Fazuredeploy.json)
 
-One click provisions everything — Function App, system-assigned Managed Identity,
-Storage, and Application Insights — and loads the application code from the published
-release package. The portal form lets you set the target tenant, scan schedule, and
-report container.
+One click provisions everything — Function App, system-assigned Managed Identity, and
+Storage — and loads the application code from the published release package. The portal
+form lets you set the target tenant, scan schedule, and report container.
 
 ### Post-deployment (one step)
 
@@ -65,7 +64,7 @@ writes `latest.html` plus a timestamped history to the `aispm-reports` Blob cont
 ```
 [Deploy to Azure]  ──►  ARM template
         │
-        ├─ Storage + Application Insights + Consumption plan
+        ├─ Storage + Consumption plan
         ├─ Function App (Python 3.11, system-assigned Managed Identity)
         └─ Application code loaded from the published release package
         ▼

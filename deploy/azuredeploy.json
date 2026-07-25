@@ -2,7 +2,7 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
   "contentVersion": "1.0.0.0",
   "metadata": {
-    "comments": "AI-SPM — Shadow AI Posture Management. Tek-tık Function App + Managed Identity + Storage + App Insights. Kod, WEBSITE_RUN_FROM_PACKAGE ile GitHub Release zip'inden yüklenir. Post-deploy: scripts/grant_graph_roles ile MI'a Graph rolleri atanır."
+    "comments": "AI-SPM — Shadow AI Posture Management. Tek-tık Function App + Managed Identity + Storage. Kod, WEBSITE_RUN_FROM_PACKAGE ile GitHub Release zip'inden yüklenir. Post-deploy: scripts/grant_graph_roles ile MI'a Graph rolleri atanır."
   },
   "parameters": {
     "appName": {
@@ -39,7 +39,6 @@
   "variables": {
     "storageName": "[toLower(concat('aispm', uniqueString(resourceGroup().id)))]",
     "planName": "[concat(parameters('appName'), '-plan')]",
-    "aiName": "[concat(parameters('appName'), '-ai')]",
     "storageId": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
   },
   "resources": [
@@ -51,14 +50,6 @@
       "sku": { "name": "Standard_LRS" },
       "kind": "StorageV2",
       "properties": { "minimumTlsVersion": "TLS1_2", "allowBlobPublicAccess": false }
-    },
-    {
-      "type": "Microsoft.Insights/components",
-      "apiVersion": "2020-02-02",
-      "name": "[variables('aiName')]",
-      "location": "[parameters('location')]",
-      "kind": "web",
-      "properties": { "Application_Type": "web" }
     },
     {
       "type": "Microsoft.Web/serverfarms",
@@ -78,8 +69,7 @@
       "identity": { "type": "SystemAssigned" },
       "dependsOn": [
         "[resourceId('Microsoft.Web/serverfarms', variables('planName'))]",
-        "[variables('storageId')]",
-        "[resourceId('Microsoft.Insights/components', variables('aiName'))]"
+        "[variables('storageId')]"
       ],
       "properties": {
         "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('planName'))]",
@@ -93,7 +83,6 @@
             { "name": "FUNCTIONS_EXTENSION_VERSION", "value": "~4" },
             { "name": "FUNCTIONS_WORKER_RUNTIME", "value": "python" },
             { "name": "AzureWebJobsStorage", "value": "[concat('DefaultEndpointsProtocol=https;AccountName=', variables('storageName'), ';AccountKey=', listKeys(variables('storageId'), '2023-01-01').keys[0].value, ';EndpointSuffix=', environment().suffixes.storage)]" },
-            { "name": "APPLICATIONINSIGHTS_CONNECTION_STRING", "value": "[reference(resourceId('Microsoft.Insights/components', variables('aiName')), '2020-02-02').ConnectionString]" },
             { "name": "WEBSITE_RUN_FROM_PACKAGE", "value": "[parameters('packageUri')]" },
             { "name": "AISPM_TENANT_ID", "value": "[parameters('tenantId')]" },
             { "name": "SCAN_SCHEDULE", "value": "[parameters('scanSchedule')]" },
