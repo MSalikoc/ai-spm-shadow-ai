@@ -26,6 +26,15 @@ def _shadow(scored):
     return [a for a in scored if not a.get("first_party_microsoft")]
 
 
+def _report_url():
+    """Dashboard için TEMİZ URL — function key İÇERMEZ (Entra ile korunuyor)."""
+    explicit = os.environ.get("AISPM_REPORT_URL")
+    if explicit:
+        return explicit.split("?")[0]  # yanlışlıkla eklenmiş ?code=... varsa at
+    host = os.environ.get("WEBSITE_HOSTNAME")
+    return f"https://{host}/api/report" if host else None
+
+
 def _digest_html(scored, tenant_id, report_url):
     shadow = sorted(_shadow(scored), key=lambda a: a["risk_score"], reverse=True)
     crit = sum(1 for a in shadow if a["risk_level"] == "Kritik")
@@ -92,7 +101,7 @@ def send_email_digest(scored, tenant_id):
     crit = sum(1 for a in shadow if a["risk_level"] == "Kritik")
     subject = f"[AI-SPM] Haftalık Shadow AI özeti — {len(shadow)} uygulama, {crit} kritik"
 
-    body = _digest_html(scored, tenant_id, os.environ.get("AISPM_REPORT_URL"))
+    body = _digest_html(scored, tenant_id, _report_url())
 
     # Tam dashboard'u HTML eki olarak iliştir (okunurluk için)
     dashboard = report.html_string(scored, tenant_id)

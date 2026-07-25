@@ -56,15 +56,9 @@ The script performs:
 > Assigning Graph roles requires a directory role that can grant app permissions
 > (e.g. Privileged Role Administrator / Global Administrator).
 
-Trigger the first scan immediately (or wait for the schedule):
-
-```bash
-KEY=$(az functionapp keys list -g <RESOURCE_GROUP> -n <FUNCTION_APP_NAME> --query functionKeys.default -o tsv)
-curl -s "https://<FUNCTION_APP_NAME>.azurewebsites.net/api/scan?code=$KEY" ; echo
-```
-
-On each run (06:00 UTC by default) AI-SPM scans your tenant and writes `latest.html` plus
-a timestamped history to the `aispm-reports` Blob container.
+Then set up **authentication** (see below) and trigger the first scan. On each run
+(06:00 UTC by default) AI-SPM scans your tenant and writes `latest.html` plus a
+timestamped history to the `aispm-reports` Blob container.
 
 ---
 
@@ -99,7 +93,8 @@ Set as Function App application settings (the template wires these up for you):
 | `EMAIL_SCHEDULE`   | `0 0 8 * * 1`      | Weekly digest schedule (default Mon 08:00 UTC)    |
 | `AISPM_MAIL_SENDER`| —                  | Sender mailbox (UPN) for the weekly digest        |
 | `AISPM_MAIL_TO`    | —                  | Recipient(s), comma-separated                     |
-| `AISPM_REPORT_URL` | —                  | Full `/api/report` URL used for the dashboard button |
+| `AISPM_REPORT_URL` | —                  | Clean `/api/report` URL for the dashboard button (no key) |
+| `AISPM_AUTH_DEV_BYPASS` | —             | Local dev only: `true` skips auth. Ignored in Azure (see below). |
 
 What counts as an "AI application" and how each permission is weighted is defined in a
 single place — [`config.py`](config.py) — so the catalog and scoring policy are easy to
@@ -107,27 +102,75 @@ tune to your environment.
 
 ---
 
+## Authentication & authorization (Entra RBAC)
+
+HTTP endpoints are protected by **Entra ID** via App Service Authentication (Easy Auth),
+not function keys. Authorization is enforced in code against **app roles**:
+
+| Endpoint | Required role (or `AI-SPM.Administrator`) |
+| --- | --- |
+| `/api/report` | `AI-SPM.Report.Reader` |
+| `/api/scan` | `AI-SPM.Assessment.Operator` |
+| `/api/digest` | `AI-SPM.Notification.Operator` |
+
+Unauthenticated → **401**; authenticated but missing the role → **403**.
+
+### Set up (one time)
+
+```bash
+./scripts/setup_entra_auth.sh <RESOURCE_GROUP> <FUNCTION_APP_NAME>
+```
+
+This creates the app registration with the four app roles, sets the identifier URI and
+Easy Auth redirect, and enables Entra authentication on the Function App (AllowAnonymous,
+so the code returns precise 401/403).
+
+### Assign roles
+
+Portal → **Entra ID → Enterprise applications → "AI-SPM (&lt;func&gt;)" → Users and groups
+→ Add** → pick a user/group and one of the four roles. For app-to-app access, assign the
+app role to the calling application's service principal instead.
+
+### Calling a protected endpoint
+
+Browsers are redirected to sign in. Programmatic callers send an Entra access token:
+
+```bash
+TOKEN=$(az account get-access-token --resource api://<CLIENT_ID> --query accessToken -o tsv)
+curl -H "Authorization: Bearer $TOKEN" "https://<FUNC>.azurewebsites.net/api/scan"
+```
+
+### Local development
+
+Set `AISPM_AUTH_DEV_BYPASS=true` in `local.settings.json` to skip auth while running
+`func start`. This is **rejected automatically in Azure** (guarded by `WEBSITE_INSTANCE_ID`),
+so it can never weaken production.
+
+---
+
 ## Viewing the dashboard
 
-The published report is served live from the Function — open one URL in a browser:
+Open the report in a browser — a clean URL, no key. You are redirected to Entra sign-in;
+after login (with `AI-SPM.Report.Reader` or `Administrator`) the dashboard loads:
 
 ```
-https://<FUNCTION_APP>.azurewebsites.net/api/report?code=<FUNCTION_KEY>
+https://<FUNCTION_APP>.azurewebsites.net/api/report
 ```
 
 ## Weekly email digest
 
-AI-SPM can email a weekly posture digest (headline numbers, notable findings, and a link
-to the live dashboard) via Microsoft Graph, sent by the Managed Identity — no SMTP secrets.
+AI-SPM emails a weekly posture digest (headline numbers, notable findings, a link to the
+dashboard, and the full dashboard as an HTML attachment) via Microsoft Graph, sent by the
+Managed Identity — no SMTP secrets.
 
-1. The post-deploy script already grants the Managed Identity `Mail.Send`.
-2. Set the mail settings:
+1. The post-deploy script grants the Managed Identity `Mail.Send`.
+2. Set the mail settings (portal Environment variables, or CLI):
    ```bash
    az functionapp config appsettings set -g <RG> -n <FUNC> --settings \
      AISPM_MAIL_SENDER="secops@contoso.com" \
-     AISPM_MAIL_TO="team@contoso.com,ciso@contoso.com" \
-     AISPM_REPORT_URL="https://<FUNC>.azurewebsites.net/api/report?code=<KEY>"
+     AISPM_MAIL_TO="team@contoso.com,ciso@contoso.com"
    ```
+   The dashboard link is derived automatically (clean URL, no key).
 3. **Harden `Mail.Send`** — this application permission can otherwise send as any mailbox.
    Scope it to only the sender with an Exchange application access policy:
    ```powershell
@@ -135,17 +178,8 @@ to the live dashboard) via Microsoft Graph, sent by the Managed Identity — no 
      -PolicyScopeGroupId <mail-enabled-group-containing-sender> `
      -AccessRight RestrictAccess -Description "AI-SPM digest sender only"
    ```
-4. Test immediately: `curl "https://<FUNC>.azurewebsites.net/api/digest?code=<KEY>"`
-
----
-
-## Running on demand
-
-Trigger a scan and get a JSON summary from the HTTP endpoint:
-
-```bash
-curl "https://<FUNCTION_APP>.azurewebsites.net/api/scan?code=<FUNCTION_KEY>"
-```
+4. Test (needs the `Notification.Operator` role token):
+   `curl -H "Authorization: Bearer $TOKEN" "https://<FUNC>.azurewebsites.net/api/digest"`
 
 Operators can also run a scan from a workstation against a tenant using the CLI:
 
