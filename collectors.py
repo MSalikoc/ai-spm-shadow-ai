@@ -266,6 +266,45 @@ def _app_usage(graph, app, now, iso90):
     }
 
 
+def enrich_with_ownership(graph, discovered) -> None:
+    """
+    Teknik owner + envanter alanlarını ekler:
+      - service_principal_owners: /servicePrincipals/{id}/owners
+      - technical_inventory: enabled, publisher, homepage, tags, description,
+        credential sayısı ve en yakın credential expiry.
+    Owner bulunamazsa boş bırakılır (otomatik kişi ÜRETİLMEZ — kriter 2).
+    Application owner (yerel application objesi) çoğu 3. parti multi-tenant app'te
+    yoktur; bu yüzden application_owners boş kalır.
+    """
+    for app in discovered:
+        obj = graph.get(
+            f"/servicePrincipals/{app['sp_id']}",
+            {"$select": "accountEnabled,publisherName,homepage,tags,notes,description,"
+                        "servicePrincipalType,keyCredentials,passwordCredentials"}) or {}
+        creds = (obj.get("keyCredentials") or []) + (obj.get("passwordCredentials") or [])
+        expiries = sorted(c["endDateTime"] for c in creds if c.get("endDateTime"))
+        try:
+            owners = graph.get_all(f"/servicePrincipals/{app['sp_id']}/owners",
+                                   {"$select": "id,displayName,userPrincipalName"})
+        except Exception:
+            owners = []
+        sp_owners = [{"id": o.get("id"),
+                      "name": o.get("displayName") or o.get("userPrincipalName") or o.get("id")}
+                     for o in owners]
+
+        app["ownership"] = {"application_owners": [], "service_principal_owners": sp_owners}
+        app["technical_inventory"] = {
+            "enabled": obj.get("accountEnabled"),
+            "publisher": obj.get("publisherName") or app.get("publisher"),
+            "homepage": obj.get("homepage"),
+            "tags": obj.get("tags") or [],
+            "description": obj.get("description") or obj.get("notes") or "",
+            "sp_type": obj.get("servicePrincipalType"),
+            "credential_count": len(creds),
+            "credential_next_expiry": expiries[0] if expiries else None,
+        }
+
+
 def enrich_with_signin_activity(graph, discovered, now=None):
     """
     Sign-in loglarından (Entra ID P1 gerekir) gerçek kullanım metriklerini ekler.

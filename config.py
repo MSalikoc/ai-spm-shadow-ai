@@ -64,6 +64,12 @@ SENSITIVE_SCOPES = {
 # Scope adında bu parçalar geçiyorsa ve tabloda yoksa, orta ağırlık ata.
 SCOPE_HEURISTICS = [("readwrite", 7), ("read.all", 6), (".all", 5), ("read", 3)]
 
+# --- Business / lifecycle governance sözlükleri ----------------------------
+LIFECYCLE_STATUSES = ["Discovered", "Under Review", "Pilot", "Approved",
+                      "Restricted", "Blocked", "Retired", "Unknown"]
+CRITICALITY = ["", "Low", "Medium", "High", "Critical", "Unknown"]
+ENVIRONMENTS = ["", "Production", "Non-production", "Development", "Unknown"]
+
 # Microsoft'un kendi first-party uygulamalarının sahip olduğu tenant ID'leri.
 # Bunlar "3. parti Shadow AI" sayılmaz.
 MICROSOFT_OWNER_TENANTS = {

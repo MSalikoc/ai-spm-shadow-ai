@@ -6,10 +6,42 @@ Her çalıştırma iki kopya yazar:
   - shadow_ai_<UTCzaman>.html/json   (geçmiş / tarihçe)
   - latest.html / latest.json         (dashboard'un okuyacağı sabit isim)
 """
+import json
 import os
 from datetime import datetime, timezone
 
 import report
+
+
+def read_metadata() -> dict:
+    """Kalıcı business/lifecycle metadata deposunu (metadata.json) okur. Yoksa {}."""
+    raw = read_latest("metadata.json")
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except (ValueError, TypeError):
+        return {}
+
+
+def write_metadata(store: dict) -> None:
+    """Metadata deposunu Blob'a (yoksa out/ altına) yazar."""
+    payload = json.dumps(store, ensure_ascii=False, indent=2)
+    conn = os.environ.get("AzureWebJobsStorage") or os.environ.get("REPORT_STORAGE_CONNECTION")
+    if not conn or conn.lower().startswith("usedevelopmentstorage"):
+        os.makedirs("out", exist_ok=True)
+        with open("out/metadata.json", "w", encoding="utf-8") as f:
+            f.write(payload)
+        return
+    from azure.storage.blob import BlobServiceClient, ContentSettings
+    container = os.environ.get("REPORT_CONTAINER", "aispm-reports")
+    cc = BlobServiceClient.from_connection_string(conn).get_container_client(container)
+    try:
+        cc.create_container()
+    except Exception:
+        pass
+    cc.upload_blob("metadata.json", payload.encode("utf-8"), overwrite=True,
+                   content_settings=ContentSettings(content_type="application/json"))
 
 
 def read_latest(name: str = "latest.html") -> str | None:

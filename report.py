@@ -4,7 +4,12 @@ import json
 import math
 from datetime import datetime, timezone
 
-from config import SENSITIVE_SCOPES, SCOPE_HEURISTICS
+from config import (SENSITIVE_SCOPES, SCOPE_HEURISTICS,
+                    LIFECYCLE_STATUSES, CRITICALITY, ENVIRONMENTS)
+
+_LIFECYCLE_COLOR = {"Discovered": "#6b7280", "Under Review": "#b8860b", "Pilot": "#0f6cbd",
+                    "Approved": "#2e8b57", "Restricted": "#d35400", "Blocked": "#c0392b",
+                    "Retired": "#4b5563", "Unknown": "#6b7280"}
 
 LEVELS = ["Kritik", "Yüksek", "Orta", "Düşük"]
 LEVEL_COLORS = {"Kritik": "#c0392b", "Yüksek": "#d35400", "Orta": "#b8860b", "Düşük": "#2e8b57"}
@@ -159,6 +164,84 @@ def _usage_block(app):
         f'{sp}</ul>')
 
 
+def _lifecycle_status(app):
+    return (app.get("lifecycle") or {}).get("status") or "Discovered"
+
+
+def _review_due_days(app, now=None):
+    now = now or datetime.now(timezone.utc)
+    d = (app.get("lifecycle") or {}).get("next_review_date")
+    if not d:
+        return None
+    try:
+        dt = datetime.fromisoformat(d.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return (dt - now).days
+
+
+def _governance_block(app):
+    own = app.get("ownership") or {}
+    bc = app.get("business_context") or {}
+    lc = app.get("lifecycle") or {}
+    ti = app.get("technical_inventory") or {}
+    sp_owners = ", ".join(html.escape(o.get("name", "")) for o in
+                          own.get("service_principal_owners", [])) or "—"
+
+    def val(x):
+        return html.escape(x) if x else "—"
+
+    cred_exp = ti.get("credential_next_expiry")
+    cred = f'{ti.get("credential_count", 0)} credential'
+    if cred_exp:
+        cred += f' · en yakın bitiş {html.escape(cred_exp[:10])}'
+    review = lc.get("next_review_date")
+    return (
+        '<h4>Sahiplik & Lifecycle</h4><ul>'
+        f'<li>Teknik owner (SP): {sp_owners}</li>'
+        f'<li>Business owner: {val(own.get("business_owner"))}'
+        f' · Technical: {val(own.get("technical_owner"))}</li>'
+        f'<li>Sponsor: {val(own.get("sponsor"))}</li>'
+        f'<li>Birim: {val(bc.get("business_unit"))} · {val(bc.get("subsidiary"))}</li>'
+        f'<li>Amaç: {val(bc.get("purpose"))}</li>'
+        f'<li>Kritiklik: {val(bc.get("criticality"))} · Ortam: {val(bc.get("environment"))}</li>'
+        f'<li>Sonraki review: {val(review)}</li>'
+        f'<li>{cred}</li></ul>')
+
+
+def _editor_form(app):
+    lc = app.get("lifecycle") or {}
+    bc = app.get("business_context") or {}
+    own = app.get("ownership") or {}
+
+    def opts(values, current):
+        return "".join(f'<option{" selected" if v == current else ""}>{html.escape(v)}</option>'
+                       for v in values)
+
+    def field(label, name, value=""):
+        return (f'<label>{label}<input name="{name}" value="{html.escape(value or "")}"></label>')
+
+    review = (lc.get("next_review_date") or "")[:10]
+    return (
+        '<details class="editor"><summary>Metadata düzenle</summary>'
+        f'<div class="mform" data-app="{html.escape(app.get("app_id", ""))}">'
+        f'<label>Lifecycle<select name="status">{opts(LIFECYCLE_STATUSES, _lifecycle_status(app))}</select></label>'
+        f'{field("Business owner", "business_owner", own.get("business_owner"))}'
+        f'{field("Technical owner", "technical_owner", own.get("technical_owner"))}'
+        f'{field("Sponsor", "sponsor", own.get("sponsor"))}'
+        f'{field("Business unit", "business_unit", bc.get("business_unit"))}'
+        f'{field("Subsidiary", "subsidiary", bc.get("subsidiary"))}'
+        f'{field("Amaç", "purpose", bc.get("purpose"))}'
+        f'<label>Kritiklik<select name="criticality">{opts(CRITICALITY, bc.get("criticality") or "")}</select></label>'
+        f'<label>Ortam<select name="environment">{opts(ENVIRONMENTS, bc.get("environment") or "")}</select></label>'
+        f'<label>Sonraki review<input name="next_review_date" type="date" value="{html.escape(review)}"></label>'
+        f'<label>Notlar<textarea name="notes">{html.escape(app.get("notes", "") or "")}</textarea></label>'
+        '<button type="button" class="msave">Kaydet</button><span class="mstatus"></span>'
+        '</div></details>')
+
+
 def _finding_row(app):
     color = LEVEL_COLORS.get(app["risk_level"], "#555")
     scopes = ", ".join(html.escape(s) for s in app.get("scopes", [])) or "—"
@@ -171,6 +254,11 @@ def _finding_row(app):
     chip_label, chip_color = _PERM_CHIP[ptype]
     utype = _usage_type(app)
     u_label, u_color = _USAGE_CHIP[utype]
+    status = _lifecycle_status(app)
+    lc_color = _LIFECYCLE_COLOR.get(status, "#6b7280")
+    bc = app.get("business_context") or {}
+    bu = bc.get("business_unit") or ""
+    sub = bc.get("subsidiary") or ""
 
     app_perms = app.get("application_permissions", [])
     if app_perms:
@@ -183,13 +271,15 @@ def _finding_row(app):
         app_block = ""
 
     return (
-        f'<details class="finding" data-perm="{ptype}" data-usage="{utype}">'
+        f'<details class="finding" data-perm="{ptype}" data-usage="{utype}" '
+        f'data-bu="{html.escape(bu)}" data-sub="{html.escape(sub)}">'
         f'<summary>'
         f'<span class="pill" style="background:{color}">{app["risk_score"]}</span>'
         f'<span class="f-name">{html.escape(app.get("display_name") or "—")}'
         f'<span class="f-vendor">{html.escape(app.get("vendor",""))}</span></span>'
         f'<span class="ptype" style="background:{chip_color}">{chip_label}</span>'
         f'<span class="ptype" style="background:{u_color}">{u_label}</span>'
+        f'<span class="ptype" style="background:{lc_color}">{html.escape(status)}</span>'
         f'<span class="f-meta">{tag} · {html.escape(consent)} · {app.get("user_count",0)} kullanıcı</span>'
         f'<span class="f-level" style="color:{color}">{html.escape(app["risk_level"])}</span>'
         f'</summary>'
@@ -197,9 +287,10 @@ def _finding_row(app):
         f'<div class="f-col"><h4>Delegated izinler</h4><code>{scopes}</code>'
         f'{app_block}<p class="f-pub">{ver}</p></div>'
         f'<div class="f-col">{_usage_block(app)}</div>'
+        f'<div class="f-col">{_governance_block(app)}</div>'
         f'<div class="f-col"><h4>Neden riskli</h4><ul>{reasons}</ul></div>'
         f'<div class="f-col"><h4>Öneri</h4><ul>{remed}</ul></div>'
-        f'</div></details>')
+        f'</div>{_editor_form(app)}</details>')
 
 
 CSS = """
@@ -281,6 +372,19 @@ main{max-width:1120px;margin:0 auto;padding:22px}
 .filters button{cursor:pointer;border:1px solid var(--line);background:transparent;color:var(--ink);
  border-radius:999px;padding:5px 14px;font-size:13px}
 .filters button.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.filters label{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+.filters select{border:1px solid var(--line);background:transparent;color:var(--ink);
+ border-radius:999px;padding:5px 12px;font-size:13px}
+.editor{margin:0 16px 14px;border-top:1px dashed var(--line)}
+.editor summary{cursor:pointer;padding:8px 0;font-size:13px;color:var(--accent);font-weight:600}
+.mform{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;padding:8px 0}
+.mform label{display:flex;flex-direction:column;font-size:12px;color:var(--muted);gap:4px}
+.mform input,.mform select,.mform textarea{background:var(--bg);color:var(--ink);
+ border:1px solid var(--line);border-radius:6px;padding:6px 8px;font:13px inherit}
+.mform textarea{min-height:46px;grid-column:1/-1}
+.mform .msave{background:var(--accent);color:#fff;border:none;border-radius:6px;
+ padding:8px 16px;cursor:pointer;font-weight:600;align-self:end}
+.mstatus{font-size:12px;color:var(--muted);align-self:center}
 .foot{color:var(--muted);font-size:12px;text-align:center;padding:18px}
 @media(max-width:820px){.cols-4,.cols-2{grid-template-columns:1fr}
  .f-body{grid-template-columns:1fr}.bar-label{width:130px}
@@ -292,16 +396,27 @@ THEME_JS = """
 b.onclick=function(){var r=document.documentElement;
 var d=(r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'))==='dark';
 r.setAttribute('data-theme',d?'light':'dark');b.textContent=d?'\\u263C':'\\u263E';};
-var state={perm:'all',usage:'all'};
-document.querySelectorAll('.filters button').forEach(function(btn){btn.onclick=function(){
- var g=btn.getAttribute('data-group'),v=btn.getAttribute('data-value');state[g]=v;
- btn.parentNode.querySelectorAll('button').forEach(function(x){x.classList.remove('active')});
- btn.classList.add('active');
- document.querySelectorAll('.finding').forEach(function(el){
-  var dp=el.getAttribute('data-perm'),du=el.getAttribute('data-usage');
-  var pm=(state.perm==='all')||dp===state.perm||(state.perm==='apponly'&&dp==='both');
-  var um=(state.usage==='all')||du===state.usage;
-  el.style.display=(pm&&um)?'':'none';});};});
+var state={perm:'all',usage:'all',bu:'all',sub:'all'};
+function apply(){document.querySelectorAll('.finding').forEach(function(el){
+ var show=true;
+ for(var d in state){var s=state[d];if(s==='all')continue;
+  var val=el.getAttribute('data-'+d)||'';
+  if(d==='perm'){if(!(val===s||(s==='apponly'&&val==='both')))show=false;}
+  else if(val!==s)show=false;}
+ el.style.display=show?'':'none';});}
+document.querySelectorAll('.filters button').forEach(function(b){b.onclick=function(){
+ state[b.getAttribute('data-group')]=b.getAttribute('data-value');
+ b.parentNode.querySelectorAll('button').forEach(function(x){x.classList.remove('active')});
+ b.classList.add('active');apply();};});
+document.querySelectorAll('.filters select').forEach(function(s){s.onchange=function(){
+ state[s.getAttribute('data-group')]=s.value;apply();};});
+var code=new URLSearchParams(location.search).get('code')||'';
+document.querySelectorAll('.msave').forEach(function(btn){btn.onclick=function(){
+ var box=btn.closest('.mform'),app=box.getAttribute('data-app');
+ function v(n){var e=box.querySelector('[name="'+n+'"]');return e?e.value:'';}
+ var body={app_id:app,ownership:{business_owner:v('business_owner'),technical_owner:v('technical_owner'),sponsor:v('sponsor')},business_context:{business_unit:v('business_unit'),subsidiary:v('subsidiary'),purpose:v('purpose'),criticality:v('criticality'),environment:v('environment')},lifecycle:{status:v('status'),next_review_date:v('next_review_date')||null},notes:v('notes')};
+ var st=box.querySelector('.mstatus');st.textContent='Kaydediliyor...';
+ fetch('/api/metadata?code='+encodeURIComponent(code),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.ok?r.json():Promise.reject(r.status);}).then(function(){st.textContent='\\u2713 Kaydedildi (sonraki taramada islenir)';}).catch(function(e){st.textContent='Hata: '+e;});};});
 })();
 """
 
@@ -399,6 +514,38 @@ def html_string(apps: list[dict], tenant_id: str) -> str:
                          'metrikleri için <b>Entra ID P1/P2</b> lisansı gerekir. '
                          'Assessment kesintisiz devam ediyor; consent/permission bulguları geçerli.</p></div>')
 
+    # Governance (ownership + lifecycle)
+    lc_counts = {s: sum(1 for a in shadow if _lifecycle_status(a) == s) for s in LIFECYCLE_STATUSES}
+    approved = lc_counts.get("Approved", 0)
+    under_review = lc_counts.get("Under Review", 0)
+    blocked = lc_counts.get("Blocked", 0) + lc_counts.get("Restricted", 0)
+    review_due = [(_review_due_days(a), a) for a in shadow]
+    review_due = sorted([(d, a) for d, a in review_due if d is not None and d <= 30],
+                        key=lambda x: x[0])
+    reviews_list = "".join(
+        f'<li><b>{html.escape(a.get("display_name") or "—")}</b> — '
+        f'{html.escape((a.get("lifecycle") or {}).get("next_review_date") or "")}'
+        f' ({"gecikmiş" if d < 0 else str(d) + " gün"}) · {html.escape(_lifecycle_status(a))}</li>'
+        for d, a in review_due) or '<li class="governed">Yaklaşan review yok.</li>'
+
+    bus = sorted({(a.get("business_context") or {}).get("business_unit") for a in shadow
+                  if (a.get("business_context") or {}).get("business_unit")})
+    subs = sorted({(a.get("business_context") or {}).get("subsidiary") for a in shadow
+                   if (a.get("business_context") or {}).get("subsidiary")})
+    bu_opts = "".join(f'<option value="{html.escape(b)}">{html.escape(b)}</option>' for b in bus)
+    sub_opts = "".join(f'<option value="{html.escape(s)}">{html.escape(s)}</option>' for s in subs)
+
+    governance_section = f"""
+  <h3 style="margin:22px 4px 10px;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)">Yönetişim (ownership & lifecycle)</h3>
+  <div class="grid cols-4">
+    <div class="card kpi low"><span class="n">{approved}</span><span class="l">Approved</span></div>
+    <div class="card kpi med"><span class="n">{under_review}</span><span class="l">Under Review</span></div>
+    <div class="card kpi crit"><span class="n">{blocked}</span><span class="l">Blocked / Restricted</span></div>
+    <div class="card kpi high"><span class="n">{len(review_due)}</span><span class="l">Review yaklaşan/geçmiş</span></div>
+  </div>
+  <div class="card" style="margin-top:16px"><h3>Yaklaşan / geçmiş review'lar</h3><ul>{reviews_list}</ul></div>
+"""
+
     findings_html = "".join(_finding_row(a) for a in shadow) or \
         '<div class="empty">Shadow AI bulgusu yok.</div>'
 
@@ -467,6 +614,7 @@ def html_string(apps: list[dict], tenant_id: str) -> str:
     <div class="card kpi crit"><span class="n">{highpriv_apponly}</span><span class="l">Yüksek ayrıcalıklı app-only</span></div>
   </div>
   {usage_section}
+  {governance_section}
   <div class="card" style="margin-top:16px">
     <h3>Bulgular ({len(shadow)})</h3>
     <div class="filters">
@@ -480,6 +628,10 @@ def html_string(apps: list[dict], tenant_id: str) -> str:
       <button data-group="usage" data-value="active">Aktif</button>
       <button data-group="usage" data-value="inactive">Pasif (30g+)</button>
       <button data-group="usage" data-value="unused">Hiç kullanılmamış</button>
+    </div>
+    <div class="filters">
+      <label>Birim <select data-group="bu"><option value="all">Tümü</option>{bu_opts}</select></label>
+      <label>Subsidiary <select data-group="sub"><option value="all">Tümü</option>{sub_opts}</select></label>
     </div>
     <div class="findings">{findings_html}</div>
   </div>

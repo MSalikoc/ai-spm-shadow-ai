@@ -6,6 +6,19 @@ All notable changes to AI-SPM are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **Business ownership & lifecycle governance**:
+  - Technical inventory from Graph (`enrich_with_ownership`): service-principal owners,
+    enabled status, publisher, homepage, tags, description, credential count + next expiry.
+    Owners left empty when absent — never synthesized.
+  - Separate, persistent business metadata store (`metadata.py` + `metadata.json` in Blob),
+    keyed by `app_id`, merged into every scan so **manual metadata survives re-scans**.
+    Fields: business/technical owner, sponsor, business unit, subsidiary, purpose, process,
+    criticality, environment, lifecycle status (8 states), next review date, notes.
+  - Lifecycle status & review-date changes recorded as `history`.
+  - Editable via **JSON config / `POST /api/metadata`** and an inline **dashboard editor**.
+  - Dashboard: lifecycle status chip + governance block per finding, governance KPI cards,
+    **upcoming/overdue reviews** list, and **business-unit / subsidiary filters**.
+  - `tests/test_metadata.py`.
 - **Real usage / sign-in activity** from Graph `auditLogs/signIns` (uses the already-granted
   `AuditLog.Read.All`; requires Entra ID P1):
   - `collectors.enrich_with_signin_activity()` separates delegated user sign-ins from

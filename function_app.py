@@ -15,6 +15,7 @@ import os
 import azure.functions as func
 
 import auth
+import metadata
 import notify
 import pipeline
 import storage
@@ -96,3 +97,26 @@ def report_view(req: func.HttpRequest) -> func.HttpResponse:
             "Henüz rapor yok. Önce /api/scan çalıştırın.",
             status_code=404, mimetype="text/plain")
     return func.HttpResponse(doc, mimetype="text/html", status_code=200)
+
+
+@app.route(route="metadata", methods=["POST"], auth_level=func.AuthLevel.FUNCTION)
+def metadata_set(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Bir app'in business/lifecycle metadata'sını günceller (JSON config veya dashboard editör).
+    Body: {"app_id": "...", "ownership": {...}, "business_context": {...},
+           "lifecycle": {"status": "...", "next_review_date": "..."}, "notes": "..."}
+    """
+    try:
+        body = req.get_json()
+    except ValueError:
+        return func.HttpResponse('{"error":"geçersiz JSON"}', status_code=400,
+                                 mimetype="application/json")
+    app_id = (body or {}).get("app_id")
+    if not app_id:
+        return func.HttpResponse('{"error":"app_id gerekli"}', status_code=400,
+                                 mimetype="application/json")
+    store = metadata.load()
+    entry = metadata.set_metadata(store, app_id, body)
+    metadata.save(store)
+    return func.HttpResponse(json.dumps({"app_id": app_id, "metadata": entry}, ensure_ascii=False),
+                             mimetype="application/json", status_code=200)
