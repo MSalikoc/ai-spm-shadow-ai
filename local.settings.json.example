@@ -5,7 +5,6 @@
     "FUNCTIONS_WORKER_RUNTIME": "python",
     "AISPM_TENANT_ID": "<TENANT_ID>",
     "SCAN_SCHEDULE": "0 0 6 * * *",
-    "REPORT_CONTAINER": "aispm-reports",
-    "AISPM_AUTH_DEV_BYPASS": "true"
+    "REPORT_CONTAINER": "aispm-reports"
   }
 }

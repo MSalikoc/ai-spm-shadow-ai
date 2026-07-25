@@ -6,28 +6,12 @@ All notable changes to AI-SPM are documented here. Format based on
 ## [Unreleased]
 
 ### Added
-- **Entra ID authentication + RBAC** for HTTP endpoints, replacing function keys:
-  - `authz.py` central authorization layer (claims parsing, role checks, 401/403).
-  - Four app roles: `AI-SPM.Report.Reader`, `AI-SPM.Assessment.Operator`,
-    `AI-SPM.Notification.Operator`, `AI-SPM.Administrator`.
-  - `/api/report` → Reader, `/api/scan` → Assessment.Operator, `/api/digest` →
-    Notification.Operator (Administrator covers all).
-  - ARM `authsettingsV2` (Easy Auth, conditional on `authClientId`).
-  - `scripts/setup_entra_auth.sh` — creates the app registration + roles + enables Easy Auth.
-  - Local-only `AISPM_AUTH_DEV_BYPASS`, auto-rejected in Azure (`WEBSITE_INSTANCE_ID`).
-  - `tests/test_authz.py` — role, 401/403, and dev-bypass-safety tests.
-- Minimal test infrastructure: `tests/test_smoke.py`, `pyproject.toml` (pytest config).
+- Minimal test infrastructure: `tests/test_smoke.py` (module-import smoke tests +
+  scoring/report/notify behavior), `pyproject.toml` (pytest config).
 - `.github/workflows/ci.yml` — CI on pull requests (compileall + import smoke + pytest).
 - Deploy is now gated on tests: `deploy.yml` runs a `test` job and deploys only if it passes.
 - `docs/architecture-current.md` — baseline architecture documentation.
-- README: local test commands + Authentication & authorization section.
-
-### Changed
-- HTTP endpoints are now `AuthLevel.ANONYMOUS` (auth enforced by Easy Auth + `authz.py`).
-- Email digest links use a clean, key-free dashboard URL (derived from `WEBSITE_HOSTNAME`).
-
-### Security
-- No function keys in emails, logs, or URLs. Endpoints require Entra sign-in and an app role.
+- README: local test commands.
 
 ### Fixed
 - `scripts/postdeploy.sh` fallback zip now includes **all** root `*.py` files (previously

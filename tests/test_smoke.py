@@ -10,7 +10,7 @@ import importlib
 import pytest
 
 MODULES = [
-    "config", "auth", "authz", "graph_client", "collectors", "scoring",
+    "config", "auth", "graph_client", "collectors", "scoring",
     "pipeline", "report", "storage", "notify", "main", "function_app",
 ]
 
