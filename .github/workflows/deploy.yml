@@ -1,10 +1,10 @@
 name: Deploy to Azure Function
 
-# main'e her push'ta (kod dosyaları değişince) Function App'e otomatik deploy.
+# main'e her push'ta: önce test, testler geçerse deploy.
 # Kurulum (bir kere):
 #   - Repo variable: AZURE_FUNCTIONAPP_NAME = <function app adı>
 #   - Repo secret:   AZURE_FUNCTIONAPP_PUBLISH_PROFILE = <publish profile XML>
-# Değişken tanımlı değilse (fork/müşteri) job atlanır.
+# Değişken tanımlı değilse (fork/müşteri) job'lar atlanır.
 on:
   push:
     branches: [main]
@@ -19,16 +19,28 @@ permissions:
   contents: read
 
 jobs:
-  deploy:
+  test:
     runs-on: ubuntu-latest
     if: ${{ vars.AZURE_FUNCTIONAPP_NAME != '' }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - run: pip install -r requirements.txt pytest
+      - run: python -m compileall -q .
+      - run: python -c "import function_app; print('function_app import OK')"
+      - run: pytest
 
+  deploy:
+    needs: test          # testler geçmeden deploy YAPILMAZ
+    runs-on: ubuntu-latest
+    if: ${{ vars.AZURE_FUNCTIONAPP_NAME != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
       - name: Deploy to Azure Functions
         uses: Azure/functions-action@v1
         with:

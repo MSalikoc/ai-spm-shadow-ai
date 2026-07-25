@@ -1,0 +1,27 @@
+name: CI
+
+# Pull request'lerde otomatik çalışır: derleme + import smoke + pytest.
+# Deployment'tan önce import/dependency hatalarını yakalar.
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest
+      - name: Compile all sources
+        run: python -m compileall -q .
+      - name: Import smoke (catches missing modules)
+        run: python -c "import function_app; print('function_app import OK')"
+      - name: Run tests
+        run: pytest

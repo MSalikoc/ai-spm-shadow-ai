@@ -175,6 +175,18 @@ scripts/        → postdeploy.sh, grant_graph_roles.{sh,ps1}
 .github/        → deploy.yml (CI/CD: auto-deploy on push to main)
 ```
 
+## Local testing
+
+```bash
+pip install -r requirements.txt pytest
+python -m compileall -q .                     # syntax check
+python -c "import function_app"               # import smoke (catches missing modules)
+pytest                                        # unit + smoke tests
+```
+
+CI runs the same checks on every pull request (`.github/workflows/ci.yml`), and the deploy
+workflow runs them before deploying — a failing test blocks deployment.
+
 ## Continuous deployment (optional)
 
 Pushes to `main` auto-deploy to your Function App via GitHub Actions. To enable it on

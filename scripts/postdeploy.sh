@@ -28,8 +28,9 @@ else
   az functionapp config appsettings set -g "$RG" -n "$FUNC" \
     --settings SCM_DO_BUILD_DURING_DEPLOYMENT=true ENABLE_ORYX_BUILD=true -o none
   TMP="$(mktemp -d)"
-  zip -qr "$TMP/src.zip" function_app.py host.json requirements.txt \
-    auth.py collectors.py config.py graph_client.py pipeline.py report.py scoring.py storage.py
+  # Tüm kök .py dosyaları + host.json + requirements.txt (notify.py dahil, yeni
+  # modül eklendiğinde manuel liste güncellemeye gerek kalmasın diye).
+  zip -qr "$TMP/src.zip" ./*.py host.json requirements.txt -x demo.py
   az functionapp deployment source config-zip -g "$RG" -n "$FUNC" --src "$TMP/src.zip"
 fi
 
