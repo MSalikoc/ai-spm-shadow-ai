@@ -22,7 +22,7 @@ az functionapp config appsettings delete -g "$RG" -n "$FUNC" \
   --setting-names WEBSITE_RUN_FROM_PACKAGE -o none 2>/dev/null || true
 
 if command -v func >/dev/null 2>&1; then
-  func azure functionapp publish "$FUNC"
+  func azure functionapp publish "$FUNC" --python
 else
   echo "    func bulunamadı, config-zip ile deploy ediliyor..."
   az functionapp config appsettings set -g "$RG" -n "$FUNC" \
