@@ -94,12 +94,48 @@ Set as Function App application settings (the template wires these up for you):
 | Setting            | Default            | Description                                       |
 | ------------------ | ------------------ | ------------------------------------------------- |
 | `AISPM_TENANT_ID`  | deployment tenant  | Entra tenant to scan                              |
-| `SCAN_SCHEDULE`    | `0 0 6 * * *`      | NCRONTAB schedule (sec min hour day month dow)    |
+| `SCAN_SCHEDULE`    | `0 0 6 * * *`      | NCRONTAB scan schedule (sec min hour day month dow) |
 | `REPORT_CONTAINER` | `aispm-reports`    | Blob container for published reports              |
+| `EMAIL_SCHEDULE`   | `0 0 8 * * 1`      | Weekly digest schedule (default Mon 08:00 UTC)    |
+| `AISPM_MAIL_SENDER`| —                  | Sender mailbox (UPN) for the weekly digest        |
+| `AISPM_MAIL_TO`    | —                  | Recipient(s), comma-separated                     |
+| `AISPM_REPORT_URL` | —                  | Full `/api/report` URL used for the dashboard button |
 
 What counts as an "AI application" and how each permission is weighted is defined in a
 single place — [`config.py`](config.py) — so the catalog and scoring policy are easy to
 tune to your environment.
+
+---
+
+## Viewing the dashboard
+
+The published report is served live from the Function — open one URL in a browser:
+
+```
+https://<FUNCTION_APP>.azurewebsites.net/api/report?code=<FUNCTION_KEY>
+```
+
+## Weekly email digest
+
+AI-SPM can email a weekly posture digest (headline numbers, notable findings, and a link
+to the live dashboard) via Microsoft Graph, sent by the Managed Identity — no SMTP secrets.
+
+1. The post-deploy script already grants the Managed Identity `Mail.Send`.
+2. Set the mail settings:
+   ```bash
+   az functionapp config appsettings set -g <RG> -n <FUNC> --settings \
+     AISPM_MAIL_SENDER="secops@contoso.com" \
+     AISPM_MAIL_TO="team@contoso.com,ciso@contoso.com" \
+     AISPM_REPORT_URL="https://<FUNC>.azurewebsites.net/api/report?code=<KEY>"
+   ```
+3. **Harden `Mail.Send`** — this application permission can otherwise send as any mailbox.
+   Scope it to only the sender with an Exchange application access policy:
+   ```powershell
+   New-ApplicationAccessPolicy -AppId <MANAGED_IDENTITY_APPID> `
+     -PolicyScopeGroupId <mail-enabled-group-containing-sender> `
+     -AccessRight RestrictAccess -Description "AI-SPM digest sender only"
+   ```
+4. Test immediately: `curl "https://<FUNC>.azurewebsites.net/api/digest?code=<KEY>"`
 
 ---
 

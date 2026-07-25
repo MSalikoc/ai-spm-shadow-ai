@@ -19,7 +19,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $GraphAppId = "00000003-0000-0000-c000-000000000000"   # Microsoft Graph
-$Roles = @("Directory.Read.All", "Application.Read.All", "AuditLog.Read.All")
+$Roles = @("Directory.Read.All", "Application.Read.All", "AuditLog.Read.All", "Mail.Send")
 
 Connect-MgGraph -Scopes "AppRoleAssignment.ReadWrite.All", "Application.Read.All" | Out-Null
 

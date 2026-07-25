@@ -11,7 +11,9 @@ set -euo pipefail
 
 MI_OBJECT_ID="${1:?Kullanim: $0 <MANAGED_IDENTITY_OBJECT_ID>}"
 GRAPH_APP_ID="00000003-0000-0000-c000-000000000000"   # Microsoft Graph
-ROLES=("Directory.Read.All" "Application.Read.All" "AuditLog.Read.All")
+# Mail.Send: haftalık özet e-postası için (güvenlik: Exchange Application Access
+# Policy ile yalnızca gönderen mailbox'a kısıtla — README'ye bak).
+ROLES=("Directory.Read.All" "Application.Read.All" "AuditLog.Read.All" "Mail.Send")
 
 echo "[*] Microsoft Graph service principal bulunuyor..."
 GRAPH_SP_ID=$(az ad sp show --id "$GRAPH_APP_ID" --query id -o tsv)
