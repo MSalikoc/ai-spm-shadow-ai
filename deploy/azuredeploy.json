@@ -1,0 +1,120 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "comments": "AI-SPM — Shadow AI Posture Management. Tek-tık Function App + Managed Identity + Storage + App Insights. Kod, WEBSITE_RUN_FROM_PACKAGE ile GitHub Release zip'inden yüklenir. Post-deploy: scripts/grant_graph_roles ile MI'a Graph rolleri atanır."
+  },
+  "parameters": {
+    "appName": {
+      "type": "string",
+      "defaultValue": "[concat('aispm-', uniqueString(resourceGroup().id))]",
+      "metadata": { "description": "Function App adı (global benzersiz olmalı)." }
+    },
+    "tenantId": {
+      "type": "string",
+      "defaultValue": "[subscription().tenantId]",
+      "metadata": { "description": "Taranacak Entra tenant ID." }
+    },
+    "scanSchedule": {
+      "type": "string",
+      "defaultValue": "0 0 6 * * *",
+      "metadata": { "description": "NCRONTAB: sn dk saat gün ay haftagünü. Varsayılan her gün 06:00 UTC." }
+    },
+    "reportContainer": {
+      "type": "string",
+      "defaultValue": "aispm-reports",
+      "metadata": { "description": "Raporların yazılacağı Blob container adı." }
+    },
+    "packageUri": {
+      "type": "string",
+      "defaultValue": "https://github.com/MSalikoc/ai-spm-shadow-ai/releases/latest/download/aispm-function.zip",
+      "metadata": { "description": "Self-contained Function zip URL'i (GitHub Release asset)." }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": { "description": "Azure bölgesi." }
+    }
+  },
+  "variables": {
+    "storageName": "[toLower(concat('aispm', uniqueString(resourceGroup().id)))]",
+    "planName": "[concat(parameters('appName'), '-plan')]",
+    "aiName": "[concat(parameters('appName'), '-ai')]",
+    "storageId": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2023-01-01",
+      "name": "[variables('storageName')]",
+      "location": "[parameters('location')]",
+      "sku": { "name": "Standard_LRS" },
+      "kind": "StorageV2",
+      "properties": { "minimumTlsVersion": "TLS1_2", "allowBlobPublicAccess": false }
+    },
+    {
+      "type": "Microsoft.Insights/components",
+      "apiVersion": "2020-02-02",
+      "name": "[variables('aiName')]",
+      "location": "[parameters('location')]",
+      "kind": "web",
+      "properties": { "Application_Type": "web" }
+    },
+    {
+      "type": "Microsoft.Web/serverfarms",
+      "apiVersion": "2023-01-01",
+      "name": "[variables('planName')]",
+      "location": "[parameters('location')]",
+      "sku": { "name": "Y1", "tier": "Dynamic" },
+      "kind": "functionapp",
+      "properties": { "reserved": true }
+    },
+    {
+      "type": "Microsoft.Web/sites",
+      "apiVersion": "2023-01-01",
+      "name": "[parameters('appName')]",
+      "location": "[parameters('location')]",
+      "kind": "functionapp,linux",
+      "identity": { "type": "SystemAssigned" },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/serverfarms', variables('planName'))]",
+        "[variables('storageId')]",
+        "[resourceId('Microsoft.Insights/components', variables('aiName'))]"
+      ],
+      "properties": {
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('planName'))]",
+        "reserved": true,
+        "httpsOnly": true,
+        "siteConfig": {
+          "linuxFxVersion": "Python|3.11",
+          "ftpsState": "Disabled",
+          "minTlsVersion": "1.2",
+          "appSettings": [
+            { "name": "FUNCTIONS_EXTENSION_VERSION", "value": "~4" },
+            { "name": "FUNCTIONS_WORKER_RUNTIME", "value": "python" },
+            { "name": "AzureWebJobsStorage", "value": "[concat('DefaultEndpointsProtocol=https;AccountName=', variables('storageName'), ';AccountKey=', listKeys(variables('storageId'), '2023-01-01').keys[0].value, ';EndpointSuffix=', environment().suffixes.storage)]" },
+            { "name": "APPLICATIONINSIGHTS_CONNECTION_STRING", "value": "[reference(resourceId('Microsoft.Insights/components', variables('aiName')), '2020-02-02').ConnectionString]" },
+            { "name": "WEBSITE_RUN_FROM_PACKAGE", "value": "[parameters('packageUri')]" },
+            { "name": "AISPM_TENANT_ID", "value": "[parameters('tenantId')]" },
+            { "name": "SCAN_SCHEDULE", "value": "[parameters('scanSchedule')]" },
+            { "name": "REPORT_CONTAINER", "value": "[parameters('reportContainer')]" }
+          ]
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "functionAppName": {
+      "type": "string",
+      "value": "[parameters('appName')]"
+    },
+    "managedIdentityPrincipalId": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Web/sites', parameters('appName')), '2023-01-01', 'Full').identity.principalId]"
+    },
+    "nextStep": {
+      "type": "string",
+      "value": "[concat('Post-deploy: MI (principalId yukarıda) icin Graph rollerini ata -> scripts/grant_graph_roles.sh ', reference(resourceId('Microsoft.Web/sites', parameters('appName')), '2023-01-01', 'Full').identity.principalId)]"
+    }
+  }
+}

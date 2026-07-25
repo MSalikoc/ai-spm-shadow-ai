@@ -1,0 +1,29 @@
+"""
+Ortak tarama boru hattı — hem CLI (main.py) hem Azure Function (function_app.py)
+bunu çağırır. Tek bir "run" fonksiyonu: keşif → izin eşleme → skorlama.
+"""
+import collectors
+import scoring
+
+
+def run(graph, tenant_id: str) -> list[dict]:
+    """Graph istemcisiyle tam taramayı çalıştırır, risk-sıralı bulguları döner."""
+    discovered = collectors.collect_service_principals(graph, tenant_id)
+    collectors.enrich_with_oauth_grants(graph, discovered)
+    return scoring.score_all(discovered)
+
+
+def summary(scored: list[dict]) -> dict:
+    """Alarm/log/HTTP yanıtı için özet sayaçlar."""
+    return {
+        "total": len(scored),
+        "critical": sum(1 for a in scored if a["risk_level"] == "Kritik"),
+        "high": sum(1 for a in scored if a["risk_level"] == "Yüksek"),
+        "medium": sum(1 for a in scored if a["risk_level"] == "Orta"),
+        "low": sum(1 for a in scored if a["risk_level"] == "Düşük"),
+        "top": [
+            {"name": a["display_name"], "vendor": a["vendor"],
+             "score": a["risk_score"], "level": a["risk_level"]}
+            for a in scored[:5]
+        ],
+    }

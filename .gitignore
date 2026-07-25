@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Azure Functions / lokal
+local.settings.json
+.python_packages/
+bin/
+obj/
+
+# Çıktılar
+out/
+*.zip

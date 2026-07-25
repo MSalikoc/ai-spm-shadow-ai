@@ -1,0 +1,8 @@
+# Çekirdek (CLI + engine)
+msal>=1.28
+requests>=2.31
+
+# Azure Function / Managed Identity / Blob
+azure-functions>=1.20
+azure-identity>=1.17
+azure-storage-blob>=12.20
