@@ -26,6 +26,15 @@ def _shadow(scored):
     return [a for a in scored if not a.get("first_party_microsoft")]
 
 
+def _report_url():
+    """Dashboard için TEMİZ URL — function key İÇERMEZ (Entra/report endpoint)."""
+    explicit = os.environ.get("AISPM_REPORT_URL")
+    if explicit:
+        return explicit.split("?")[0]   # yanlışlıkla eklenmiş ?code=... varsa at
+    host = os.environ.get("WEBSITE_HOSTNAME")
+    return f"https://{host}/api/report" if host else None
+
+
 def _changes_block(changes):
     if not changes:
         return ('<h3 style="margin:18px 0 8px;font-size:15px">Bu hafta</h3>'
