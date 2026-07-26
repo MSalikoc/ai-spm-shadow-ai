@@ -38,6 +38,15 @@ def _match_vendor(sp: dict):
     return None, None, None
 
 
+_AGENT_HINTS = ("agent", "copilot", " bot", "bot ", "studio", "botframework", "assistant")
+
+
+def _asset_type(sp: dict) -> str:
+    """application vs agent (isim/yayıncı sinyalleriyle — kesin değil, yönetici ayrımı için)."""
+    blob = _text_blob(sp)
+    return "agent" if any(h in blob for h in _AGENT_HINTS) else "application"
+
+
 def _is_third_party(sp: dict, home_tenant: str) -> bool:
     owner = sp.get("appOwnerOrganizationId")
     if owner is None:
@@ -71,6 +80,7 @@ def collect_service_principals(graph, home_tenant: str) -> list[dict]:
             "vendor": vendor,
             "confidence": confidence,
             "match_signal": signal,          # app_id / pattern / domain / generic
+            "asset_type": _asset_type(sp),   # application / agent
             "scopes": [],                    # delegated scope adları (skorlama geriye-uyum)
             "consent_type": None,            # AllPrincipals (admin) / Principal (kullanıcı)
             "user_count": 0,

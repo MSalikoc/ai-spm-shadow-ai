@@ -6,6 +6,20 @@ All notable changes to AI-SPM are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **Executive dashboard** (`executive.py`) — an AI-estate overview for leadership:
+  - 14 estate KPIs (AI applications, AI agents, active users, unapproved, unknown, new
+    this week, apps without owner, agents without purpose, open/overdue findings,
+    assessment coverage, + connector-gated local agents / MCP servers / AI models).
+  - **Application vs Agent** split (name-signal heuristic, `asset_type`) and
+    enterprise / web / **local** usage-surface split.
+  - **Rule-based "Needs Attention" narratives** ("Finance biriminde N yeni AI…",
+    "Claude kullanımı %42 arttı", owner/purpose gaps, overdue findings).
+  - **Top-5 changes**, **Coverage Overview** (owner% / agent-purpose% + connector status).
+  - **Honesty by design:** local agents / MCP servers / AI models / Purview visibility
+    require connectors that aren't wired yet — these are shown as **0 with an explicit
+    "not connected" coverage gap** rather than fabricated inventory.
+  - Drill-down: KPI cards link to the relevant dashboard section anchors.
+  - `tests/test_executive.py`.
 - **Managed finding records + lifecycle** (`findings.py`) — findings become tracked work
   items, not just text:
   - Rule engine generates findings (owner-missing, admin-consent-sensitive,

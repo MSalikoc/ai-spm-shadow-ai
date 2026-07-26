@@ -143,6 +143,74 @@ def _findings_section(findings):
 """
 
 
+def _executive_section(apps, changes, findings):
+    import executive
+    m = executive.estate_metrics(apps, changes, findings)
+    cov = executive.coverage(apps)
+    surface = executive.usage_surface(apps)
+    na = executive.needs_attention(apps, changes, findings)
+    tc = executive.top_changes(changes, 5)
+
+    cards = [
+        (m["total_applications"], "AI Applications", "#sec-inventory", ""),
+        (m["total_agents"], "AI Agents", "#sec-inventory", ""),
+        (m["active_users"], "Active AI Users", "#sec-usage", ""),
+        (m["unapproved"], "Unapproved AI", "#sec-inventory", "high"),
+        (m["local_agents"], "Local AI Agents", "#sec-coverage", "muted"),
+        (m["mcp_servers"], "MCP Servers", "#sec-coverage", "muted"),
+        (m["ai_models"], "AI Models", "#sec-coverage", "muted"),
+        (m["new_this_week"], "New Assets (7g)", "#sec-timeline", ""),
+        (m["unknown_assets"], "Unknown Assets", "#sec-inventory", "crit"),
+        (m["apps_without_owner"], "Apps w/o Owner", "#sec-coverage", "high"),
+        (m["agents_without_purpose"], "Agents w/o Purpose", "#sec-coverage", "high"),
+        (m["open_findings"], "Open Findings", "#sec-findings", "crit"),
+        (m["overdue_findings"], "Overdue Findings", "#sec-findings", "high"),
+        (f'{m["assessment_coverage"]}%', "Assessment Coverage", "#sec-coverage", "low"),
+    ]
+    kpi = "".join(
+        f'<a class="card kpi {cls}" href="{href}"><span class="n">{v}</span>'
+        f'<span class="l">{html.escape(lbl)}</span></a>' for v, lbl, href, cls in cards)
+
+    na_html = "".join(f"<li>{html.escape(x)}</li>" for x in na) or \
+        "<li>Dikkat gerektiren belirgin bir durum yok.</li>"
+    tc_html = "".join(
+        f'<li><b>{html.escape(e.get("change_type",""))}</b> {html.escape(e.get("asset_name",""))} '
+        f'— {html.escape(e.get("description",""))}</li>' for e in tc) or \
+        '<li class="governed">Bu dönem önemli değişiklik yok.</li>'
+
+    aa_bars = _bars([("Application", "", m["total_applications"], "#0f6cbd"),
+                     ("Agent", "", m["total_agents"], "#7c3aed")],
+                    max(m["total_applications"], m["total_agents"], 1))
+    surf_bars = _bars([("Enterprise (admin-sanctioned)", "", surface["enterprise"], "#2e8b57"),
+                       ("Web (user-consent)", "", surface["web"], "#b8860b"),
+                       ("Local (connector gerekli)", "", surface["local"], "#6b7280")],
+                      max(surface["enterprise"], surface["web"], 1))
+    conn_html = "".join(
+        f'<li><span class="dot" style="background:{"#2e8b57" if ok else "#c0392b"}"></span>'
+        f'{html.escape(name)} — {"bağlı" if ok else "<b>bağlı değil</b>"} '
+        f'<span class="governed">({html.escape(purpose)})</span></li>'
+        for name, ok, purpose in cov["connectors"])
+    own_bar = _bars([("Owner coverage", f"{cov['owner_coverage']}%", cov["owner_coverage"], "#0f6cbd"),
+                     ("Agent purpose coverage", f"{cov['purpose_coverage']}%", cov["purpose_coverage"], "#7c3aed")],
+                    100)
+
+    return f"""
+  <h2 style="margin:4px 4px 12px;font-size:18px">AI Estate — Executive Overview</h2>
+  <div class="kpi-grid">{kpi}</div>
+  <div class="grid cols-2" style="margin-top:16px">
+    <div class="card" id="sec-needs"><h3>Needs Attention</h3><ul class="na">{na_html}</ul></div>
+    <div class="card"><h3>En önemli 5 değişiklik</h3><ul>{tc_html}</ul></div>
+  </div>
+  <div class="grid cols-2" style="margin-top:16px">
+    <div class="card"><h3>Application vs Agent · kullanım yüzeyi</h3>{aa_bars}
+      <div style="height:8px"></div>{surf_bars}</div>
+    <div class="card" id="sec-coverage"><h3>Coverage Overview</h3>{own_bar}
+      <h3 style="margin-top:14px">Veri kaynağı / connector durumu</h3>
+      <ul class="conn">{conn_html}</ul></div>
+  </div>
+"""
+
+
 def _timeline_section(changes):
     if changes is None:
         return ""
@@ -504,7 +572,14 @@ main{max-width:1120px;margin:0 auto;padding:22px}
 .kpi .n{font-size:30px;font-weight:700;line-height:1}
 .kpi .l{font-size:12px;color:var(--muted)}
 .kpi.crit .n{color:#c0392b}.kpi.high .n{color:#d35400}
-.kpi.med .n{color:#b8860b}.kpi.low .n{color:#2e8b57}
+.kpi.med .n{color:#b8860b}.kpi.low .n{color:#2e8b57}.kpi.muted .n{color:var(--muted)}
+a.card{text-decoration:none;color:inherit;cursor:pointer;transition:border-color .15s}
+a.card:hover{border-color:var(--accent)}
+a.card .n{font-size:24px}
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.na li{margin:5px 0}
+.conn{margin:8px 0 0;padding:0}
+.conn li{list-style:none;display:flex;align-items:center;gap:8px;font-size:13px;margin:5px 0}
 .summary{display:flex;gap:26px;align-items:center;flex-wrap:wrap}
 .tenant-facts{display:grid;grid-template-columns:auto auto;gap:6px 26px;font-size:13px}
 .tenant-facts b{color:var(--muted);font-weight:500}
@@ -808,6 +883,7 @@ def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None) -
   <button id="tg" class="themebtn" title="Tema">&#9790;</button>
 </header>
 <main>
+  {_executive_section(apps, changes, findings)}
   <div class="grid cols-2" style="align-items:stretch">
     <div class="card">
       <h3>Tenant</h3>
@@ -824,9 +900,9 @@ def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None) -
       <div class="summary">{donut}<div class="legend">{legend}</div></div>
     </div>
   </div>
-  {_timeline_section(changes)}
+  <div id="sec-timeline">{_timeline_section(changes)}</div>
   {new_bu_section}
-  {_findings_section(findings)}
+  <div id="sec-findings">{_findings_section(findings)}</div>
   <div class="grid cols-4" style="margin-top:16px">
     <div class="card kpi"><span class="n">{len(shadow)}</span><span class="l">Shadow AI uygulaması</span></div>
     <div class="card kpi crit"><span class="n">{counts['Kritik']}</span><span class="l">Kritik</span></div>
@@ -853,10 +929,10 @@ def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None) -
     <div class="card kpi"><span class="n">{both_n}</span><span class="l">Her iki erişim tipi</span></div>
     <div class="card kpi crit"><span class="n">{highpriv_apponly}</span><span class="l">Yüksek ayrıcalıklı app-only</span></div>
   </div>
-  {usage_section}
+  <div id="sec-usage">{usage_section}</div>
   {governance_section}
   {classification_section}
-  <div class="card" style="margin-top:16px">
+  <div class="card" id="sec-inventory" style="margin-top:16px">
     <h3>Envanter ({len(all_apps)} uygulama · {len(shadow)} shadow · {len(microsoft)} Microsoft first-party)</h3>
     <div class="filters">
       <button data-group="perm" data-value="all" class="active">İzin: Tümü</button>
