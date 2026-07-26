@@ -72,8 +72,8 @@ def read_latest(name: str = "latest.html") -> str | None:
         return None
 
 
-def publish(scored: list[dict], tenant_id: str, changes=None) -> dict:
-    html = report.html_string(scored, tenant_id, changes)
+def publish(scored: list[dict], tenant_id: str, changes=None, findings=None) -> dict:
+    html = report.html_string(scored, tenant_id, changes, findings)
     js = report.json_string(scored)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 

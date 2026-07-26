@@ -16,6 +16,7 @@ import azure.functions as func
 
 import auth
 import drift
+import findings as findingsvc
 import metadata
 import notify
 import pipeline
@@ -44,7 +45,12 @@ def _run_scan(source: str):
     except Exception:
         logging.exception("drift hata")
         this_scan_changes, changes = [], []
-    published = storage.publish(scored, tenant_id, changes)
+    try:  # yönetilebilir finding kayıtları (üret + uzlaştır + kalıcılaştır)
+        finding_records = findingsvc.process(scored)
+    except Exception:
+        logging.exception("findings hata")
+        finding_records = []
+    published = storage.publish(scored, tenant_id, changes, finding_records)
     summ = pipeline.summary(scored)
 
     logging.info("AI-SPM scan (%s): %s bulgu, %s kritik, %s yüksek, %s değişiklik → %s",
@@ -128,4 +134,26 @@ def metadata_set(req: func.HttpRequest) -> func.HttpResponse:
     entry = metadata.set_metadata(store, app_id, body)
     metadata.save(store)
     return func.HttpResponse(json.dumps({"app_id": app_id, "metadata": entry}, ensure_ascii=False),
+                             mimetype="application/json", status_code=200)
+
+
+@app.route(route="finding", methods=["POST"], auth_level=func.AuthLevel.FUNCTION)
+def finding_set(req: func.HttpRequest) -> func.HttpResponse:
+    """Bir finding'in lifecycle alanlarını günceller (owner/team/due_date/status/…)."""
+    try:
+        body = req.get_json()
+    except ValueError:
+        return func.HttpResponse('{"error":"geçersiz JSON"}', status_code=400,
+                                 mimetype="application/json")
+    fid = (body or {}).get("finding_id")
+    if not fid:
+        return func.HttpResponse('{"error":"finding_id gerekli"}', status_code=400,
+                                 mimetype="application/json")
+    store = storage.read_json("findings.json") or {}
+    rec = findingsvc.set_finding(store, fid, body)
+    if rec is None:
+        return func.HttpResponse('{"error":"finding bulunamadı"}', status_code=404,
+                                 mimetype="application/json")
+    storage.write_json("findings.json", store)
+    return func.HttpResponse(json.dumps({"finding": rec}, ensure_ascii=False),
                              mimetype="application/json", status_code=200)

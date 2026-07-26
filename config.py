@@ -20,6 +20,8 @@ AI_CATEGORIES = [
     "Unknown AI", "Retired AI",
 ]
 OWNERSHIP_CLASSES = ["Internal", "External", "Unknown"]
+FINDING_STATUSES = ["Open", "Assigned", "In Progress", "Pending Review",
+                    "Resolved", "Accepted", "False Positive", "Reopened"]
 
 # --- Hassas delegated (kullanıcı adına) Graph scope ağırlıkları -------------
 # 0-10 arası. Yüksek = veri sızıntısı açısından daha tehlikeli.

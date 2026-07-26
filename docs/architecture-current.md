@@ -33,6 +33,8 @@ Python 3.11), authenticates with a system-assigned Managed Identity, and is **re
 | `catalog.json` | Code-free AI vendor catalog (app_ids / patterns / domains) loaded by `config.py`. |
 | `config.py` | Loads `catalog.json`; sensitive-scope weights, governance/classification dictionaries, Microsoft owner tenants. |
 | `report.py` | Dashboard HTML (light/dark) + JSON rendering. |
+| `findings.py` | Managed finding records: rule engine → deterministic IDs, persistent lifecycle store (`findings.json`), auto-resolve/reopen, overdue tracking. |
+| `ticketing.py` | Ticketing adapter interface only (`TicketAdapter`/`NoopAdapter`); Jira/ServiceNow not implemented. |
 | `drift.py` | Change tracking: normalized snapshot per scan, diff vs. previous → change-event timeline (`snapshot.json` / `changes.json`); first scan is a no-event baseline; executive summary for the digest. |
 | `metadata.py` | Persistent business/lifecycle metadata store (`metadata.json` in Blob), merged into each scan so manual data survives re-scans; lifecycle/review history. |
 | `notify.py` | Weekly digest email via Microsoft Graph `sendMail`, with dashboard HTML attachment. |

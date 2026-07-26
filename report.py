@@ -6,7 +6,12 @@ from datetime import datetime, timezone
 
 from config import (SENSITIVE_SCOPES, SCOPE_HEURISTICS,
                     LIFECYCLE_STATUSES, CRITICALITY, ENVIRONMENTS,
-                    AI_CATEGORIES, OWNERSHIP_CLASSES)
+                    AI_CATEGORIES, OWNERSHIP_CLASSES, FINDING_STATUSES)
+
+_SEV_COLOR = {"Critical": "#c0392b", "High": "#d35400", "Medium": "#b8860b", "Low": "#2e8b57"}
+_FSTATUS_COLOR = {"Open": "#c0392b", "Assigned": "#d35400", "In Progress": "#0f6cbd",
+                  "Pending Review": "#b8860b", "Resolved": "#2e8b57", "Accepted": "#4b5563",
+                  "False Positive": "#6b7280", "Reopened": "#c0392b"}
 
 _LIFECYCLE_COLOR = {"Discovered": "#6b7280", "Under Review": "#b8860b", "Pilot": "#0f6cbd",
                     "Approved": "#2e8b57", "Restricted": "#d35400", "Blocked": "#c0392b",
@@ -19,6 +24,123 @@ _CAT_COLOR = {"Microsoft First-Party AI": "#0f6cbd", "Approved Enterprise AI": "
 
 _IMP_COLOR = {"Critical": "#c0392b", "High": "#d35400", "Medium": "#b8860b",
               "Low": "#2e8b57", "Info": "#6b7280"}
+
+
+def _finding_editor(rec):
+    fid = html.escape(rec.get("finding_id", ""))
+    opts = "".join(f'<option{" selected" if s == rec.get("status") else ""}>{html.escape(s)}</option>'
+                   for s in FINDING_STATUSES)
+
+    def fld(label, name, val=""):
+        return f'<label>{label}<input name="{name}" value="{html.escape(val or "")}"></label>'
+
+    return (
+        '<details class="editor"><summary>Finding düzenle</summary>'
+        f'<div class="fform" data-finding="{fid}">'
+        f'<label>Status<select name="status">{opts}</select></label>'
+        f'{fld("Owner", "owner", rec.get("owner"))}'
+        f'{fld("Responsible team", "responsible_team", rec.get("responsible_team"))}'
+        f'<label>Due date<input name="due_date" type="date" value="{html.escape((rec.get("due_date") or "")[:10])}"></label>'
+        f'{fld("Ticket ref", "ticket_reference", rec.get("ticket_reference"))}'
+        f'<label>Resolution note<textarea name="resolution_note">{html.escape(rec.get("resolution_note", "") or "")}</textarea></label>'
+        '<button type="button" class="fsave">Kaydet</button><span class="mstatus"></span>'
+        '</div></details>')
+
+
+def _finding_record_row(rec, now):
+    sev = rec.get("severity", "Medium")
+    sc = _SEV_COLOR.get(sev, "#b8860b")
+    status = rec.get("status", "Open")
+    stc = _FSTATUS_COLOR.get(status, "#c0392b")
+    due = rec.get("due_date") or ""
+    od = ""
+    if due and status not in ("Resolved", "Accepted", "False Positive"):
+        try:
+            dd = datetime.fromisoformat(due.replace("Z", "+00:00"))
+            if dd.tzinfo is None:
+                dd = dd.replace(tzinfo=timezone.utc)
+            if dd < now:
+                od = ' <span style="color:#c0392b;font-weight:600">(gecikmiş)</span>'
+        except (ValueError, AttributeError):
+            pass
+    owner = html.escape(rec.get("owner") or "—")
+    return (
+        f'<details class="finding" data-fstatus="{html.escape(status)}">'
+        f'<summary>'
+        f'<span class="pill" style="background:{sc}">{html.escape(rec.get("priority","P?"))}</span>'
+        f'<span class="f-name">{html.escape(rec.get("title","—"))}'
+        f'<span class="f-vendor">{html.escape(rec.get("asset_name",""))} · {html.escape(sev)}</span></span>'
+        f'<span class="ptype" style="background:{stc}">{html.escape(status)}</span>'
+        f'<span class="f-meta">owner: {owner} · due: {html.escape(due) or "—"}{od}</span>'
+        f'</summary>'
+        f'<div class="f-body">'
+        f'<div class="f-col"><h4>Açıklama</h4><p>{html.escape(rec.get("description",""))}</p>'
+        f'<h4 style="margin-top:8px">İş etkisi</h4><p>{html.escape(rec.get("business_impact",""))}</p></div>'
+        f'<div class="f-col"><h4>Önerilen aksiyon</h4><p>{html.escape(rec.get("recommended_action",""))}</p>'
+        f'<h4 style="margin-top:8px">Kayıt</h4><ul>'
+        f'<li>Finding ID: <code>{html.escape(rec.get("finding_id",""))}</code></li>'
+        f'<li>İlk görülme: {html.escape(rec.get("first_seen",""))} · Son: {html.escape(rec.get("last_seen",""))}</li>'
+        f'<li>Ticket: {html.escape(rec.get("ticket_reference") or "—")}</li></ul></div>'
+        f'<div class="f-col">{_finding_editor(rec)}</div>'
+        f'</div></details>')
+
+
+def _findings_section(findings):
+    if findings is None:
+        return ""
+    now = datetime.now(timezone.utc)
+    active = [f for f in findings if f.get("status") not in ("Resolved", "Accepted", "False Positive")]
+    active.sort(key=lambda f: (["P1", "P2", "P3", "P4"].index(f.get("priority", "P4"))
+                               if f.get("priority") in ("P1", "P2", "P3", "P4") else 9))
+    counts = {}
+    for f in findings:
+        counts[f.get("status", "Open")] = counts.get(f.get("status", "Open"), 0) + 1
+    open_n = sum(counts.get(s, 0) for s in ("Open", "Assigned", "Reopened"))
+    prog_n = sum(counts.get(s, 0) for s in ("In Progress", "Pending Review"))
+    resolved_n = counts.get("Resolved", 0)
+    overdue = []
+    for f in active:
+        d = f.get("due_date")
+        if not d:
+            continue
+        try:
+            dd = datetime.fromisoformat(d.replace("Z", "+00:00"))
+            if dd.tzinfo is None:
+                dd = dd.replace(tzinfo=timezone.utc)
+            if dd < now:
+                overdue.append(f)
+        except (ValueError, AttributeError):
+            pass
+    overdue_list = "".join(
+        f'<li><b>{html.escape(f.get("title",""))}</b> — {html.escape(f.get("asset_name",""))} · '
+        f'due {html.escape(f.get("due_date") or "")} · owner {html.escape(f.get("owner") or "—")}</li>'
+        for f in overdue) or '<li class="governed">Gecikmiş finding yok.</li>'
+
+    # owner bazında (açık)
+    owners = {}
+    for f in active:
+        owners[f.get("owner") or "Atanmamış"] = owners.get(f.get("owner") or "Atanmamış", 0) + 1
+    owner_bars = _bars([(o, "", n, "#0f6cbd") for o, n in
+                        sorted(owners.items(), key=lambda kv: -kv[1])[:8]],
+                       max(owners.values(), default=1))
+
+    rows = "".join(_finding_record_row(f, now) for f in active) or \
+        '<div class="empty">Açık finding yok. 👍</div>'
+    return f"""
+  <h3 style="margin:22px 4px 10px;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)">Findings — yönetilebilir kayıtlar</h3>
+  <div class="grid cols-4">
+    <div class="card kpi crit"><span class="n">{open_n}</span><span class="l">Açık / yeniden açık</span></div>
+    <div class="card kpi med"><span class="n">{prog_n}</span><span class="l">İşlemde / review</span></div>
+    <div class="card kpi high"><span class="n">{len(overdue)}</span><span class="l">Gecikmiş (overdue)</span></div>
+    <div class="card kpi low"><span class="n">{resolved_n}</span><span class="l">Çözülmüş</span></div>
+  </div>
+  <div class="grid cols-2" style="margin-top:16px">
+    <div class="card"><h3>Gecikmiş finding'ler</h3><ul>{overdue_list}</ul></div>
+    <div class="card"><h3>Owner bazında açık finding</h3>{owner_bars}</div>
+  </div>
+  <div class="card" style="margin-top:16px"><h3>Açık finding'ler ({len(active)})</h3>
+    <div class="findings">{rows}</div></div>
+"""
 
 
 def _timeline_section(changes):
@@ -431,12 +553,13 @@ main{max-width:1120px;margin:0 auto;padding:22px}
  border-radius:999px;padding:5px 12px;font-size:13px}
 .editor{margin:0 16px 14px;border-top:1px dashed var(--line)}
 .editor summary{cursor:pointer;padding:8px 0;font-size:13px;color:var(--accent);font-weight:600}
-.mform{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;padding:8px 0}
-.mform label{display:flex;flex-direction:column;font-size:12px;color:var(--muted);gap:4px}
-.mform input,.mform select,.mform textarea{background:var(--bg);color:var(--ink);
- border:1px solid var(--line);border-radius:6px;padding:6px 8px;font:13px inherit}
-.mform textarea{min-height:46px;grid-column:1/-1}
-.mform .msave{background:var(--accent);color:#fff;border:none;border-radius:6px;
+.mform,.fform{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;padding:8px 0}
+.mform label,.fform label{display:flex;flex-direction:column;font-size:12px;color:var(--muted);gap:4px}
+.mform input,.mform select,.mform textarea,.fform input,.fform select,.fform textarea{
+ background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:6px;
+ padding:6px 8px;font:13px inherit}
+.mform textarea,.fform textarea{min-height:46px;grid-column:1/-1}
+.mform .msave,.fform .fsave{background:var(--accent);color:#fff;border:none;border-radius:6px;
  padding:8px 16px;cursor:pointer;font-weight:600;align-self:end}
 .mstatus{font-size:12px;color:var(--muted);align-self:center}
 .timeline{display:flex;flex-direction:column}
@@ -477,11 +600,17 @@ document.querySelectorAll('.msave').forEach(function(btn){btn.onclick=function()
  var body={app_id:app,ownership:{business_owner:v('business_owner'),technical_owner:v('technical_owner'),sponsor:v('sponsor')},business_context:{business_unit:v('business_unit'),subsidiary:v('subsidiary'),purpose:v('purpose'),criticality:v('criticality'),environment:v('environment')},lifecycle:{status:v('status'),next_review_date:v('next_review_date')||null},classification:{category:v('class_category')||null,ownership:v('class_ownership')||null},notes:v('notes')};
  var st=box.querySelector('.mstatus');st.textContent='Kaydediliyor...';
  fetch('/api/metadata?code='+encodeURIComponent(code),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.ok?r.json():Promise.reject(r.status);}).then(function(){st.textContent='\\u2713 Kaydedildi (sonraki taramada islenir)';}).catch(function(e){st.textContent='Hata: '+e;});};});
+document.querySelectorAll('.fsave').forEach(function(btn){btn.onclick=function(){
+ var box=btn.closest('.fform'),fid=box.getAttribute('data-finding');
+ function v(n){var e=box.querySelector('[name="'+n+'"]');return e?e.value:'';}
+ var body={finding_id:fid,status:v('status'),owner:v('owner'),responsible_team:v('responsible_team'),due_date:v('due_date')||null,ticket_reference:v('ticket_reference'),resolution_note:v('resolution_note')};
+ var st=box.querySelector('.mstatus');st.textContent='Kaydediliyor...';
+ fetch('/api/finding?code='+encodeURIComponent(code),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.ok?r.json():Promise.reject(r.status);}).then(function(){st.textContent='\\u2713 Kaydedildi';}).catch(function(e){st.textContent='Hata: '+e;});};});
 })();
 """
 
 
-def html_string(apps: list[dict], tenant_id: str, changes=None) -> str:
+def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None) -> str:
     microsoft = [a for a in apps if a.get("first_party_microsoft")]
     shadow = [a for a in apps if not a.get("first_party_microsoft")]
     shadow.sort(key=lambda a: a["risk_score"], reverse=True)
@@ -697,6 +826,7 @@ def html_string(apps: list[dict], tenant_id: str, changes=None) -> str:
   </div>
   {_timeline_section(changes)}
   {new_bu_section}
+  {_findings_section(findings)}
   <div class="grid cols-4" style="margin-top:16px">
     <div class="card kpi"><span class="n">{len(shadow)}</span><span class="l">Shadow AI uygulaması</span></div>
     <div class="card kpi crit"><span class="n">{counts['Kritik']}</span><span class="l">Kritik</span></div>

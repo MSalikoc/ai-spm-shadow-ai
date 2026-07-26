@@ -6,6 +6,23 @@ All notable changes to AI-SPM are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **Managed finding records + lifecycle** (`findings.py`) — findings become tracked work
+  items, not just text:
+  - Rule engine generates findings (owner-missing, admin-consent-sensitive,
+    app-only-highpriv, unknown-classification, unused-high-risk, lifecycle-review-overdue,
+    blocked-still-active) with **deterministic ID** `finding-{asset_id}-{rule_key}` — no
+    duplicates across scans.
+  - Persistent store (`findings.json`): first_seen/last_seen, status (8 states), owner,
+    responsible team, due date, priority, business impact, recommended action, resolution
+    note, ticket reference, closed date, history. Scan updates last_seen + rule content but
+    never overwrites manual fields.
+  - Auto-resolve when a finding disappears; **Reopened** when a Resolved finding recurs.
+  - Editable from the dashboard and `POST /api/finding` (or the `findings.json` config).
+  - Dashboard: findings-by-status / by-owner, **overdue list**, per-finding record with
+    inline editor.
+  - `ticketing.py`: **adapter interface only** (`TicketAdapter` + `NoopAdapter`) — Jira/
+    ServiceNow not implemented yet.
+  - `tests/test_findings.py`.
 - **Drift / change tracking** (`drift.py`) — "what changed since the last scan?":
   - Deterministic snapshot per scan (`snapshot.json`); diff vs. the previous snapshot
     produces change events into a timeline (`changes.json`). **First scan = baseline, no
