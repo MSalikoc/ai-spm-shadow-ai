@@ -15,6 +15,7 @@ import os
 import azure.functions as func
 
 import auth
+import drift
 import metadata
 import notify
 import pipeline
@@ -37,11 +38,18 @@ def _run_scan(source: str):
     graph = GraphClient(token)
 
     scored = pipeline.run(graph, tenant_id)
-    published = storage.publish(scored, tenant_id)
+    try:  # drift: önceki snapshot ile diff + kaydet (ilk scan baseline → boş)
+        this_scan_changes = drift.process(scored)
+        changes = drift.recent(14)
+    except Exception:
+        logging.exception("drift hata")
+        this_scan_changes, changes = [], []
+    published = storage.publish(scored, tenant_id, changes)
     summ = pipeline.summary(scored)
 
-    logging.info("AI-SPM scan (%s): %s bulgu, %s kritik, %s yüksek → %s",
-                 source, summ["total"], summ["critical"], summ["high"], published)
+    logging.info("AI-SPM scan (%s): %s bulgu, %s kritik, %s yüksek, %s değişiklik → %s",
+                 source, summ["total"], summ["critical"], summ["high"],
+                 len(this_scan_changes), published)
     return {"summary": summ, "published": published, "tenant": tenant_id}, scored, tenant_id
 
 
@@ -57,8 +65,9 @@ def daily_scan(timer: func.TimerRequest) -> None:
                    run_on_startup=False, use_monitor=True)
 def weekly_digest(timer: func.TimerRequest) -> None:
     _, scored, tenant_id = _run_scan("weekly")
-    outcome = notify.send_email_digest(scored, tenant_id)
-    logging.info("AI-SPM haftalık digest: %s", outcome)
+    weekly_changes = drift.recent(7)
+    outcome = notify.send_email_digest(scored, tenant_id, weekly_changes)
+    logging.info("AI-SPM haftalık digest: %s (%s değişiklik)", outcome, len(weekly_changes))
 
 
 @app.route(route="scan", auth_level=func.AuthLevel.FUNCTION)
@@ -78,7 +87,7 @@ def digest_now(req: func.HttpRequest) -> func.HttpResponse:
     """On-demand: tara + haftalık özet e-postasını hemen gönder (test için)."""
     try:
         result, scored, tenant_id = _run_scan("digest")
-        outcome = notify.send_email_digest(scored, tenant_id)
+        outcome = notify.send_email_digest(scored, tenant_id, drift.recent(7))
         return func.HttpResponse(
             json.dumps({"digest": outcome, "summary": result["summary"]}, ensure_ascii=False),
             mimetype="application/json", status_code=200)

@@ -6,6 +6,22 @@ All notable changes to AI-SPM are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **Drift / change tracking** (`drift.py`) — "what changed since the last scan?":
+  - Deterministic snapshot per scan (`snapshot.json`); diff vs. the previous snapshot
+    produces change events into a timeline (`changes.json`). **First scan = baseline, no
+    events.** Deterministic asset IDs (app_id; `resource|permission`) and change IDs.
+  - 20 event types: NEW/REMOVED_APPLICATION, NEW/REMOVED_PERMISSION, PERMISSION_ESCALATED,
+    NEW_APP_ONLY_ACCESS, ADMIN_CONSENT_ADDED/REMOVED, OWNER_ADDED/REMOVED/CHANGED,
+    BUSINESS_OWNER_CHANGED, CLASSIFICATION_CHANGED, LIFECYCLE_CHANGED, FIRST_SIGNIN,
+    ACTIVITY_INCREASED/DECREASED (with %), APP_DISABLED/REENABLED. Each event has
+    change_id / type / asset id+name / timestamp / old / new / importance / description.
+  - **Weekly digest is now change-focused** — an executive "Bu hafta:" summary
+    ("N new AI apps", "Claude usage +32%", "1 app Under Review→Approved").
+  - Dashboard: change **timeline** section (importance-colored).
+  - Manual metadata edits surface as change events on the next scan (LIFECYCLE/OWNER/
+    CLASSIFICATION_CHANGED).
+  - `storage.read_latest` now falls back to local `out/` (symmetry with `write_json`).
+  - `tests/test_drift.py`.
 - **Classification engine** (`classifier.py`) — categorizes each AI app into 8 governance
   classes (Microsoft First-Party / Approved / Unapproved Enterprise / Third-Party Shadow /
   Internal Custom / Personal / Unknown / Retired) + ownership (Internal/External/Unknown),

@@ -13,24 +13,24 @@ from datetime import datetime, timezone
 import report
 
 
-def read_metadata() -> dict:
-    """Kalıcı business/lifecycle metadata deposunu (metadata.json) okur. Yoksa {}."""
-    raw = read_latest("metadata.json")
+def read_json(name: str):
+    """Blob'daki bir JSON dosyasını okur (drift snapshot/changes, metadata). Yoksa None."""
+    raw = read_latest(name)
     if not raw:
-        return {}
+        return None
     try:
         return json.loads(raw)
     except (ValueError, TypeError):
-        return {}
+        return None
 
 
-def write_metadata(store: dict) -> None:
-    """Metadata deposunu Blob'a (yoksa out/ altına) yazar."""
-    payload = json.dumps(store, ensure_ascii=False, indent=2)
+def write_json(name: str, obj) -> None:
+    """Bir JSON nesnesini Blob'a (yoksa out/ altına) yazar."""
+    payload = json.dumps(obj, ensure_ascii=False, indent=2)
     conn = os.environ.get("AzureWebJobsStorage") or os.environ.get("REPORT_STORAGE_CONNECTION")
     if not conn or conn.lower().startswith("usedevelopmentstorage"):
         os.makedirs("out", exist_ok=True)
-        with open("out/metadata.json", "w", encoding="utf-8") as f:
+        with open(os.path.join("out", name), "w", encoding="utf-8") as f:
             f.write(payload)
         return
     from azure.storage.blob import BlobServiceClient, ContentSettings
@@ -40,14 +40,27 @@ def write_metadata(store: dict) -> None:
         cc.create_container()
     except Exception:
         pass
-    cc.upload_blob("metadata.json", payload.encode("utf-8"), overwrite=True,
+    cc.upload_blob(name, payload.encode("utf-8"), overwrite=True,
                    content_settings=ContentSettings(content_type="application/json"))
 
 
+def read_metadata() -> dict:
+    """Kalıcı business/lifecycle metadata deposunu (metadata.json) okur. Yoksa {}."""
+    return read_json("metadata.json") or {}
+
+
+def write_metadata(store: dict) -> None:
+    write_json("metadata.json", store)
+
+
 def read_latest(name: str = "latest.html") -> str | None:
-    """En son yayınlanan raporu Blob'dan okur (report endpoint için). Yoksa None."""
+    """Blob'dan (yoksa lokal out/'tan) bir dosyayı okur. write_json ile simetrik."""
     conn = os.environ.get("AzureWebJobsStorage") or os.environ.get("REPORT_STORAGE_CONNECTION")
-    if not conn:
+    if not conn or conn.lower().startswith("usedevelopmentstorage"):
+        path = os.path.join("out", name)
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                return f.read()
         return None
     try:
         from azure.storage.blob import BlobServiceClient
@@ -59,8 +72,8 @@ def read_latest(name: str = "latest.html") -> str | None:
         return None
 
 
-def publish(scored: list[dict], tenant_id: str) -> dict:
-    html = report.html_string(scored, tenant_id)
+def publish(scored: list[dict], tenant_id: str, changes=None) -> dict:
+    html = report.html_string(scored, tenant_id, changes)
     js = report.json_string(scored)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 

@@ -17,6 +17,31 @@ _CAT_COLOR = {"Microsoft First-Party AI": "#0f6cbd", "Approved Enterprise AI": "
               "Internal Custom AI": "#7c3aed", "Personal AI Usage": "#b8860b",
               "Unknown AI": "#6b7280", "Retired AI": "#4b5563"}
 
+_IMP_COLOR = {"Critical": "#c0392b", "High": "#d35400", "Medium": "#b8860b",
+              "Low": "#2e8b57", "Info": "#6b7280"}
+
+
+def _timeline_section(changes):
+    if changes is None:
+        return ""
+    if not changes:
+        return ('<div class="card" style="margin-top:16px"><h3>Değişiklikler</h3>'
+                '<p class="governed">Önceki taramaya göre değişiklik yok '
+                '(ya da bu ilk taramadır — baseline).</p></div>')
+    rows = ""
+    for e in changes[:60]:
+        imp = e.get("importance", "Info")
+        c = _IMP_COLOR.get(imp, "#6b7280")
+        ts = html.escape((e.get("timestamp") or "")[:16].replace("T", " "))
+        rows += (
+            f'<div class="tl-row" data-imp="{html.escape(imp)}">'
+            f'<span class="ptype" style="background:{c}">{html.escape(e.get("change_type",""))}</span>'
+            f'<span class="tl-name">{html.escape(e.get("asset_name",""))}</span>'
+            f'<span class="tl-desc">{html.escape(e.get("description",""))}</span>'
+            f'<span class="tl-ts">{ts}</span></div>')
+    return (f'<div class="card" style="margin-top:16px"><h3>Değişiklikler — zaman çizelgesi '
+            f'({len(changes)})</h3><div class="timeline">{rows}</div></div>')
+
 LEVELS = ["Kritik", "Yüksek", "Orta", "Düşük"]
 LEVEL_COLORS = {"Kritik": "#c0392b", "Yüksek": "#d35400", "Orta": "#b8860b", "Düşük": "#2e8b57"}
 
@@ -414,6 +439,12 @@ main{max-width:1120px;margin:0 auto;padding:22px}
 .mform .msave{background:var(--accent);color:#fff;border:none;border-radius:6px;
  padding:8px 16px;cursor:pointer;font-weight:600;align-self:end}
 .mstatus{font-size:12px;color:var(--muted);align-self:center}
+.timeline{display:flex;flex-direction:column}
+.tl-row{display:flex;align-items:center;gap:12px;padding:8px 4px;border-bottom:1px solid var(--line);font-size:13px}
+.tl-name{font-weight:600;min-width:130px}
+.tl-desc{flex:1}
+.tl-ts{color:var(--muted);font-size:12px;white-space:nowrap}
+@media(max-width:820px){.tl-desc{display:none}}
 .foot{color:var(--muted);font-size:12px;text-align:center;padding:18px}
 @media(max-width:820px){.cols-4,.cols-2{grid-template-columns:1fr}
  .f-body{grid-template-columns:1fr}.bar-label{width:130px}
@@ -450,7 +481,7 @@ document.querySelectorAll('.msave').forEach(function(btn){btn.onclick=function()
 """
 
 
-def html_string(apps: list[dict], tenant_id: str) -> str:
+def html_string(apps: list[dict], tenant_id: str, changes=None) -> str:
     microsoft = [a for a in apps if a.get("first_party_microsoft")]
     shadow = [a for a in apps if not a.get("first_party_microsoft")]
     shadow.sort(key=lambda a: a["risk_score"], reverse=True)
@@ -648,7 +679,7 @@ def html_string(apps: list[dict], tenant_id: str) -> str:
       <div class="summary">{donut}<div class="legend">{legend}</div></div>
     </div>
   </div>
-
+  {_timeline_section(changes)}
   <div class="grid cols-4" style="margin-top:16px">
     <div class="card kpi"><span class="n">{len(shadow)}</span><span class="l">Shadow AI uygulaması</span></div>
     <div class="card kpi crit"><span class="n">{counts['Kritik']}</span><span class="l">Kritik</span></div>

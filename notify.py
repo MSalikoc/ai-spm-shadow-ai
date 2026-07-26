@@ -26,7 +26,20 @@ def _shadow(scored):
     return [a for a in scored if not a.get("first_party_microsoft")]
 
 
-def _digest_html(scored, tenant_id, report_url):
+def _changes_block(changes):
+    if not changes:
+        return ('<h3 style="margin:18px 0 8px;font-size:15px">Bu hafta</h3>'
+                '<p style="font:14px Segoe UI,sans-serif;color:#5f6b7a">'
+                'Önceki taramaya göre değişiklik yok.</p>')
+    import drift
+    lines = drift.executive_summary(changes)
+    items = "".join(f'<li style="margin:4px 0">{html.escape(l)}</li>' for l in lines) \
+        or f'<li>{len(changes)} değişiklik kaydedildi.</li>'
+    return (f'<h3 style="margin:18px 0 8px;font-size:15px">Bu hafta ({len(changes)} değişiklik)</h3>'
+            f'<ul style="font:14px Segoe UI,sans-serif;color:#1a1a1a;padding-left:18px">{items}</ul>')
+
+
+def _digest_html(scored, tenant_id, report_url, changes=None):
     shadow = sorted(_shadow(scored), key=lambda a: a["risk_score"], reverse=True)
     crit = sum(1 for a in shadow if a["risk_level"] == "Kritik")
     high = sum(1 for a in shadow if a["risk_level"] == "Yüksek")
@@ -69,6 +82,7 @@ def _digest_html(scored, tenant_id, report_url):
   <table style="border-collapse:collapse;background:#f7f9fb;border-radius:10px;margin-bottom:8px">
     <tr>{stat(len(shadow), "Shadow AI")}{stat(crit, "Kritik", "#c0392b")}{stat(high, "Yüksek", "#d35400")}</tr>
   </table>
+  {_changes_block(changes)}
   {button}
   <h3 style="margin:18px 0 8px;font-size:15px">Dikkat gerektiren uygulamalar</h3>
   <table style="border-collapse:collapse;width:100%">{rows}</table>
@@ -81,7 +95,7 @@ def _digest_html(scored, tenant_id, report_url):
 </div>"""
 
 
-def send_email_digest(scored, tenant_id):
+def send_email_digest(scored, tenant_id, changes=None):
     sender = os.environ.get("AISPM_MAIL_SENDER")
     to = os.environ.get("AISPM_MAIL_TO")
     if not sender or not to:
@@ -90,9 +104,10 @@ def send_email_digest(scored, tenant_id):
     recipients = [{"emailAddress": {"address": a.strip()}} for a in to.split(",") if a.strip()]
     shadow = _shadow(scored)
     crit = sum(1 for a in shadow if a["risk_level"] == "Kritik")
-    subject = f"[AI-SPM] Haftalık Shadow AI özeti — {len(shadow)} uygulama, {crit} kritik"
+    n_ch = len(changes or [])
+    subject = f"[AI-SPM] Haftalık özet — {n_ch} değişiklik, {len(shadow)} uygulama, {crit} kritik"
 
-    body = _digest_html(scored, tenant_id, os.environ.get("AISPM_REPORT_URL"))
+    body = _digest_html(scored, tenant_id, _report_url(), changes)
 
     # Tam dashboard'u HTML eki olarak iliştir (okunurluk için)
     dashboard = report.html_string(scored, tenant_id)
