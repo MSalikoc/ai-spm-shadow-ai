@@ -5,11 +5,17 @@ import math
 from datetime import datetime, timezone
 
 from config import (SENSITIVE_SCOPES, SCOPE_HEURISTICS,
-                    LIFECYCLE_STATUSES, CRITICALITY, ENVIRONMENTS)
+                    LIFECYCLE_STATUSES, CRITICALITY, ENVIRONMENTS,
+                    AI_CATEGORIES, OWNERSHIP_CLASSES)
 
 _LIFECYCLE_COLOR = {"Discovered": "#6b7280", "Under Review": "#b8860b", "Pilot": "#0f6cbd",
                     "Approved": "#2e8b57", "Restricted": "#d35400", "Blocked": "#c0392b",
                     "Retired": "#4b5563", "Unknown": "#6b7280"}
+
+_CAT_COLOR = {"Microsoft First-Party AI": "#0f6cbd", "Approved Enterprise AI": "#2e8b57",
+              "Unapproved Enterprise AI": "#d35400", "Third-Party Shadow AI": "#c0392b",
+              "Internal Custom AI": "#7c3aed", "Personal AI Usage": "#b8860b",
+              "Unknown AI": "#6b7280", "Retired AI": "#4b5563"}
 
 LEVELS = ["Kritik", "Yüksek", "Orta", "Düşük"]
 LEVEL_COLORS = {"Kritik": "#c0392b", "Yüksek": "#d35400", "Orta": "#b8860b", "Düşük": "#2e8b57"}
@@ -211,6 +217,22 @@ def _governance_block(app):
         f'<li>{cred}</li></ul>')
 
 
+def _classification(app):
+    return app.get("classification") or {"category": "Unknown AI", "ownership": "Unknown",
+                                         "confidence": 0, "reasons": [], "manual_override": False}
+
+
+def _classification_block(app):
+    c = _classification(app)
+    reasons = "".join(f"<li>{html.escape(r)}</li>" for r in c.get("reasons", []))
+    ov = ' · <b>manuel override</b>' if c.get("manual_override") else ""
+    return (
+        '<h4>Sınıflandırma</h4><ul>'
+        f'<li>Kategori: <b>{html.escape(c.get("category", "Unknown AI"))}</b>{ov}</li>'
+        f'<li>Sahiplik: {html.escape(c.get("ownership", "Unknown"))} · Güven: {c.get("confidence", 0)}%</li>'
+        f'</ul><h4 style="margin-top:6px">Sınıflandırma nedeni</h4><ul>{reasons}</ul>')
+
+
 def _editor_form(app):
     lc = app.get("lifecycle") or {}
     bc = app.get("business_context") or {}
@@ -227,6 +249,8 @@ def _editor_form(app):
     return (
         '<details class="editor"><summary>Metadata düzenle</summary>'
         f'<div class="mform" data-app="{html.escape(app.get("app_id", ""))}">'
+        f'<label>Sınıf (override)<select name="class_category">{opts([""] + AI_CATEGORIES, (app.get("classification_override") or {}).get("category") or "")}</select></label>'
+        f'<label>Sahiplik (override)<select name="class_ownership">{opts([""] + OWNERSHIP_CLASSES, (app.get("classification_override") or {}).get("ownership") or "")}</select></label>'
         f'<label>Lifecycle<select name="status">{opts(LIFECYCLE_STATUSES, _lifecycle_status(app))}</select></label>'
         f'{field("Business owner", "business_owner", own.get("business_owner"))}'
         f'{field("Technical owner", "technical_owner", own.get("technical_owner"))}'
@@ -256,6 +280,9 @@ def _finding_row(app):
     u_label, u_color = _USAGE_CHIP[utype]
     status = _lifecycle_status(app)
     lc_color = _LIFECYCLE_COLOR.get(status, "#6b7280")
+    cls = _classification(app)
+    cat = cls.get("category", "Unknown AI")
+    cat_color = _CAT_COLOR.get(cat, "#6b7280")
     bc = app.get("business_context") or {}
     bu = bc.get("business_unit") or ""
     sub = bc.get("subsidiary") or ""
@@ -272,11 +299,12 @@ def _finding_row(app):
 
     return (
         f'<details class="finding" data-perm="{ptype}" data-usage="{utype}" '
-        f'data-bu="{html.escape(bu)}" data-sub="{html.escape(sub)}">'
+        f'data-bu="{html.escape(bu)}" data-sub="{html.escape(sub)}" data-cat="{html.escape(cat)}">'
         f'<summary>'
         f'<span class="pill" style="background:{color}">{app["risk_score"]}</span>'
         f'<span class="f-name">{html.escape(app.get("display_name") or "—")}'
         f'<span class="f-vendor">{html.escape(app.get("vendor",""))}</span></span>'
+        f'<span class="ptype" style="background:{cat_color}">{html.escape(cat)} · {cls.get("confidence",0)}%</span>'
         f'<span class="ptype" style="background:{chip_color}">{chip_label}</span>'
         f'<span class="ptype" style="background:{u_color}">{u_label}</span>'
         f'<span class="ptype" style="background:{lc_color}">{html.escape(status)}</span>'
@@ -284,6 +312,7 @@ def _finding_row(app):
         f'<span class="f-level" style="color:{color}">{html.escape(app["risk_level"])}</span>'
         f'</summary>'
         f'<div class="f-body">'
+        f'<div class="f-col">{_classification_block(app)}</div>'
         f'<div class="f-col"><h4>Delegated izinler</h4><code>{scopes}</code>'
         f'{app_block}<p class="f-pub">{ver}</p></div>'
         f'<div class="f-col">{_usage_block(app)}</div>'
@@ -396,7 +425,7 @@ THEME_JS = """
 b.onclick=function(){var r=document.documentElement;
 var d=(r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'))==='dark';
 r.setAttribute('data-theme',d?'light':'dark');b.textContent=d?'\\u263C':'\\u263E';};
-var state={perm:'all',usage:'all',bu:'all',sub:'all'};
+var state={perm:'all',usage:'all',bu:'all',sub:'all',cat:'all'};
 function apply(){document.querySelectorAll('.finding').forEach(function(el){
  var show=true;
  for(var d in state){var s=state[d];if(s==='all')continue;
@@ -414,7 +443,7 @@ var code=new URLSearchParams(location.search).get('code')||'';
 document.querySelectorAll('.msave').forEach(function(btn){btn.onclick=function(){
  var box=btn.closest('.mform'),app=box.getAttribute('data-app');
  function v(n){var e=box.querySelector('[name="'+n+'"]');return e?e.value:'';}
- var body={app_id:app,ownership:{business_owner:v('business_owner'),technical_owner:v('technical_owner'),sponsor:v('sponsor')},business_context:{business_unit:v('business_unit'),subsidiary:v('subsidiary'),purpose:v('purpose'),criticality:v('criticality'),environment:v('environment')},lifecycle:{status:v('status'),next_review_date:v('next_review_date')||null},notes:v('notes')};
+ var body={app_id:app,ownership:{business_owner:v('business_owner'),technical_owner:v('technical_owner'),sponsor:v('sponsor')},business_context:{business_unit:v('business_unit'),subsidiary:v('subsidiary'),purpose:v('purpose'),criticality:v('criticality'),environment:v('environment')},lifecycle:{status:v('status'),next_review_date:v('next_review_date')||null},classification:{category:v('class_category')||null,ownership:v('class_ownership')||null},notes:v('notes')};
  var st=box.querySelector('.mstatus');st.textContent='Kaydediliyor...';
  fetch('/api/metadata?code='+encodeURIComponent(code),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.ok?r.json():Promise.reject(r.status);}).then(function(){st.textContent='\\u2713 Kaydedildi (sonraki taramada islenir)';}).catch(function(e){st.textContent='Hata: '+e;});};});
 })();
@@ -546,18 +575,51 @@ def html_string(apps: list[dict], tenant_id: str) -> str:
   <div class="card" style="margin-top:16px"><h3>Yaklaşan / geçmiş review'lar</h3><ul>{reviews_list}</ul></div>
 """
 
-    findings_html = "".join(_finding_row(a) for a in shadow) or \
-        '<div class="empty">Shadow AI bulgusu yok.</div>'
+    # --- Sınıflandırma (TÜM app'ler üzerinde — Microsoft dahil, kriter 9) ----
+    all_apps = sorted(apps, key=lambda a: a["risk_score"], reverse=True)
+    cat_counts = {c: sum(1 for a in all_apps if _classification(a).get("category") == c)
+                  for c in AI_CATEGORIES}
+    unknown_n = cat_counts.get("Unknown AI", 0)
+    approved_n = cat_counts.get("Approved Enterprise AI", 0)
+    unapproved_n = cat_counts.get("Unapproved Enterprise AI", 0)
+    internal_n = sum(1 for a in all_apps if _classification(a).get("ownership") == "Internal")
+    external_n = sum(1 for a in all_apps if _classification(a).get("ownership") == "External")
+    confs = [_classification(a).get("confidence", 0) for a in all_apps]
+    avg_conf = round(sum(confs) / len(confs)) if confs else 0
 
-    ms_list = "".join(f"<li>{html.escape(a.get('display_name') or '—')}</li>"
-                      for a in microsoft)
-    ms_section = ""
-    if microsoft:
-        ms_section = (
-            f'<div class="card" style="margin-top:16px"><details class="governed">'
-            f'<summary>{len(microsoft)} Microsoft first-party AI uygulaması '
-            f'(yönetiliyor — risk sayımına dahil değil)</summary>'
-            f'<ul>{ms_list}</ul></details></div>')
+    cat_bars = _bars([(c, "", cat_counts[c], _CAT_COLOR.get(c, "#6b7280"))
+                      for c in AI_CATEGORIES if cat_counts[c]],
+                     max(cat_counts.values(), default=1))
+    unknown_apps = [a for a in all_apps if _classification(a).get("category") == "Unknown AI"]
+    unknown_list = "".join(
+        f'<li><b>{html.escape(a.get("display_name") or "—")}</b> — '
+        f'{html.escape(a.get("vendor", ""))} · güven {_classification(a).get("confidence", 0)}%</li>'
+        for a in unknown_apps) or '<li class="governed">Unknown AI yok.</li>'
+
+    cats_present = [c for c in AI_CATEGORIES if cat_counts[c]]
+    cat_opts = "".join(f'<option value="{html.escape(c)}">{html.escape(c)} ({cat_counts[c]})</option>'
+                       for c in cats_present)
+
+    classification_section = f"""
+  <h3 style="margin:22px 4px 10px;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)">Sınıflandırma</h3>
+  <div class="grid cols-4">
+    <div class="card kpi crit"><span class="n">{unknown_n}</span><span class="l">Unknown AI (inceleme)</span></div>
+    <div class="card kpi low"><span class="n">{approved_n}</span><span class="l">Approved Enterprise</span></div>
+    <div class="card kpi high"><span class="n">{unapproved_n}</span><span class="l">Unapproved Enterprise</span></div>
+    <div class="card kpi"><span class="n">{avg_conf}%</span><span class="l">Ortalama güven</span></div>
+  </div>
+  <div class="grid cols-2" style="margin-top:16px">
+    <div class="card"><h3>Kategoriye göre uygulamalar</h3>{cat_bars}</div>
+    <div class="card"><h3>Internal vs External</h3>
+      <div class="bar-row"><div class="bar-label">Internal</div><div class="bar-track"><div class="bar-fill" style="width:{round(100*internal_n/max(internal_n+external_n,1))}%;background:#7c3aed"></div></div><div class="bar-val">{internal_n}</div></div>
+      <div class="bar-row"><div class="bar-label">External</div><div class="bar-track"><div class="bar-fill" style="width:{round(100*external_n/max(internal_n+external_n,1))}%;background:#c0392b"></div></div><div class="bar-val">{external_n}</div></div>
+    </div>
+  </div>
+  <div class="card" style="margin-top:16px"><h3>Unknown AI — inceleme kuyruğu</h3><ul>{unknown_list}</ul></div>
+"""
+
+    findings_html = "".join(_finding_row(a) for a in all_apps) or \
+        '<div class="empty">AI uygulaması bulunamadı.</div>'
 
     ts = datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M UTC")
 
@@ -615,8 +677,9 @@ def html_string(apps: list[dict], tenant_id: str) -> str:
   </div>
   {usage_section}
   {governance_section}
+  {classification_section}
   <div class="card" style="margin-top:16px">
-    <h3>Bulgular ({len(shadow)})</h3>
+    <h3>Envanter ({len(all_apps)} uygulama · {len(shadow)} shadow · {len(microsoft)} Microsoft first-party)</h3>
     <div class="filters">
       <button data-group="perm" data-value="all" class="active">İzin: Tümü</button>
       <button data-group="perm" data-value="delegated">Delegated</button>
@@ -630,12 +693,12 @@ def html_string(apps: list[dict], tenant_id: str) -> str:
       <button data-group="usage" data-value="unused">Hiç kullanılmamış</button>
     </div>
     <div class="filters">
+      <label>Kategori <select data-group="cat"><option value="all">Tümü</option>{cat_opts}</select></label>
       <label>Birim <select data-group="bu"><option value="all">Tümü</option>{bu_opts}</select></label>
       <label>Subsidiary <select data-group="sub"><option value="all">Tümü</option>{sub_opts}</select></label>
     </div>
     <div class="findings">{findings_html}</div>
   </div>
-  {ms_section}
   <div class="foot">AI-SPM · read-only Entra/Graph taraması · {ts}</div>
 </main>
 <script>{THEME_JS}</script>

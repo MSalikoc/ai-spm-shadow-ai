@@ -18,6 +18,7 @@ def default_entry() -> dict:
         "business_context": {"business_unit": "", "subsidiary": "", "purpose": "",
                              "process": "", "criticality": "", "environment": ""},
         "lifecycle": {"status": "Discovered", "next_review_date": None},
+        "classification": {"category": None, "ownership": None},  # manuel override
         "notes": "",
         "history": [],
     }
@@ -39,6 +40,7 @@ def merge(findings: list[dict], store: dict) -> None:
         own.update(entry["ownership"])  # business_owner / technical_owner / sponsor
         f["business_context"] = entry["business_context"]
         f["lifecycle"] = entry["lifecycle"]
+        f["classification_override"] = entry.get("classification") or {}
         f["notes"] = entry.get("notes", "")
         f["history"] = entry.get("history", [])
 
@@ -64,6 +66,12 @@ def set_metadata(store: dict, app_id: str, patch: dict, now=None) -> dict:
         for k, v in (patch.get(key) or {}).items():
             if k in entry[key] and v is not None:
                 entry[key][k] = v
+    # Manuel classification override — boş değer override'ı temizler
+    if "classification" in patch:
+        entry.setdefault("classification", {"category": None, "ownership": None})
+        for k, v in (patch["classification"] or {}).items():
+            if k in entry["classification"]:
+                entry["classification"][k] = v or None
     if "notes" in patch and patch["notes"] is not None:
         entry["notes"] = patch["notes"]
     return entry

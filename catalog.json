@@ -1,0 +1,29 @@
+{
+  "_comment": "AI uygulama/vendor kataloğu — kod dışında tutulur (kriter 2). app_ids en güçlü sinyaldir. Yeni vendor/app_id eklemek için buraya ekleyin.",
+  "vendors": [
+    {"name": "OpenAI (ChatGPT)", "app_ids": ["e0476654-c1d5-430b-ab80-70cbd947616a"], "patterns": ["openai", "chatgpt"], "domains": ["openai.com", "chat.openai.com"]},
+    {"name": "Anthropic (Claude)", "app_ids": [], "patterns": ["anthropic", "claude.ai"], "domains": ["anthropic.com", "claude.ai"]},
+    {"name": "Google Gemini", "app_ids": [], "patterns": ["gemini", "bard", "generativeai", "aistudio"], "domains": ["gemini.google.com", "aistudio.google.com"]},
+    {"name": "Perplexity", "app_ids": [], "patterns": ["perplexity"], "domains": ["perplexity.ai"]},
+    {"name": "Cohere", "app_ids": [], "patterns": ["cohere"], "domains": ["cohere.com"]},
+    {"name": "Mistral", "app_ids": [], "patterns": ["mistral"], "domains": ["mistral.ai"]},
+    {"name": "Hugging Face", "app_ids": [], "patterns": ["huggingface", "hugging face"], "domains": ["huggingface.co"]},
+    {"name": "Glean", "app_ids": [], "patterns": ["glean"], "domains": ["glean.com"]},
+    {"name": "Grammarly", "app_ids": [], "patterns": ["grammarly"], "domains": ["grammarly.com"]},
+    {"name": "Notion AI", "app_ids": [], "patterns": ["notion"], "domains": ["notion.so"]},
+    {"name": "Jasper", "app_ids": [], "patterns": ["jasper.ai", "jasper ai"], "domains": ["jasper.ai"]},
+    {"name": "Writer", "app_ids": [], "patterns": ["writer.com"], "domains": ["writer.com"]},
+    {"name": "Skywork AI", "app_ids": ["d61cbfb4-097b-4f32-85b0-84f3eabd2df5"], "patterns": ["skywork"], "domains": ["skywork.ai"]},
+    {"name": "Vectra AI", "app_ids": ["3a08c6bd-b4a0-48b6-be05-913b57f50c24"], "patterns": ["vectra"], "domains": ["vectra.ai"]},
+    {"name": "Otter.ai", "app_ids": [], "patterns": ["otter.ai"], "domains": ["otter.ai"]},
+    {"name": "Fireflies", "app_ids": [], "patterns": ["fireflies"], "domains": ["fireflies.ai"]},
+    {"name": "ElevenLabs", "app_ids": [], "patterns": ["elevenlabs"], "domains": ["elevenlabs.io"]},
+    {"name": "Character.AI", "app_ids": [], "patterns": ["character.ai", "character ai"], "domains": ["character.ai"]},
+    {"name": "Poe (Quora)", "app_ids": [], "patterns": ["poe.com"], "domains": ["poe.com"]},
+    {"name": "Copy.ai", "app_ids": [], "patterns": ["copy.ai"], "domains": ["copy.ai"]},
+    {"name": "Gamma", "app_ids": [], "patterns": ["gamma.app"], "domains": ["gamma.app"]},
+    {"name": "Read AI", "app_ids": [], "patterns": ["read.ai"], "domains": ["read.ai"]},
+    {"name": "Tactiq", "app_ids": [], "patterns": ["tactiq"], "domains": ["tactiq.io"]}
+  ],
+  "generic_hints": ["ai assistant", " ai ", "gpt", "llm", "copilot", "genai", "generative", "machine learning", "chatbot", "transcription", "meeting notes"]
+}

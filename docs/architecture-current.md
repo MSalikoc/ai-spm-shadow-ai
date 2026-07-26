@@ -29,7 +29,9 @@ Python 3.11), authenticates with a system-assigned Managed Identity, and is **re
 | `pipeline.py` | Shared scan flow: `run()` (discover → enrich → score) and `summary()`. |
 | `collectors.py` | Graph queries: service principals, delegated OAuth grants, application (app-only) permissions (`appRoleAssignments`, GUID→name), **and real sign-in activity** (`auditLogs/signIns`, delegated vs service-principal, 7/30/90d usage; P1-gated, degrades gracefully). Tags `third_party`, `first_party_microsoft`, `has_app_only_access`, per-app `usage`. |
 | `scoring.py` | Transparent 0–100 risk score, level, reasons, remediation. |
-| `config.py` | AI vendor catalog + sensitive-scope weights + Microsoft owner tenants. Single tuning point. |
+| `classifier.py` | Classification engine: 8 governance categories + ownership, confidence + reasons; App ID strongest signal; manual override wins. |
+| `catalog.json` | Code-free AI vendor catalog (app_ids / patterns / domains) loaded by `config.py`. |
+| `config.py` | Loads `catalog.json`; sensitive-scope weights, governance/classification dictionaries, Microsoft owner tenants. |
 | `report.py` | Dashboard HTML (light/dark) + JSON rendering. |
 | `metadata.py` | Persistent business/lifecycle metadata store (`metadata.json` in Blob), merged into each scan so manual data survives re-scans; lifecycle/review history. |
 | `notify.py` | Weekly digest email via Microsoft Graph `sendMail`, with dashboard HTML attachment. |

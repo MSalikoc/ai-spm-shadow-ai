@@ -27,6 +27,11 @@ def run(graph, tenant_id: str) -> list[dict]:
         metadata.merge(scored, metadata.load())
     except Exception:
         pass
+    try:  # sınıflandırma (metadata override + lifecycle sonrası)
+        import classifier
+        classifier.classify_all(scored, tenant_id)
+    except Exception:
+        pass
     return scored
 
 

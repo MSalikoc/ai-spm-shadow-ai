@@ -6,6 +6,22 @@ All notable changes to AI-SPM are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **Classification engine** (`classifier.py`) — categorizes each AI app into 8 governance
+  classes (Microsoft First-Party / Approved / Unapproved Enterprise / Third-Party Shadow /
+  Internal Custom / Personal / Unknown / Retired) + ownership (Internal/External/Unknown),
+  with a **confidence** score and **reasons**:
+  - Signals ranked: manual override > App ID > publisher/name/domain > business metadata /
+    lifecycle > generic. App ID is the strongest signal.
+  - Vendor **catalog moved to `catalog.json`** (code-free, kriter 2), now with real global
+    app IDs (ChatGPT/Skywork/Vectra) so App-ID classification is demonstrable; domains added.
+  - **Unknown is never treated as safe/approved**; Unknown apps get a dedicated review queue.
+  - **Manual override** stored in the metadata store → **persists across scans**; editable
+    from the dashboard and `POST /api/metadata`.
+  - **Microsoft first-party apps are now shown in the inventory** (classified, not hidden).
+  - Dashboard: classification cards (unknown / approved / unapproved / avg confidence),
+    by-category bars, internal-vs-external, Unknown review queue, per-finding classification
+    block + category chip, and a category filter.
+  - `tests/test_classifier.py`.
 - **Business ownership & lifecycle governance**:
   - Technical inventory from Graph (`enrich_with_ownership`): service-principal owners,
     enabled status, publisher, homepage, tags, description, credential count + next expiry.

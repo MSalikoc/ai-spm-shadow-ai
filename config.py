@@ -1,45 +1,25 @@
 """
-AI-SPM configuration: AI vendor catalog + sensitive Graph scope weights.
+AI-SPM configuration: sınıflandırma sözlükleri + hassas Graph scope ağırlıkları.
 
-Bu dosya "neyi Shadow AI sayıyoruz" ve "hangi izin ne kadar riskli"
-kararlarının tek kaynağıdır. Yeni vendor / scope eklemek için burayı düzenle.
+AI vendor kataloğu KOD DIŞINDA `catalog.json` dosyasındadır (kriter 2); buradan
+yüklenir. Scope ağırlıkları ve governance sözlükleri politikadır, burada durur.
 """
+import json
+import os
 
-# --- Bilinen AI SaaS sağlayıcıları -----------------------------------------
-# `patterns`: servicePrincipal.displayName / publisherName / homepage içinde
-#             (küçük harf) aranan alt-dizeler.
-# `appIds`  : kesin eşleşme için bilinen Entra multi-tenant App ID'leri (varsa).
-AI_VENDORS = [
-    {"name": "OpenAI (ChatGPT)", "patterns": ["openai", "chatgpt", "chat.openai"], "appIds": []},
-    {"name": "Anthropic (Claude)", "patterns": ["anthropic", "claude.ai"], "appIds": []},
-    {"name": "Google Gemini", "patterns": ["gemini", "bard", "generativeai", "aistudio"], "appIds": []},
-    {"name": "Perplexity", "patterns": ["perplexity"], "appIds": []},
-    {"name": "Cohere", "patterns": ["cohere"], "appIds": []},
-    {"name": "Mistral", "patterns": ["mistral"], "appIds": []},
-    {"name": "Hugging Face", "patterns": ["huggingface", "hugging face"], "appIds": []},
-    {"name": "Glean", "patterns": ["glean"], "appIds": []},
-    {"name": "Grammarly", "patterns": ["grammarly"], "appIds": []},
-    {"name": "Notion AI", "patterns": ["notion"], "appIds": []},
-    {"name": "Jasper", "patterns": ["jasper.ai", "jasper ai"], "appIds": []},
-    {"name": "Writer", "patterns": ["writer.com"], "appIds": []},
-    {"name": "Skywork AI", "patterns": ["skywork"], "appIds": []},
-    {"name": "Otter.ai", "patterns": ["otter.ai"], "appIds": []},
-    {"name": "Fireflies", "patterns": ["fireflies"], "appIds": []},
-    {"name": "ElevenLabs", "patterns": ["elevenlabs"], "appIds": []},
-    {"name": "Character.AI", "patterns": ["character.ai", "character ai"], "appIds": []},
-    {"name": "Poe (Quora)", "patterns": ["poe.com"], "appIds": []},
-    {"name": "Copy.ai", "patterns": ["copy.ai"], "appIds": []},
-    {"name": "Gamma", "patterns": ["gamma.app"], "appIds": []},
-    {"name": "Read AI", "patterns": ["read.ai"], "appIds": []},
-    {"name": "Tactiq", "patterns": ["tactiq"], "appIds": []},
-]
+# --- AI vendor kataloğu (catalog.json'dan) ---------------------------------
+with open(os.path.join(os.path.dirname(__file__), "catalog.json"), encoding="utf-8") as _f:
+    _CATALOG = json.load(_f)
+AI_VENDORS = _CATALOG["vendors"]          # her biri: {name, app_ids, patterns, domains}
+GENERIC_AI_HINTS = _CATALOG["generic_hints"]
 
-# Vendor listesinde olmasa bile bu genel AI anahtar kelimeleri "AI olabilir"
-# şüphesi doğurur (envantere düşük güvenle eklenir).
-GENERIC_AI_HINTS = [
-    "ai assistant", " ai ", "gpt", "llm", "copilot", "genai",
-    "generative", "machine learning", "chatbot", "transcription", "meeting notes",
+# --- Sınıflandırma sözlükleri ----------------------------------------------
+AI_CATEGORIES = [
+    "Microsoft First-Party AI", "Approved Enterprise AI", "Unapproved Enterprise AI",
+    "Third-Party Shadow AI", "Internal Custom AI", "Personal AI Usage",
+    "Unknown AI", "Retired AI",
 ]
+OWNERSHIP_CLASSES = ["Internal", "External", "Unknown"]
 
 # --- Hassas delegated (kullanıcı adına) Graph scope ağırlıkları -------------
 # 0-10 arası. Yüksek = veri sızıntısı açısından daha tehlikeli.

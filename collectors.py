@@ -20,17 +20,22 @@ def _text_blob(sp: dict) -> str:
 
 
 def _match_vendor(sp: dict):
-    """(vendor_adı, güven) döner; eşleşme yoksa (None, 0)."""
+    """(vendor_adı, güven, sinyal) döner; eşleşme yoksa (None, None, None).
+    Sinyal: 'app_id' (en güçlü) > 'pattern' / 'domain' > 'generic'."""
     blob = _text_blob(sp)
     app_id = sp.get("appId", "")
+    homepage = (sp.get("homepage") or "").lower()
     for v in AI_VENDORS:
-        if app_id and app_id in v["appIds"]:
-            return v["name"], "high"
-        if any(pat in blob for pat in v["patterns"]):
-            return v["name"], "high"
+        if app_id and app_id in v.get("app_ids", []):
+            return v["name"], "high", "app_id"
+    for v in AI_VENDORS:
+        if any(pat in blob for pat in v.get("patterns", [])):
+            return v["name"], "high", "pattern"
+        if any(dom in homepage or dom in blob for dom in v.get("domains", [])):
+            return v["name"], "high", "domain"
     if any(hint in blob for hint in GENERIC_AI_HINTS):
-        return "Bilinmeyen AI (jenerik eşleşme)", "low"
-    return None, None
+        return "Bilinmeyen AI (jenerik eşleşme)", "low", "generic"
+    return None, None, None
 
 
 def _is_third_party(sp: dict, home_tenant: str) -> bool:
@@ -50,7 +55,7 @@ def collect_service_principals(graph, home_tenant: str) -> list[dict]:
     sps = graph.get_all("/servicePrincipals", {"$select": select, "$top": "999"})
     out = []
     for sp in sps:
-        vendor, confidence = _match_vendor(sp)
+        vendor, confidence, signal = _match_vendor(sp)
         if not vendor:
             continue
         owner = sp.get("appOwnerOrganizationId")
@@ -65,6 +70,7 @@ def collect_service_principals(graph, home_tenant: str) -> list[dict]:
             "first_party_microsoft": owner in MICROSOFT_OWNER_TENANTS,
             "vendor": vendor,
             "confidence": confidence,
+            "match_signal": signal,          # app_id / pattern / domain / generic
             "scopes": [],                    # delegated scope adları (skorlama geriye-uyum)
             "consent_type": None,            # AllPrincipals (admin) / Principal (kullanıcı)
             "user_count": 0,
