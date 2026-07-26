@@ -115,6 +115,34 @@ def test_executive_summary_matches_manager_format():
     assert "Approved durumuna geçti" in joined
 
 
+def test_new_apps_grouped_by_business_unit():
+    """Kriter 8: yeni AI uygulamaları business unit bazında gösteriliyor."""
+    import report
+
+    def full(aid, name, bu):
+        return {"display_name": name, "vendor": "V", "first_party_microsoft": False,
+                "third_party": True, "verified_publisher": True, "scopes": [], "consent_type": None,
+                "user_count": 0, "risk_score": 10, "risk_level": "Düşük", "reasons": ["r"],
+                "remediation": ["m"], "delegated_permissions": [], "application_permissions": [],
+                "has_app_only_access": False, "usage": None,
+                "ownership": {"service_principal_owners": []},
+                "business_context": {"business_unit": bu}, "lifecycle": {"status": "Discovered"},
+                "technical_inventory": {}, "notes": "", "history": [], "app_id": aid,
+                "classification": {"category": "Third-Party Shadow AI", "ownership": "External",
+                                   "confidence": 90, "reasons": ["x"], "manual_override": False}}
+
+    apps = [full("a1", "FinBot", "Finance"), full("a2", "HRBot", "HR"), full("a3", "Mystery", "")]
+    ch = [{"change_type": "NEW_APPLICATION", "asset_id": i, "asset_name": n,
+           "timestamp": "2026-07-25T10:00:00+00:00", "importance": "High",
+           "description": "yeni", "old_value": None, "new_value": "V", "change_id": "x"}
+          for i, n in [("a1", "FinBot"), ("a2", "HRBot"), ("a3", "Mystery")]]
+    doc = report.html_string(apps, "t", ch)
+    assert "business unit bazında" in doc
+    assert "Finance" in doc and "FinBot" in doc
+    assert "HR" in doc and "HRBot" in doc
+    assert "Atanmamış" in doc          # BU'su olmayan yeni app
+
+
 def test_dashboard_timeline_and_empty():
     apps = [{"display_name": "X", "vendor": "Y", "first_party_microsoft": False, "third_party": True,
              "verified_publisher": True, "scopes": [], "consent_type": None, "user_count": 0,

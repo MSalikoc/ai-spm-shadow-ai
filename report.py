@@ -552,6 +552,22 @@ def html_string(apps: list[dict], tenant_id: str, changes=None) -> str:
                           for a in growing], max(((a.get("usage") or {}).get("growth_7d", 0)
                                                   for a in growing), default=1))
 
+    # Yeni AI uygulamaları — business unit bazında (kriter 8)
+    new_ids = {e["asset_id"] for e in (changes or []) if e.get("change_type") == "NEW_APPLICATION"}
+    new_bu_section = ""
+    if new_ids:
+        id_map = {a.get("app_id"): a for a in apps}
+        by_bu = {}
+        for aid in new_ids:
+            a = id_map.get(aid) or {}
+            bu = (a.get("business_context") or {}).get("business_unit") or "Atanmamış"
+            by_bu.setdefault(bu, []).append(a.get("display_name") or aid)
+        rows = "".join(f'<li><b>{html.escape(bu)}</b>: {html.escape(", ".join(sorted(n)))}</li>'
+                       for bu, n in sorted(by_bu.items()))
+        new_bu_section = (f'<div class="card" style="margin-top:16px">'
+                          f'<h3>Yeni AI uygulamaları — business unit bazında ({len(new_ids)})</h3>'
+                          f'<ul>{rows}</ul></div>')
+
     if activity_available:
         usage_section = f"""
   <h3 style="margin:22px 4px 10px;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)">Kullanım & Aktivite (gerçek sign-in)</h3>
@@ -680,6 +696,7 @@ def html_string(apps: list[dict], tenant_id: str, changes=None) -> str:
     </div>
   </div>
   {_timeline_section(changes)}
+  {new_bu_section}
   <div class="grid cols-4" style="margin-top:16px">
     <div class="card kpi"><span class="n">{len(shadow)}</span><span class="l">Shadow AI uygulaması</span></div>
     <div class="card kpi crit"><span class="n">{counts['Kritik']}</span><span class="l">Kritik</span></div>
