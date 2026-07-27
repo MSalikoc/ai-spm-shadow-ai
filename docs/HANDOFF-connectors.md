@@ -78,7 +78,20 @@ kaç kullanıcı etkilendi, ne zaman, ve uygulamanın kurumsal onay durumu nedir
     (conservative max); MDCA app'i appId taşımadığından cross-source korelasyon zayıf (isim-only merge etmez).
 
 ## SIRADAKİ: Adım 7 — Rapor/dashboard + framework'ü canlı pipeline'a bağlama
-Detay için aşağıdaki "Kalan adımlar" bölümüne bak. (Kullanıcı tüm adımları onayladı; sonda tek deploy.)
+Kullanıcı tüm adımları (7-8) onayladı; **push/deploy EN SONDA tek seferde** yapılacak.
+Adım 1-6 commit'lendi ama **HENÜZ PUSH EDİLMEDİ** (local `main`, origin'in ilerisinde).
+
+**🔸 Adım 7 KISMEN başladı** (commit'li, testler yeşil):
+- ✅ `pipeline.connectors_enabled()` + `pipeline.run_connectors(graph)` eklendi — registry.run →
+  correlate → `build_app_profiles` → `portfolio_summary`. Env flag kapalıyken **None döner (no-op,
+  doğrulandı)**; mevcut Entra taraması etkilenmez.
+- ⬜ **KALAN:** (a) `connectors_report.py` — 15-bölümlü assessment + standalone HTML (executive kartlar,
+  "Applications with Sensitive Data Exposure" tablosu, Application Detail "Sensitive Data" sekmesi,
+  Agent Detail "Data Access" sekmesi, kaynak-bazlı coverage). **`report.py` (1007 satır) DEĞİŞTİRİLMEYECEK** —
+  ayrı modül + ayrı sayfa olarak eklenecek ki mevcut dashboard bozulmasın.
+  (b) `function_app.py`'ye `/api/connectors` endpoint'i (function-key, read-only, flag kapalıysa
+  "NOT_CONFIGURED" JSON'u döner). (c) `executive.CONNECTORS` listesini gerçek connector health'ine bağla.
+  (d) testler: flag-off no-op, flag-on mock akış, HTML render smoke.
 
 ## Kalan adımlar (özet)
 - **Adım 4** — Defender for Cloud Apps: `/beta/security/dataDiscovery/cloudAppDiscovery/uploadedStreams`

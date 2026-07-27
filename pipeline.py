@@ -2,8 +2,37 @@
 Ortak tarama boru hattı — hem CLI (main.py) hem Azure Function (function_app.py)
 bunu çağırır. Tek bir "run" fonksiyonu: keşif → izin eşleme → skorlama.
 """
+import os
+
 import collectors
 import scoring
+
+# Microsoft AI Data Sources connector'larını açan env flag'ler (Adım 3-5).
+_CONNECTOR_FLAGS = ["ENABLE_AGENT365", "ENABLE_ENTRA_AGENT_ID",
+                    "ENABLE_DEFENDER_CLOUD_APPS", "ENABLE_PURVIEW_AUDIT"]
+
+
+def connectors_enabled() -> bool:
+    """Hiçbir connector açık değilse framework hiç çalışmaz → mevcut pipeline'a sıfır etki."""
+    if any(os.environ.get(f, "").lower() == "true" for f in _CONNECTOR_FLAGS):
+        return True
+    return bool(os.environ.get("PURVIEW_DSPM_IMPORT_PATH"))
+
+
+def run_connectors(graph) -> dict | None:
+    """
+    Birleşik AI+agent connector framework'ünü (Adım 1-6) canlı pipeline'da çalıştırır.
+    Env flag kapalıysa None döner (mevcut Entra/Graph taramasını ETKİLEMEZ). Dayanıklı:
+    registry ve connector'lar exception yutar; çağıran ayrıca try/except ile sarmalı.
+    """
+    if not connectors_enabled():
+        return None
+    import connectors as C
+    result = C.registry.run(C.default_collectors(graph))
+    profiles = C.sensitive_data.build_app_profiles(result["assets"])
+    result["profiles"] = profiles
+    result["portfolio"] = C.sensitive_data.portfolio_summary(profiles)
+    return result
 
 
 def run(graph, tenant_id: str) -> list[dict]:
