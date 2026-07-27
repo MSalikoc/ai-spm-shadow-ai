@@ -12,6 +12,7 @@ import pytest
 MODULES = [
     "config", "auth", "graph_client", "collectors", "scoring",
     "pipeline", "report", "storage", "notify", "main", "function_app",
+    "connectors_report",
 ]
 
 

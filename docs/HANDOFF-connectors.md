@@ -69,7 +69,26 @@ kaç kullanıcı etkilendi, ne zaman, ve uygulamanın kurumsal onay durumu nedir
   Event→app eşleştirme: entra_app_id > mdca_app_id > isim; eşleşmeyen → sentetik app (ayrı gösterilir).
   **Korelasyon düzeltmesi:** `agent_blueprint_id` artık MERGE token'ı değil → `correlation._relate_blueprints`
   ile identity↔blueprint "relate-not-merge" (aynı blueprint'ten çok identity collapse olmaz). Adım 3 açığı kapandı.
-- **127 test geçiyor** (Adım 3 +8, Adım 4 +8, Adım 5 +14, Adım 6 +8).
+- ✅ **Adım 7** — `connectors_report.py`: `pipeline.run_connectors()` çıktısından **15-bölümlü assessment**
+  (`assessment()` dict): 1-executive, 2-data_source_coverage, 3-sensitive_exposure ("Applications with
+  Sensitive Data Exposure" tablosu), 4-agent_identities, 5-agent365_packages, 6-shadow_ai_usage,
+  7-sensitive_interactions, 8-findings, 9-direction_analysis, 10-correlation_quality, 11-application_detail
+  ("Sensitive Data" sekmesi), 12-agent_detail ("Data Access" sekmesi: owners/sponsors/perms/blueprint ilişkisi),
+  13-sit_distribution, 14-users_and_groups, 15-known_gaps (dürüst API/korelasyon sınırları).
+  `html_string()` standalone tek-dosya HTML (aynı CSS/tema `report.CSS`'ten içe aktarılır, kopyalanmaz).
+  `pipeline.py`: `connectors_enabled()` + `run_connectors(graph)` (registry→correlate→profiles→portfolio; flag
+  kapalıyken **None**, doğrulandı → mevcut Entra taramasına sıfır etki). `function_app.py`: yeni **`/api/connectors`**
+  route'u (function-key, read-only) — flag kapalıysa Graph'a hiç dokunmadan `NOT_CONFIGURED` JSON döner; açıksa
+  gerçek connector'ları çalıştırıp JSON (`?format=html` ile HTML) döner.
+  **Bilinçli kapsam kararı: `report.py` (1007 satır) ve `_run_scan`/`daily_scan`/`weekly_digest`/`scan_now`
+  HİÇ DEĞİŞTİRİLMEDİ** — yeni assessment tamamen ayrı bir modül+endpoint olarak eklendi ki mevcut, deploy'da
+  çalışan dashboard/otomatik tarama/e-posta akışı hiçbir şekilde risk altına girmesin. `executive.CONNECTORS`
+  da bu yüzden değiştirilmedi — connector health'i zaten `connectors_report.py`'nin kendi "data_source_coverage"
+  bölümünde (dürüst, kaynak-bazlı) gösteriliyor; bu, aynı bilgiyi iki farklı yerde tutmadan tek yerde sağlıyor.
+  Korelasyon notu: birleşik asset'lerde `asset_type` ilk üyeden miras kalabilir (ör. Agent365+Entra Identity
+  merge'i `AI_AGENT` görünür) → bölümler `asset_type` değil alt-dict varlığına (`agent365`/`agent_identity`/…)
+  göre filtreler (connector `metrics()` fonksiyonlarıyla aynı desen).
+- **137 test geçiyor** (Adım 3 +8, Adım 4 +8, Adım 5 +14, Adım 6 +8, Adım 7 +9).
   - ✅ **(Adım 6'da giderildi)** `agent_blueprint_id` collapse riski → `_relate_blueprints` ile relate-not-merge.
   - ⚠️ **API şema belirsizliği:** identity→blueprint bağı (`blueprintId`) kesin şema değil; birkaç olası anahtar
     denenip `raw_reference` ile saklanıyor. Gerçek tenant'ta alan adı doğrulanmalı.
@@ -77,21 +96,14 @@ kaç kullanıcı etkilendi, ne zaman, ve uygulamanın kurumsal onay durumu nedir
     defansif parse ediliyor; gerçek tenant'ta doğrulanmalı. Kullanıcı/IP stream'ler arası dedupe edilemiyor
     (conservative max); MDCA app'i appId taşımadığından cross-source korelasyon zayıf (isim-only merge etmez).
 
-## SIRADAKİ: Adım 7 — Rapor/dashboard + framework'ü canlı pipeline'a bağlama
-Kullanıcı tüm adımları (7-8) onayladı; **push/deploy EN SONDA tek seferde** yapılacak.
-Adım 1-6 commit'lendi ama **HENÜZ PUSH EDİLMEDİ** (local `main`, origin'in ilerisinde).
-
-**🔸 Adım 7 KISMEN başladı** (commit'li, testler yeşil):
-- ✅ `pipeline.connectors_enabled()` + `pipeline.run_connectors(graph)` eklendi — registry.run →
-  correlate → `build_app_profiles` → `portfolio_summary`. Env flag kapalıyken **None döner (no-op,
-  doğrulandı)**; mevcut Entra taraması etkilenmez.
-- ⬜ **KALAN:** (a) `connectors_report.py` — 15-bölümlü assessment + standalone HTML (executive kartlar,
-  "Applications with Sensitive Data Exposure" tablosu, Application Detail "Sensitive Data" sekmesi,
-  Agent Detail "Data Access" sekmesi, kaynak-bazlı coverage). **`report.py` (1007 satır) DEĞİŞTİRİLMEYECEK** —
-  ayrı modül + ayrı sayfa olarak eklenecek ki mevcut dashboard bozulmasın.
-  (b) `function_app.py`'ye `/api/connectors` endpoint'i (function-key, read-only, flag kapalıysa
-  "NOT_CONFIGURED" JSON'u döner). (c) `executive.CONNECTORS` listesini gerçek connector health'ine bağla.
-  (d) testler: flag-off no-op, flag-on mock akış, HTML render smoke.
+## SIRADAKİ: Adım 8 — Snapshot/change-tracking
+Kullanıcı tüm adımları onayladı; **push/deploy EN SONDA tek seferde** yapılacak.
+Adım 1-7 commit'lendi ama **HENÜZ PUSH EDİLMEDİ** (local `main`, origin'in ilerisinde; `git log --oneline
+origin/main..HEAD` ile görülebilir).
+Detay için aşağıdaki "Kalan adımlar" bölümüne bak (yeni event tipleri: NEW_AGENT_365_PACKAGE,
+NEW_SENSITIVE_INTERACTION, SENSITIVE_INTERACTION_BLOCKED/ALLOWED, AGENT_OWNER/SPONSOR_CHANGED,
+PURVIEW_COVERAGE_CHANGED vb. + mevcut `drift.py` motoruna entegrasyon — `drift.py` da dikkatli, additive
+şekilde genişletilecek, mevcut Entra drift akışı bozulmayacak).
 
 ## Kalan adımlar (özet)
 - **Adım 4** — Defender for Cloud Apps: `/beta/security/dataDiscovery/cloudAppDiscovery/uploadedStreams`

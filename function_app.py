@@ -15,6 +15,7 @@ import os
 import azure.functions as func
 
 import auth
+import connectors_report
 import drift
 import findings as findingsvc
 import metadata
@@ -112,6 +113,39 @@ def report_view(req: func.HttpRequest) -> func.HttpResponse:
             "Henüz rapor yok. Önce /api/scan çalıştırın.",
             status_code=404, mimetype="text/plain")
     return func.HttpResponse(doc, mimetype="text/html", status_code=200)
+
+
+@app.route(route="connectors", auth_level=func.AuthLevel.FUNCTION)
+def connectors_now(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Microsoft AI Data Sources connector'larını (Agent 365, Entra Agent ID, Defender for
+    Cloud Apps, Purview) on-demand çalıştırır ve 15-bölümlü assessment döner. Read-only —
+    mevcut scan/drift/finding/e-posta akışına DOKUNMAZ. `_run_scan`'dan bağımsızdır.
+
+    Hiçbir ENABLE_* flag'i açık değilse (varsayılan) NOT_CONFIGURED JSON'u döner —
+    Graph çağrısı yapılmaz. ?format=html ile standalone HTML sayfası döner.
+    """
+    if not pipeline.connectors_enabled():
+        return func.HttpResponse(
+            json.dumps({"status": "NOT_CONFIGURED",
+                       "message": "Hiçbir ENABLE_AGENT365/ENABLE_ENTRA_AGENT_ID/"
+                                  "ENABLE_DEFENDER_CLOUD_APPS/ENABLE_PURVIEW_AUDIT/"
+                                  "PURVIEW_DSPM_IMPORT_PATH flag'i açık değil."},
+                      ensure_ascii=False),
+            mimetype="application/json", status_code=200)
+    try:
+        tenant_id = os.environ.get("AISPM_TENANT_ID", "")
+        graph = GraphClient(auth.get_token_managed_identity()) if tenant_id else None
+        result = pipeline.run_connectors(graph)
+        if (req.params.get("format") or "").lower() == "html":
+            return func.HttpResponse(connectors_report.html_string(result, tenant_id),
+                                     mimetype="text/html", status_code=200)
+        return func.HttpResponse(connectors_report.json_string(result),
+                                 mimetype="application/json", status_code=200)
+    except Exception as e:
+        logging.exception("connectors_now hata")
+        return func.HttpResponse(json.dumps({"error": str(e)}, ensure_ascii=False),
+                                 mimetype="application/json", status_code=500)
 
 
 @app.route(route="metadata", methods=["POST"], auth_level=func.AuthLevel.FUNCTION)
