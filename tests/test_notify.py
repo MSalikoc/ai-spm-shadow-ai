@@ -39,9 +39,16 @@ def test_send_email_digest_builds_and_posts(monkeypatch):
     assert captured["json"]["message"]["attachments"]
 
 
-def test_report_url_strips_code_query(monkeypatch):
+def test_report_url_uses_explicit_as_is(monkeypatch):
+    # function-key dünyasında ?code= korunmalı (link çalışsın diye)
     monkeypatch.setenv("AISPM_REPORT_URL", "https://x/api/report?code=SECRET")
-    assert notify._report_url() == "https://x/api/report"
+    assert notify._report_url() == "https://x/api/report?code=SECRET"
+
+
+def test_report_url_falls_back_to_hostname(monkeypatch):
+    monkeypatch.delenv("AISPM_REPORT_URL", raising=False)
+    monkeypatch.setenv("WEBSITE_HOSTNAME", "func.azurewebsites.net")
+    assert notify._report_url() == "https://func.azurewebsites.net/api/report"
 
 
 def test_send_email_digest_no_config_returns_reason(monkeypatch):

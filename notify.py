@@ -27,10 +27,11 @@ def _shadow(scored):
 
 
 def _report_url():
-    """Dashboard için TEMİZ URL — function key İÇERMEZ (Entra/report endpoint)."""
+    """Dashboard linki. AISPM_REPORT_URL varsa (function-key içerebilir) olduğu gibi
+    kullanılır; yoksa WEBSITE_HOSTNAME'den türetilir."""
     explicit = os.environ.get("AISPM_REPORT_URL")
     if explicit:
-        return explicit.split("?")[0]   # yanlışlıkla eklenmiş ?code=... varsa at
+        return explicit
     host = os.environ.get("WEBSITE_HOSTNAME")
     return f"https://{host}/api/report" if host else None
 
