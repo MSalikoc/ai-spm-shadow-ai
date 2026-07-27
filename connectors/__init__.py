@@ -7,7 +7,7 @@ normalize modele yazar; registry.run() dayanıklı çalıştırır ve correlatio
 """
 from .base import (BaseCollector, ConnectorStatus, Source, EntityType,
                    LicenseMissing, PermissionMissing, ApiUnavailable)
-from . import model, correlation, registry
+from . import model, correlation, registry, sensitive_data
 from .agent365 import Agent365Collector
 from .entra_agent_id import EntraAgentIdCollector
 from .defender_cloud_apps import DefenderCloudAppsCollector
@@ -17,7 +17,7 @@ from .purview_dspm_import import PurviewDspmImportCollector
 __all__ = [
     "BaseCollector", "ConnectorStatus", "Source", "EntityType",
     "LicenseMissing", "PermissionMissing", "ApiUnavailable",
-    "model", "correlation", "registry", "default_collectors",
+    "model", "correlation", "registry", "sensitive_data", "default_collectors",
     "Agent365Collector", "EntraAgentIdCollector", "DefenderCloudAppsCollector",
     "PurviewAuditCollector", "PurviewDspmImportCollector",
 ]

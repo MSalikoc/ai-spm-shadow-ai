@@ -61,17 +61,23 @@ kaç kullanıcı etkilendi, ne zaman, ve uygulamanın kurumsal onay durumu nedir
   schema, uyumsuz major → ApiUnavailable), kaynak PURVIEW_DSPM_EXPORT (audit'ten ayrı). Portal scraping YOK.
   Altyapı: `model.EXTERNAL_ID_KEYS`'e `purview_record_id` (event'lere benzersiz id; **korelasyon token'ı DEĞİL**),
   `GraphClient.post()` eklendi. Mock testler (poll/timeout/raw-gizlilik/CSV/schema-mismatch).
-- **119 test geçiyor** (Adım 3 +8, Adım 4 +8, Adım 5 +14).
-  - ⚠️ **Bilinen korelasyon eksiği (Adım 6'da ele alınacak):** `agent_blueprint_id` korelasyon önceliği 90 →
-    aynı blueprint'ten türeyen BİRDEN FAZLA identity tek asset'e collapse olur. 1:1 varsayımı; 1:N durumda
-    identity'ler yanlış birleşir. Çözüm: blueprint'i "relate-not-merge" (parent link) sinyaline çevir.
+- ✅ **Adım 6** — `connectors/sensitive_data.py`: dört kaynağı app/agent bazında birleştirir. `build_app_profiles`
+  (MDCA usage + Purview hassaslık aynı app altında; 7g/30g özet; etkilenen kullanıcı; SIT/label/workload dağılımı;
+  yön taksonomisi ACCESSED/SHARED/UPLOADED/GENERATED/BLOCKED/ALLOWED/UNKNOWN). **erişim≠paylaşım**; upload hacmi
+  tek başına paylaşım değil. `evaluate_findings` (SENSITIVE_DATA_SHARED_WITH_UNSANCTIONED_AI /
+  _BLOCKED_TO_AI / UNSANCTIONED_AI_UPLOAD_UNDETERMINED / AI_APP_ACCESSING_LABELED_DATA). `portfolio_summary`.
+  Event→app eşleştirme: entra_app_id > mdca_app_id > isim; eşleşmeyen → sentetik app (ayrı gösterilir).
+  **Korelasyon düzeltmesi:** `agent_blueprint_id` artık MERGE token'ı değil → `correlation._relate_blueprints`
+  ile identity↔blueprint "relate-not-merge" (aynı blueprint'ten çok identity collapse olmaz). Adım 3 açığı kapandı.
+- **127 test geçiyor** (Adım 3 +8, Adım 4 +8, Adım 5 +14, Adım 6 +8).
+  - ✅ **(Adım 6'da giderildi)** `agent_blueprint_id` collapse riski → `_relate_blueprints` ile relate-not-merge.
   - ⚠️ **API şema belirsizliği:** identity→blueprint bağı (`blueprintId`) kesin şema değil; birkaç olası anahtar
     denenip `raw_reference` ile saklanıyor. Gerçek tenant'ta alan adı doğrulanmalı.
   - ⚠️ **MDCA agg belirsizliği:** aggregatedAppsDetails alan adları (userCount/uploadedBytes/riskScore…) PREVIEW,
     defansif parse ediliyor; gerçek tenant'ta doğrulanmalı. Kullanıcı/IP stream'ler arası dedupe edilemiyor
     (conservative max); MDCA app'i appId taşımadığından cross-source korelasyon zayıf (isim-only merge etmez).
 
-## SIRADAKİ: Adım 6 — Uygulama bazlı hassas veri korelasyonu
+## SIRADAKİ: Adım 7 — Rapor/dashboard + framework'ü canlı pipeline'a bağlama
 Detay için aşağıdaki "Kalan adımlar" bölümüne bak. (Kullanıcı tüm adımları onayladı; sonda tek deploy.)
 
 ## Kalan adımlar (özet)

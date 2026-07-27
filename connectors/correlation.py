@@ -15,11 +15,16 @@ Asset korelasyonu — farklı kaynaklardan gelen aynı varlığı tek asset alt�
 başka bir güçlü sinyal varken confidence'ı doğrulamak için kullanılabilir.
 """
 PRIORITY = [
-    ("entra_app_id", 98), ("agent_identity_id", 96), ("agent_blueprint_id", 90),
+    ("entra_app_id", 98), ("agent_identity_id", 96),
     ("agent365_package_id", 85), ("agent365_asset_id", 80), ("manifest_id", 75),
 ]
 PUB_DOMAIN_WEIGHT = 65
 NAME_ONLY_WEIGHT = 40
+# NOT: `agent_blueprint_id` bilinçli olarak MERGE token'ı DEĞİL (Adım 6 düzeltmesi).
+# Aynı blueprint'ten türeyen birden fazla identity'yi tek asset'e collapse etmemek için
+# blueprint "relate-not-merge" ile bağlanır (bkz. _relate_blueprints): identity ve blueprint
+# ayrı asset kalır, `related` alanıyla çapraz referanslanır.
+BLUEPRINT_RELATE_WEIGHT = 90
 
 _SOURCE_NAME_PRIORITY = ["AGENT_365", "ENTRA_AGENT_ID", "ENTRA_APPS",
                          "DEFENDER_CLOUD_APPS", "PURVIEW_AUDIT", "PURVIEW_DSPM_EXPORT"]
@@ -120,4 +125,33 @@ def correlate(assets):
     clusters = {}
     for i in range(n):
         clusters.setdefault(find(i), []).append(assets[i])
-    return [_merge(members) for members in clusters.values()]
+    return _relate_blueprints([_merge(members) for members in clusters.values()])
+
+
+def _relate_blueprints(assets):
+    """
+    agent_blueprint_id paylaşan identity ve blueprint asset'lerini MERGE etmeden bağlar.
+    Blueprint = 'parent' tanım; identity = ondan türeyen çalışma-zamanı örneği. Aynı
+    blueprint'ten birden fazla identity olabilir → collapse etmeyip `related` ile çapraz
+    referans veririz (identity ↔ blueprint, confidence BLUEPRINT_RELATE_WEIGHT).
+    """
+    from collections import defaultdict
+    by_bp = defaultdict(list)
+    for a in assets:
+        bp = (a.get("external_ids") or {}).get("agent_blueprint_id")
+        if bp:
+            by_bp[bp].append(a)
+    for bp, members in by_bp.items():
+        blueprints = [m for m in members if m.get("asset_type") == "AGENT_BLUEPRINT"]
+        identities = [m for m in members if m.get("asset_type") != "AGENT_BLUEPRINT"]
+        bp_asset = blueprints[0] if blueprints else None
+        for ident in identities:
+            rel = ident.setdefault("related", {})
+            rel["blueprint_id"] = bp
+            if bp_asset:
+                rel["blueprint_asset_id"] = bp_asset["asset_id"]
+                rel["blueprint_confidence"] = BLUEPRINT_RELATE_WEIGHT
+        for bpa in blueprints:
+            bpa.setdefault("related", {})["identity_asset_ids"] = [
+                i["asset_id"] for i in identities]
+    return assets
