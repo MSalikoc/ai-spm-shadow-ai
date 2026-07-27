@@ -44,14 +44,25 @@ kaç kullanıcı etkilendi, ne zaman, ve uygulamanın kurumsal onay durumu nedir
   ayrı; alt-kaynak hatası → PARTIALLY_CONNECTED (identity'ler yine gelir); blueprint listesi düşerse identity
   korunur. `metrics()` (10 metrik). Permission `Application.Read.All`+`Directory.Read.All`. Mock testler
   (tests/test_entra_agent_id.py, FakeGraph path router).
-- **97 test geçiyor** (Adım 3 ile +8).
+- ✅ **Adım 4** — `connectors/defender_cloud_apps.py`: beta `/security/dataDiscovery/cloudAppDiscovery/
+  uploadedStreams` + `aggregatedAppsDetails(period=duration'P30D')` → keşfedilen web app'ler. AI filtresi:
+  MDCA kategorisi + kod-dışı `connectors/catalogs/ai_applications.json` (isim/domain; `AI_APPLICATIONS_CATALOG_PATH`
+  ile override). Her AI app → **AI_APPLICATION** (users/devices/IP/traffic özeti, stream'ler arası aggregate),
+  her (stream,app) → **USAGE_OBSERVATION**. Upload hacmi TEK BAŞINA hassas sayılmaz
+  (`data_sensitivity=UNDETERMINED_REQUIRES_PURVIEW`, `sensitive_data_types=field(NOT_EXPOSED_BY_API)`). Beta URL
+  tam-URL geçilerek (client v1.0 sabit, değişmedi). Stream hatası → PARTIALLY_CONNECTED. `metrics()` (9 metrik).
+  Permission `CloudApp-Discovery.Read.All`, ENABLE_DEFENDER_CLOUD_APPS+ENABLE_PREVIEW_CONNECTORS. Mock testler.
+- **105 test geçiyor** (Adım 3 +8, Adım 4 +8).
   - ⚠️ **Bilinen korelasyon eksiği (Adım 6'da ele alınacak):** `agent_blueprint_id` korelasyon önceliği 90 →
     aynı blueprint'ten türeyen BİRDEN FAZLA identity tek asset'e collapse olur. 1:1 varsayımı; 1:N durumda
     identity'ler yanlış birleşir. Çözüm: blueprint'i "relate-not-merge" (parent link) sinyaline çevir.
   - ⚠️ **API şema belirsizliği:** identity→blueprint bağı (`blueprintId`) kesin şema değil; birkaç olası anahtar
     denenip `raw_reference` ile saklanıyor. Gerçek tenant'ta alan adı doğrulanmalı.
+  - ⚠️ **MDCA agg belirsizliği:** aggregatedAppsDetails alan adları (userCount/uploadedBytes/riskScore…) PREVIEW,
+    defansif parse ediliyor; gerçek tenant'ta doğrulanmalı. Kullanıcı/IP stream'ler arası dedupe edilemiyor
+    (conservative max); MDCA app'i appId taşımadığından cross-source korelasyon zayıf (isim-only merge etmez).
 
-## SIRADAKİ: Adım 4 — Defender for Cloud Apps
+## SIRADAKİ: Adım 5 — Purview Audit + DSPM import
 Detay için aşağıdaki "Kalan adımlar" bölümüne bak. Kullanıcı onayı bekleniyor.
 
 ## Kalan adımlar (özet)

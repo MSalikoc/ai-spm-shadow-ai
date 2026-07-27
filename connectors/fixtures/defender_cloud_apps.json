@@ -1,0 +1,39 @@
+{
+  "streams": [
+    {"id": "stream-fw-1", "displayName": "Palo Alto Firewall"},
+    {"id": "stream-proxy-2", "displayName": "Zscaler Proxy"}
+  ],
+  "apps_by_stream": {
+    "stream-fw-1": [
+      {"id": "mdca-chatgpt", "displayName": "ChatGPT", "category": "Generative AI",
+       "domain": "chat.openai.com", "publisher": "OpenAI",
+       "userCount": 40, "deviceCount": 35, "ipAddressCount": 12, "transactionCount": 5000,
+       "uploadedBytes": 2000000, "downloadedBytes": 8000000, "riskScore": 6,
+       "sanctionedState": "unsanctioned",
+       "firstSeenDateTime": "2026-07-01T00:00:00Z", "lastSeenDateTime": "2026-07-25T00:00:00Z"},
+      {"id": "mdca-salesforce", "displayName": "Salesforce", "category": "CRM",
+       "domain": "salesforce.com", "userCount": 100, "deviceCount": 90, "ipAddressCount": 20,
+       "transactionCount": 20000, "uploadedBytes": 500000, "downloadedBytes": 900000,
+       "riskScore": 9, "sanctionedState": "sanctioned"}
+    ],
+    "stream-proxy-2": [
+      {"id": "mdca-chatgpt", "displayName": "ChatGPT", "category": "Generative AI",
+       "domain": "chat.openai.com", "publisher": "OpenAI",
+       "userCount": 25, "deviceCount": 20, "ipAddressCount": 8, "transactionCount": 3000,
+       "uploadedBytes": 1000000, "downloadedBytes": 4000000, "riskScore": 6,
+       "sanctionedState": "unsanctioned",
+       "firstSeenDateTime": "2026-06-20T00:00:00Z", "lastSeenDateTime": "2026-07-26T00:00:00Z"},
+      {"id": "mdca-someai", "displayName": "SomeAI Writer", "category": "Generative AI",
+       "domain": "someai.example", "userCount": 5, "deviceCount": 5, "ipAddressCount": 2,
+       "transactionCount": 50, "uploadedBytes": 100, "downloadedBytes": 500, "riskScore": 2,
+       "sanctionedState": "unreviewed",
+       "firstSeenDateTime": "2026-07-22T00:00:00Z", "lastSeenDateTime": "2026-07-24T00:00:00Z"},
+      {"id": "mdca-claude", "displayName": "Claude", "category": "Collaboration",
+       "domain": "claude.ai", "publisher": "Anthropic",
+       "userCount": 10, "deviceCount": 8, "ipAddressCount": 3, "transactionCount": 200,
+       "uploadedBytes": 500000, "downloadedBytes": 1500000, "riskScore": 8,
+       "sanctionedState": "sanctioned",
+       "firstSeenDateTime": "2026-07-05T00:00:00Z", "lastSeenDateTime": "2026-07-20T00:00:00Z"}
+    ]
+  }
+}

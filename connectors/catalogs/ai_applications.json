@@ -1,0 +1,30 @@
+{
+  "_comment": "Kod-dışı AI uygulama kataloğu (Adım 4). MDCA kategorisi eşleşmese bile bu listedeki isim/domain'ler AI sayılır. Yeni AI SaaS çıktıkça kod değiştirmeden buraya eklenir. domains: alt-domain eşleşmesi (endswith) yapılır.",
+  "version": 1,
+  "ai_categories": [
+    "Generative AI",
+    "Artificial Intelligence",
+    "AI",
+    "Machine Learning",
+    "AI Chatbot"
+  ],
+  "applications": [
+    {"name": "ChatGPT", "vendor": "OpenAI", "domains": ["chat.openai.com", "chatgpt.com", "openai.com"]},
+    {"name": "Claude", "vendor": "Anthropic", "domains": ["claude.ai", "anthropic.com"]},
+    {"name": "Gemini", "vendor": "Google", "domains": ["gemini.google.com", "bard.google.com"]},
+    {"name": "Microsoft Copilot", "vendor": "Microsoft", "domains": ["copilot.microsoft.com", "copilot.cloud.microsoft"]},
+    {"name": "Perplexity", "vendor": "Perplexity AI", "domains": ["perplexity.ai"]},
+    {"name": "Poe", "vendor": "Quora", "domains": ["poe.com"]},
+    {"name": "Character.AI", "vendor": "Character Technologies", "domains": ["character.ai"]},
+    {"name": "Midjourney", "vendor": "Midjourney", "domains": ["midjourney.com"]},
+    {"name": "Hugging Face", "vendor": "Hugging Face", "domains": ["huggingface.co"]},
+    {"name": "DeepSeek", "vendor": "DeepSeek", "domains": ["deepseek.com", "chat.deepseek.com"]},
+    {"name": "Mistral Le Chat", "vendor": "Mistral AI", "domains": ["chat.mistral.ai", "mistral.ai"]},
+    {"name": "Copy.ai", "vendor": "Copy.ai", "domains": ["copy.ai"]},
+    {"name": "Jasper", "vendor": "Jasper", "domains": ["jasper.ai"]},
+    {"name": "Writesonic", "vendor": "Writesonic", "domains": ["writesonic.com"]},
+    {"name": "GitHub Copilot", "vendor": "GitHub", "domains": ["github.com/features/copilot", "copilot.github.com"]},
+    {"name": "Notion AI", "vendor": "Notion", "domains": ["notion.so"]},
+    {"name": "Grok", "vendor": "xAI", "domains": ["grok.com", "x.ai"]}
+  ]
+}
