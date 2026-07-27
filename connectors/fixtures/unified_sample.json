@@ -1,0 +1,26 @@
+[
+  {
+    "asset_id": "entra_app_id:APP-1",
+    "asset_type": "AI_AGENT",
+    "display_name": "Finance Agent",
+    "external_ids": {"entra_app_id": "APP-1", "agent365_package_id": "pkg-123",
+                     "agent_identity_id": null, "agent_blueprint_id": null,
+                     "agent365_asset_id": null, "manifest_id": null,
+                     "entra_object_id": null, "mdca_app_id": null},
+    "sources": ["AGENT_365"],
+    "first_seen": "2026-07-01T00:00:00Z", "last_seen": "2026-07-20T00:00:00Z",
+    "correlation_confidence": 100
+  },
+  {
+    "asset_id": "agent_identity_id:OID-9",
+    "asset_type": "AI_AGENT",
+    "display_name": "Finance Agent Identity",
+    "external_ids": {"entra_app_id": "APP-1", "agent_identity_id": "OID-9",
+                     "agent_blueprint_id": "BP-7", "agent365_package_id": null,
+                     "agent365_asset_id": null, "manifest_id": null,
+                     "entra_object_id": null, "mdca_app_id": null},
+    "sources": ["ENTRA_AGENT_ID"],
+    "first_seen": "2026-06-15T00:00:00Z", "last_seen": "2026-07-26T00:00:00Z",
+    "correlation_confidence": 100
+  }
+]

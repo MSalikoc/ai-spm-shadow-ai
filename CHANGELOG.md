@@ -5,6 +5,19 @@ All notable changes to AI-SPM are documented here. Format based on
 
 ## [Unreleased]
 
+### Added
+- **Unified connector framework (Microsoft AI data sources — Step 1/8)** — `connectors/`
+  package: `BaseCollector` interface (is_configured/collect/normalize/get_health/
+  get_coverage + resilient `safe_run`), 8 connector states, unified entity model
+  (`model.py`: 14 entity types, external-id-based deterministic asset IDs, field
+  availability wrappers), and a priority-based **correlation engine** (`correlation.py`:
+  appId > agent identity > blueprint > package/asset id > manifest > publisher+domain;
+  never merges on name alone) with confidence scoring. `registry.run()` runs all
+  connectors resiliently (one failure never stops the scan). Skeleton connectors for
+  Agent 365 / Entra Agent ID / Defender for Cloud Apps / Purview Audit / Purview DSPM
+  import (all `NOT_CONFIGURED` until their steps). Offline mock fixtures + tests.
+  Not yet wired into the live pipeline (architecture only).
+
 ### Changed
 - **Dashboard redesign (tabbed, modern)** — modeled on Microsoft's Zero Trust Assessment:
   a top **hero** (Tenant card + stat tiles: AI Applications / Agents / Active Users /
