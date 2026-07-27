@@ -83,10 +83,10 @@ def test_dashboard_renders_executive_and_drilldown():
                                 "confidence": 90, "reasons": ["x"], "manual_override": False},
              "app_id": "a1"}]
     doc = report.html_string(apps, "t", [], [])
-    assert "AI Estate — Executive Overview" in doc
+    assert 'data-tab="overview"' in doc                           # tab navigasyonu
     assert "Needs Attention" in doc
     assert "Coverage Overview" in doc
     assert "MCP Servers" in doc and "AI Models" in doc            # connector-gated kartlar
-    assert 'href="#sec-inventory"' in doc                          # drill-down
-    assert 'id="sec-findings"' in doc and 'id="sec-coverage"' in doc
+    assert 'data-goto="apps"' in doc                              # KPI drill-down → tab
+    assert 'data-tab="findings"' in doc and 'data-tab="governance"' in doc
     assert "bağlı değil" in doc                                    # connector boşluğu

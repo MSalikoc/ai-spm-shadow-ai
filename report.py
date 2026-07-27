@@ -152,24 +152,24 @@ def _executive_section(apps, changes, findings):
     tc = executive.top_changes(changes, 5)
 
     cards = [
-        (m["total_applications"], "AI Applications", "#sec-inventory", ""),
-        (m["total_agents"], "AI Agents", "#sec-inventory", ""),
-        (m["active_users"], "Active AI Users", "#sec-usage", ""),
-        (m["unapproved"], "Unapproved AI", "#sec-inventory", "high"),
-        (m["local_agents"], "Local AI Agents", "#sec-coverage", "muted"),
-        (m["mcp_servers"], "MCP Servers", "#sec-coverage", "muted"),
-        (m["ai_models"], "AI Models", "#sec-coverage", "muted"),
-        (m["new_this_week"], "New Assets (7g)", "#sec-timeline", ""),
-        (m["unknown_assets"], "Unknown Assets", "#sec-inventory", "crit"),
-        (m["apps_without_owner"], "Apps w/o Owner", "#sec-coverage", "high"),
-        (m["agents_without_purpose"], "Agents w/o Purpose", "#sec-coverage", "high"),
-        (m["open_findings"], "Open Findings", "#sec-findings", "crit"),
-        (m["overdue_findings"], "Overdue Findings", "#sec-findings", "high"),
-        (f'{m["assessment_coverage"]}%', "Assessment Coverage", "#sec-coverage", "low"),
+        (m["total_applications"], "AI Applications", "apps", ""),
+        (m["total_agents"], "AI Agents", "apps", ""),
+        (m["active_users"], "Active AI Users", "usage", ""),
+        (m["unapproved"], "Unapproved AI", "apps", "high"),
+        (m["local_agents"], "Local AI Agents", "governance", "muted"),
+        (m["mcp_servers"], "MCP Servers", "governance", "muted"),
+        (m["ai_models"], "AI Models", "governance", "muted"),
+        (m["new_this_week"], "New Assets (7g)", "changes", ""),
+        (m["unknown_assets"], "Unknown Assets", "apps", "crit"),
+        (m["apps_without_owner"], "Apps w/o Owner", "governance", "high"),
+        (m["agents_without_purpose"], "Agents w/o Purpose", "governance", "high"),
+        (m["open_findings"], "Open Findings", "findings", "crit"),
+        (m["overdue_findings"], "Overdue Findings", "findings", "high"),
+        (f'{m["assessment_coverage"]}%', "Assessment Coverage", "governance", "low"),
     ]
     kpi = "".join(
-        f'<a class="card kpi {cls}" href="{href}"><span class="n">{v}</span>'
-        f'<span class="l">{html.escape(lbl)}</span></a>' for v, lbl, href, cls in cards)
+        f'<a class="card kpi {cls}" data-goto="{goto}"><span class="n">{v}</span>'
+        f'<span class="l">{html.escape(lbl)}</span></a>' for v, lbl, goto, cls in cards)
 
     na_html = "".join(f"<li>{html.escape(x)}</li>" for x in na) or \
         "<li>Dikkat gerektiren belirgin bir durum yok.</li>"
@@ -185,6 +185,20 @@ def _executive_section(apps, changes, findings):
                        ("Web (user-consent)", "", surface["web"], "#b8860b"),
                        ("Local (connector gerekli)", "", surface["local"], "#6b7280")],
                       max(surface["enterprise"], surface["web"], 1))
+    return f"""
+  <div class="kpi-grid">{kpi}</div>
+  <div class="grid cols-2" style="margin-top:16px">
+    <div class="card"><h3>Needs Attention</h3><ul class="na">{na_html}</ul></div>
+    <div class="card"><h3>En önemli 5 değişiklik</h3><ul>{tc_html}</ul></div>
+  </div>
+  <div class="card" style="margin-top:16px"><h3>Application vs Agent · kullanım yüzeyi</h3>
+    <div class="grid cols-2"><div>{aa_bars}</div><div>{surf_bars}</div></div></div>
+"""
+
+
+def _coverage_section(apps):
+    import executive
+    cov = executive.coverage(apps)
     conn_html = "".join(
         f'<li><span class="dot" style="background:{"#2e8b57" if ok else "#c0392b"}"></span>'
         f'{html.escape(name)} — {"bağlı" if ok else "<b>bağlı değil</b>"} '
@@ -193,22 +207,9 @@ def _executive_section(apps, changes, findings):
     own_bar = _bars([("Owner coverage", f"{cov['owner_coverage']}%", cov["owner_coverage"], "#0f6cbd"),
                      ("Agent purpose coverage", f"{cov['purpose_coverage']}%", cov["purpose_coverage"], "#7c3aed")],
                     100)
-
-    return f"""
-  <h2 style="margin:4px 4px 12px;font-size:18px">AI Estate — Executive Overview</h2>
-  <div class="kpi-grid">{kpi}</div>
-  <div class="grid cols-2" style="margin-top:16px">
-    <div class="card" id="sec-needs"><h3>Needs Attention</h3><ul class="na">{na_html}</ul></div>
-    <div class="card"><h3>En önemli 5 değişiklik</h3><ul>{tc_html}</ul></div>
-  </div>
-  <div class="grid cols-2" style="margin-top:16px">
-    <div class="card"><h3>Application vs Agent · kullanım yüzeyi</h3>{aa_bars}
-      <div style="height:8px"></div>{surf_bars}</div>
-    <div class="card" id="sec-coverage"><h3>Coverage Overview</h3>{own_bar}
-      <h3 style="margin-top:14px">Veri kaynağı / connector durumu</h3>
-      <ul class="conn">{conn_html}</ul></div>
-  </div>
-"""
+    return (f'<div class="card" style="margin-top:16px"><h3>Coverage Overview</h3>{own_bar}'
+            f'<h3 style="margin-top:14px">Veri kaynağı / connector durumu</h3>'
+            f'<ul class="conn">{conn_html}</ul></div>')
 
 
 def _timeline_section(changes):
@@ -560,7 +561,23 @@ header .spacer{flex:1}
 header .tenant{font-size:12px;color:var(--muted)}
 .themebtn{cursor:pointer;border:1px solid var(--line);background:transparent;color:var(--ink);
  border-radius:6px;padding:4px 9px;font-size:13px}
-main{max-width:1120px;margin:0 auto;padding:22px}
+.tabs{display:flex;gap:2px;margin-left:10px;flex-wrap:wrap}
+.navlink{cursor:pointer;padding:8px 13px;font-size:13px;color:var(--muted);font-weight:600;
+ border-bottom:2px solid transparent;user-select:none}
+.navlink:hover{color:var(--ink)}
+.navlink.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tab{display:none;animation:fade .18s ease}
+.tab.active{display:block}
+@keyframes fade{from{opacity:.4}to{opacity:1}}
+.hero{display:grid;grid-template-columns:1.1fr 1.2fr 1fr;gap:16px;align-items:stretch}
+.hero .card{margin:0}
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.tile{display:flex;flex-direction:column;justify-content:center;gap:3px}
+.tile .n{font-size:32px;font-weight:700;line-height:1}
+.tile .l{font-size:12px;color:var(--muted)}
+.tile.high .n{color:#d35400}
+@media(max-width:900px){.hero{grid-template-columns:1fr}}
+main{max-width:1180px;margin:0 auto;padding:22px}
 .grid{display:grid;gap:16px}
 .cols-4{grid-template-columns:repeat(4,1fr)}
 .cols-2{grid-template-columns:1fr 1fr}
@@ -654,6 +671,9 @@ THEME_JS = """
 b.onclick=function(){var r=document.documentElement;
 var d=(r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'))==='dark';
 r.setAttribute('data-theme',d?'light':'dark');b.textContent=d?'\\u263C':'\\u263E';};
+function showTab(n){document.querySelectorAll('.tab').forEach(function(t){t.classList.toggle('active',t.getAttribute('data-tab')===n);});document.querySelectorAll('.navlink').forEach(function(x){x.classList.toggle('active',x.getAttribute('data-tab')===n);});window.scrollTo(0,0);}
+document.querySelectorAll('.navlink').forEach(function(l){l.onclick=function(){showTab(l.getAttribute('data-tab'));};});
+document.querySelectorAll('[data-goto]').forEach(function(c){c.onclick=function(e){e.preventDefault();showTab(c.getAttribute('data-goto'));};});
 var state={perm:'all',usage:'all',bu:'all',sub:'all',cat:'all'};
 function apply(){document.querySelectorAll('.finding').forEach(function(el){
  var show=true;
@@ -872,87 +892,106 @@ def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None) -
     findings_html = "".join(_finding_row(a) for a in all_apps) or \
         '<div class="empty">AI uygulaması bulunamadı.</div>'
 
+    import executive
+    estate = executive.estate_metrics(apps, changes, findings)
     ts = datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M UTC")
 
     body = f"""
 <header>
   <span class="logo"></span>
-  <h1>AI-SPM · Shadow AI Assessment</h1>
+  <h1>AI-SPM</h1>
+  <nav class="tabs">
+    <a class="navlink active" data-tab="overview">Overview</a>
+    <a class="navlink" data-tab="apps">Applications</a>
+    <a class="navlink" data-tab="usage">Usage</a>
+    <a class="navlink" data-tab="governance">Governance</a>
+    <a class="navlink" data-tab="findings">Findings</a>
+    <a class="navlink" data-tab="changes">Changes</a>
+  </nav>
   <span class="spacer"></span>
-  <span class="tenant">Tenant: {html.escape(tenant_id)}</span>
+  <span class="tenant">{html.escape(tenant_id)}</span>
   <button id="tg" class="themebtn" title="Tema">&#9790;</button>
 </header>
 <main>
-  {_executive_section(apps, changes, findings)}
-  <div class="grid cols-2" style="align-items:stretch">
-    <div class="card">
-      <h3>Tenant</h3>
-      <div class="tenant-facts">
-        <b>Tenant ID</b><span>{html.escape(tenant_id)}</span>
-        <b>Toplam AI entegrasyonu</b><span>{len(apps)}</span>
-        <b>Shadow AI (3. parti/iç)</b><span>{len(shadow)}</span>
-        <b>Microsoft first-party</b><span>{len(microsoft)}</span>
-        <b>Tarama zamanı</b><span>{ts}</span>
+  <section class="tab active" data-tab="overview">
+    <div class="hero">
+      <div class="card hero-tenant">
+        <h3>Tenant</h3>
+        <div class="tenant-facts">
+          <b>Tenant ID</b><span>{html.escape(tenant_id)}</span>
+          <b>Toplam AI</b><span>{len(apps)}</span>
+          <b>Shadow AI</b><span>{len(shadow)}</span>
+          <b>Microsoft 1st-party</b><span>{len(microsoft)}</span>
+          <b>Tarama</b><span>{ts}</span>
+        </div>
+      </div>
+      <div class="tiles">
+        <div class="card tile"><span class="n">{estate['total_applications']}</span><span class="l">AI Applications</span></div>
+        <div class="card tile"><span class="n">{estate['total_agents']}</span><span class="l">AI Agents</span></div>
+        <div class="card tile"><span class="n">{estate['active_users']}</span><span class="l">Active AI Users</span></div>
+        <div class="card tile high"><span class="n">{estate['unapproved']}</span><span class="l">Unapproved AI</span></div>
+      </div>
+      <div class="card hero-donut">
+        <h3>Assessment · risk dağılımı</h3>
+        <div class="summary">{donut}<div class="legend">{legend}</div></div>
       </div>
     </div>
-    <div class="card">
-      <h3>Risk dağılımı</h3>
-      <div class="summary">{donut}<div class="legend">{legend}</div></div>
+    <div class="grid cols-4" style="margin-top:16px">
+      <div class="card kpi"><span class="n">{len(shadow)}</span><span class="l">Shadow AI</span></div>
+      <div class="card kpi crit"><span class="n">{counts['Kritik']}</span><span class="l">Kritik</span></div>
+      <div class="card kpi high"><span class="n">{counts['Yüksek']}</span><span class="l">Yüksek</span></div>
+      <div class="card kpi med"><span class="n">{counts['Orta']}</span><span class="l">Orta</span></div>
     </div>
-  </div>
-  <div id="sec-timeline">{_timeline_section(changes)}</div>
-  {new_bu_section}
-  <div id="sec-findings">{_findings_section(findings)}</div>
-  <div class="grid cols-4" style="margin-top:16px">
-    <div class="card kpi"><span class="n">{len(shadow)}</span><span class="l">Shadow AI uygulaması</span></div>
-    <div class="card kpi crit"><span class="n">{counts['Kritik']}</span><span class="l">Kritik</span></div>
-    <div class="card kpi high"><span class="n">{counts['Yüksek']}</span><span class="l">Yüksek</span></div>
-    <div class="card kpi med"><span class="n">{counts['Orta']}</span><span class="l">Orta</span></div>
-  </div>
+    {_executive_section(apps, changes, findings)}
+  </section>
 
-  <div class="grid cols-2" style="margin-top:16px">
-    <div class="card"><h3>En riskli uygulamalar</h3>{top_bars}</div>
-    <div class="card"><h3>En çok verilen hassas izinler</h3>{scope_bars}</div>
-  </div>
+  <section class="tab" data-tab="apps">
+    <div class="grid cols-2">
+      <div class="card"><h3>En riskli uygulamalar</h3>{top_bars}</div>
+      <div class="card"><h3>En çok verilen hassas izinler</h3>{scope_bars}</div>
+    </div>
+    <div class="grid cols-4" style="margin-top:16px">
+      <div class="card kpi"><span class="n">{admin}</span><span class="l">Admin (tüm org) onayı</span></div>
+      <div class="card kpi"><span class="n">{third}</span><span class="l">Dış 3. parti</span></div>
+      <div class="card kpi"><span class="n">{persist}</span><span class="l">Kalıcı erişim (offline)</span></div>
+      <div class="card kpi"><span class="n">{unverified}</span><span class="l">Doğrulanmamış publisher</span></div>
+    </div>
+    <h3 style="margin:20px 4px 10px;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)">Erişim tipi</h3>
+    <div class="grid cols-4">
+      <div class="card kpi"><span class="n">{delegated_n}</span><span class="l">Delegated erişim</span></div>
+      <div class="card kpi high"><span class="n">{apponly_n}</span><span class="l">App-only (kullanıcısız)</span></div>
+      <div class="card kpi"><span class="n">{both_n}</span><span class="l">Her iki erişim tipi</span></div>
+      <div class="card kpi crit"><span class="n">{highpriv_apponly}</span><span class="l">Yüksek ayrıcalıklı app-only</span></div>
+    </div>
+    {classification_section}
+    <div class="card" style="margin-top:16px">
+      <h3>Envanter ({len(all_apps)} uygulama · {len(shadow)} shadow · {len(microsoft)} Microsoft first-party)</h3>
+      <div class="filters">
+        <button data-group="perm" data-value="all" class="active">İzin: Tümü</button>
+        <button data-group="perm" data-value="delegated">Delegated</button>
+        <button data-group="perm" data-value="apponly">App-only</button>
+        <button data-group="perm" data-value="both">Her ikisi</button>
+      </div>
+      <div class="filters">
+        <button data-group="usage" data-value="all" class="active">Kullanım: Tümü</button>
+        <button data-group="usage" data-value="active">Aktif</button>
+        <button data-group="usage" data-value="inactive">Pasif (30g+)</button>
+        <button data-group="usage" data-value="unused">Hiç kullanılmamış</button>
+      </div>
+      <div class="filters">
+        <label>Kategori <select data-group="cat"><option value="all">Tümü</option>{cat_opts}</select></label>
+        <label>Birim <select data-group="bu"><option value="all">Tümü</option>{bu_opts}</select></label>
+        <label>Subsidiary <select data-group="sub"><option value="all">Tümü</option>{sub_opts}</select></label>
+      </div>
+      <div class="findings">{findings_html}</div>
+    </div>
+  </section>
 
-  <div class="grid cols-4" style="margin-top:16px">
-    <div class="card kpi"><span class="n">{admin}</span><span class="l">Admin (tüm org) onayı</span></div>
-    <div class="card kpi"><span class="n">{third}</span><span class="l">Dış 3. parti</span></div>
-    <div class="card kpi"><span class="n">{persist}</span><span class="l">Kalıcı erişim (offline)</span></div>
-    <div class="card kpi"><span class="n">{unverified}</span><span class="l">Doğrulanmamış publisher</span></div>
-  </div>
+  <section class="tab" data-tab="usage">{usage_section}</section>
+  <section class="tab" data-tab="governance">{governance_section}{_coverage_section(apps)}</section>
+  <section class="tab" data-tab="findings">{_findings_section(findings)}</section>
+  <section class="tab" data-tab="changes">{_timeline_section(changes)}{new_bu_section}</section>
 
-  <h3 style="margin:22px 4px 10px;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)">Erişim tipi</h3>
-  <div class="grid cols-4">
-    <div class="card kpi"><span class="n">{delegated_n}</span><span class="l">Delegated erişim</span></div>
-    <div class="card kpi high"><span class="n">{apponly_n}</span><span class="l">App-only erişim (kullanıcısız)</span></div>
-    <div class="card kpi"><span class="n">{both_n}</span><span class="l">Her iki erişim tipi</span></div>
-    <div class="card kpi crit"><span class="n">{highpriv_apponly}</span><span class="l">Yüksek ayrıcalıklı app-only</span></div>
-  </div>
-  <div id="sec-usage">{usage_section}</div>
-  {governance_section}
-  {classification_section}
-  <div class="card" id="sec-inventory" style="margin-top:16px">
-    <h3>Envanter ({len(all_apps)} uygulama · {len(shadow)} shadow · {len(microsoft)} Microsoft first-party)</h3>
-    <div class="filters">
-      <button data-group="perm" data-value="all" class="active">İzin: Tümü</button>
-      <button data-group="perm" data-value="delegated">Delegated</button>
-      <button data-group="perm" data-value="apponly">App-only</button>
-      <button data-group="perm" data-value="both">Her ikisi</button>
-    </div>
-    <div class="filters">
-      <button data-group="usage" data-value="all" class="active">Kullanım: Tümü</button>
-      <button data-group="usage" data-value="active">Aktif</button>
-      <button data-group="usage" data-value="inactive">Pasif (30g+)</button>
-      <button data-group="usage" data-value="unused">Hiç kullanılmamış</button>
-    </div>
-    <div class="filters">
-      <label>Kategori <select data-group="cat"><option value="all">Tümü</option>{cat_opts}</select></label>
-      <label>Birim <select data-group="bu"><option value="all">Tümü</option>{bu_opts}</select></label>
-      <label>Subsidiary <select data-group="sub"><option value="all">Tümü</option>{sub_opts}</select></label>
-    </div>
-    <div class="findings">{findings_html}</div>
-  </div>
   <div class="foot">AI-SPM · read-only Entra/Graph taraması · {ts}</div>
 </main>
 <script>{THEME_JS}</script>

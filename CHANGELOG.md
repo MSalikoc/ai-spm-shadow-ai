@@ -5,6 +5,14 @@ All notable changes to AI-SPM are documented here. Format based on
 
 ## [Unreleased]
 
+### Changed
+- **Dashboard redesign (tabbed, modern)** — modeled on Microsoft's Zero Trust Assessment:
+  a top **hero** (Tenant card + stat tiles: AI Applications / Agents / Active Users /
+  Unapproved + Assessment risk donut), and a **tab navigation** (Overview / Applications /
+  Usage / Governance / Findings / Changes) that splits the content into focused pages.
+  Executive KPI cards drill down by switching tabs. All existing information preserved,
+  reorganized; light/dark and responsive retained.
+
 ### Added
 - **Executive dashboard** (`executive.py`) — an AI-estate overview for leadership:
   - 14 estate KPIs (AI applications, AI agents, active users, unapproved, unknown, new
