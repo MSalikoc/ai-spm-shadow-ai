@@ -6,6 +6,14 @@ All notable changes to AI-SPM are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **Agent 365 collector (Step 2/8)** — `connectors/agent365.py` reads the Agent 365 catalog
+  (`/copilot/admin/catalog/packages` + per-package detail, `CopilotPackages.Read.All`),
+  normalizes each package into a unified `AI_AGENT` asset (package type, publisher/build-type,
+  scopes, blocked, available/deployed scope, categories, sensitivity), parses `elementDetails`
+  (declarative/custom-engine/bot IDs, scopes, file support, host) and keeps a `raw_reference` +
+  raw definition for anything unparseable. Ready for entra-appId correlation. `metrics()` for the
+  9 Agent 365 dashboard numbers. Resilient: 403→PERMISSION_MISSING, license→LICENSE_MISSING,
+  404/400→API_UNAVAILABLE, never stops the scan. Offline mock fixtures + tests.
 - **Unified connector framework (Microsoft AI data sources — Step 1/8)** — `connectors/`
   package: `BaseCollector` interface (is_configured/collect/normalize/get_health/
   get_coverage + resilient `safe_run`), 8 connector states, unified entity model

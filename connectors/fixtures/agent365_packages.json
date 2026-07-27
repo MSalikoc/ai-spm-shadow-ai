@@ -1,0 +1,40 @@
+[
+  {
+    "id": "pkg-finance-001",
+    "displayName": "Finance Assistant",
+    "packageType": "declarativeAgent",
+    "publisher": "Contoso Ltd",
+    "applicationId": "APP-FIN-1",
+    "assetId": "asset-fin-1",
+    "manifestId": "manifest-fin-1",
+    "version": "1.2.0",
+    "manifestVersion": "1.17",
+    "platform": "M365Copilot",
+    "supportedHosts": ["Teams", "Outlook"],
+    "blocked": false,
+    "availableToScope": "everyone",
+    "deployedToScope": "Finance-Group",
+    "lastModifiedDateTime": "2026-07-20T00:00:00Z",
+    "categories": ["Productivity"],
+    "elementDetails": [
+      {"elementType": "declarativeAgent",
+       "definition": {"declarativeAgentId": "da-fin-1", "scopes": ["Files.Read"],
+                      "fileSupport": true, "host": "Teams"}}
+    ]
+  },
+  {
+    "id": "pkg-ms-002",
+    "displayName": "Microsoft 365 Copilot Agent",
+    "packageType": "declarativeAgent",
+    "publisher": "Microsoft",
+    "applicationId": null,
+    "blocked": true,
+    "availableToScope": "everyone",
+    "deployedToScope": "everyone",
+    "lastModifiedDateTime": "2026-05-01T00:00:00Z",
+    "elementDetails": [
+      {"elementType": "customEngineAgent",
+       "definition": {"customEngineAgentId": "cea-2", "botId": "bot-2"}}
+    ]
+  }
+]
