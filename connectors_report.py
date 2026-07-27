@@ -281,11 +281,6 @@ def _esc(s):
     return html.escape(str(s)) if s is not None else "—"
 
 
-def _kpi(label, value, cls=""):
-    return (f'<div class="kpi {cls}"><div class="n">{_esc(value)}</div>'
-           f'<div class="l">{_esc(label)}</div></div>')
-
-
 def _status_color(status):
     return {ConnectorStatus.CONNECTED: "#2e8b57", ConnectorStatus.PARTIALLY_CONNECTED: "#b8860b",
            ConnectorStatus.NOT_CONFIGURED: "#6b7280", ConnectorStatus.PERMISSION_MISSING: "#c0392b",
@@ -302,18 +297,83 @@ def _coverage_html(rows):
     return f'<ul class="conn">{items}</ul>'
 
 
+def _table(headers, rows_html, empty_msg):
+    if not rows_html:
+        return f'<div class="empty">{_esc(empty_msg)}</div>'
+    ths = "".join(f"<th>{_esc(h)}</th>" for h in headers)
+    return (f'<div class="c-tbl-wrap"><table class="c-tbl"><thead><tr>{ths}</tr></thead>'
+           f'<tbody>{"".join(rows_html)}</tbody></table></div>')
+
+
 def _exposure_table(rows):
-    if not rows:
-        return '<div class="empty">Hassas veri paylaşımı tespit edilmedi (veya kaynaklar bağlı değil).</div>'
-    trs = "".join(
-        f'<tr><td>{_esc(p["display_name"])}</td><td>{_esc(p.get("sanctioned_state"))}</td>'
-        f'<td>{_esc(p["sensitive_data_summary"]["window_30d"]["sensitive"])}</td>'
-        f'<td>{_esc(p["affected_user_count"])}</td>'
-        f'<td>{_esc(", ".join(p["sensitive_data_summary"]["sit_types"][:3]))}</td>'
-        f'<td>{len(p["findings"])}</td></tr>' for p in rows)
-    return (f'<table class="tbl"><thead><tr><th>Uygulama</th><th>Onay durumu</th>'
-           f'<th>Hassas (30g)</th><th>Etkilenen kullanıcı</th><th>Veri türleri</th>'
-           f'<th>Bulgu</th></tr></thead><tbody>{trs}</tbody></table>')
+    trs = [
+        f'<tr><td class="c-name">{_esc(p["display_name"])}</td>'
+        f'<td>{_sanction_chip(p.get("sanctioned_state"))}</td>'
+        f'<td class="c-num">{_esc(p["sensitive_data_summary"]["window_30d"]["sensitive"])}</td>'
+        f'<td class="c-num">{_esc(p["affected_user_count"])}</td>'
+        f'<td>{"".join(f"<span class=\'c-tag\'>{_esc(t)}</span>" for t in p["sensitive_data_summary"]["sit_types"][:3]) or "—"}</td>'
+        f'<td class="c-num">{len(p["findings"])}</td></tr>' for p in rows]
+    return _table(["Uygulama", "Onay durumu", "Hassas (30g)", "Etkilenen kullanıcı",
+                  "Veri türleri", "Bulgu"], trs,
+                 "Hassas veri paylaşımı tespit edilmedi (veya kaynaklar bağlı değil).")
+
+
+def _sanction_chip(state):
+    color = {"sanctioned": "#2e8b57", "unsanctioned": "#c0392b"}.get(state, "#6b7280")
+    return f'<span class="c-chip" style="color:{color}">{_esc(state or "—")}</span>'
+
+
+# ---------- klasik dashboard'un (report.py) görsel dilini yeniden kullanan yardımcılar ----------
+# report.py'ye DOKUNULMUYOR — sadece aynı CSS (import edilen `CSS`) üzerine, aynı bileşen
+# desenleriyle (donut/bars/kpi-grid/finding) kendi, bağımsız bir sayfa kuruyoruz.
+def _donut(segments, size=180, stroke=28, center_label="Bulgu"):
+    import math
+    total = sum(v for _, v, _ in segments) or 1
+    r = (size - stroke) / 2
+    cx = cy = size / 2
+    circ = 2 * math.pi * r
+    offset = 0.0
+    arcs = []
+    for _, value, color in segments:
+        if value <= 0:
+            continue
+        dash = circ * (value / total)
+        arcs.append(
+            f'<circle cx="{cx}" cy="{cy}" r="{r:.2f}" fill="none" stroke="{color}" '
+            f'stroke-width="{stroke}" stroke-dasharray="{dash:.2f} {circ - dash:.2f}" '
+            f'stroke-dashoffset="{-offset:.2f}" transform="rotate(-90 {cx} {cy})"/>')
+        offset += dash
+    return (
+        f'<svg viewBox="0 0 {size} {size}" width="{size}" height="{size}" role="img" class="donut">'
+        f'<circle cx="{cx}" cy="{cy}" r="{r:.2f}" fill="none" stroke="var(--track)" stroke-width="{stroke}"/>'
+        f'{"".join(arcs)}'
+        f'<text x="{cx}" y="{cy - 4}" text-anchor="middle" class="donut-num">{total}</text>'
+        f'<text x="{cx}" y="{cy + 16}" text-anchor="middle" class="donut-cap">{_esc(center_label)}</text>'
+        f'</svg>')
+
+
+def _bars(rows, maxv):
+    """rows: [(label, sublabel, value, color)] → report.py ile aynı bar-row deseni."""
+    maxv = maxv or 1
+    out = []
+    for label, sub, value, color in rows:
+        pct = max(3, round(100 * value / maxv))
+        out.append(
+            f'<div class="bar-row"><div class="bar-label">{_esc(label)}'
+            f'<span class="bar-sub">{_esc(sub)}</span></div>'
+            f'<div class="bar-track"><div class="bar-fill" style="width:{pct}%;'
+            f'background:{color}"></div></div>'
+            f'<div class="bar-val">{value}</div></div>')
+    return "".join(out) or '<div class="empty">Veri yok</div>'
+
+
+# Gerçek Microsoft logosu (4 renkli kare) — inline SVG, harici kaynağa bağımlılık yok.
+_MS_LOGO_SVG = """<svg width="21" height="21" viewBox="0 0 21 21" xmlns="http://www.w3.org/2000/svg">
+<rect x="1" y="1" width="9" height="9" fill="#F25022"/>
+<rect x="11" y="1" width="9" height="9" fill="#7FBA00"/>
+<rect x="1" y="11" width="9" height="9" fill="#00A4EF"/>
+<rect x="11" y="11" width="9" height="9" fill="#FFB900"/>
+</svg>"""
 
 
 def _findings_html(findings):
@@ -330,29 +390,233 @@ def _findings_html(findings):
 _SEV = {"high": "#c0392b", "medium": "#b8860b", "low": "#2e8b57", "info": "#6b7280"}
 
 
+# ---------- keşif: envanter (Agent 365 / Entra Agent ID / Shadow AI app'leri) ----------
+def _agent365_table(packages):
+    trs = [
+        f'<tr><td class="c-name">{_esc(p["display_name"])}</td><td>{_esc(p["build_type"])}</td>'
+        f'<td>{"🔴 evet" if p["blocked"] else "🟢 hayır"}</td>'
+        f'<td>{_esc(p["available_to"])}</td><td>{_esc(p["deployed_to"])}</td>'
+        f'<td>{_esc(p.get("entra_app_id")) if p.get("entra_app_id") else "<i>korele değil</i>"}</td></tr>'
+        for p in packages]
+    return _table(["Paket", "Build type", "Engelli mi", "Kime açık", "Nereye deploy",
+                  "Entra App ID"], trs, "Agent 365 paketi keşfedilmedi.")
+
+
+def _identities_table(identities):
+    trs = []
+    for i in identities:
+        owners = ", ".join(i["owners"]) or "<i>owner yok</i>"
+        sponsors = ", ".join(i["sponsors"]) or "<i>sponsor yok</i>"
+        trs.append(
+            f'<tr><td class="c-name">{_esc(i["display_name"])}</td>'
+            f'<td>{"🟢 enabled" if i["enabled"] else "🔴 disabled"}</td>'
+            f'<td>{owners}</td><td>{sponsors}</td>'
+            f'<td class="c-num">{i["app_only_perms"]}</td><td class="c-num">{i["delegated_perms"]}</td>'
+            f'<td>{_esc(i.get("blueprint_id")) if i.get("blueprint_id") else "<i>yok</i>"}</td></tr>')
+    return _table(["Identity", "Durum", "Owner", "Sponsor", "App-only izin",
+                  "Delegated izin", "Blueprint"], trs, "Entra Agent Identity keşfedilmedi.")
+
+
+_SANCTION_COLOR = {"sanctioned": "#2e8b57", "unsanctioned": "#c0392b", "unreviewed": "#8b98a6"}
+
+
+def _shadow_traffic_bars(apps):
+    """Klasik dashboard'un `_bars()` deseniyle — kullanıcı sayısına göre trafik sıralaması."""
+    if not apps:
+        return '<div class="empty">Shadow AI uygulaması keşfedilmedi (veya kaynak bağlı değil).</div>'
+    ranked = sorted(apps, key=lambda a: a["users"], reverse=True)
+    rows = [
+        (a["display_name"], f"{a.get('sanctioned_state') or '—'} · {a['uploaded_bytes']:,} B yüklendi",
+         a["users"], _SANCTION_COLOR.get(a.get("sanctioned_state"), "#6b7280"))
+        for a in ranked]
+    return _bars(rows, max((a["users"] for a in apps), default=1))
+
+
+def _inventory_html(a):
+    return f"""
+<div class="card" id="agents"><h3>4-5. Agent Envanteri — Agent 365 &amp; Entra Agent ID</h3>
+<div class="c-subtitle">Agent 365 paketleri</div>{_agent365_table(a["agent365_packages"]["packages"])}
+<div class="c-subtitle" style="margin-top:14px">Entra Agent Identities</div>
+{_identities_table(a["agent_identities"]["identities"])}
+</div>
+<div class="card" style="margin-top:16px" id="traffic"><h3>6. Shadow AI Uygulama Keşfi &amp; Trafik</h3>
+<div class="c-subtitle">Defender for Cloud Apps — kullanıcı sayısına göre (30g)</div>
+{_shadow_traffic_bars(a["shadow_ai_usage"]["applications"])}
+</div>"""
+
+
+def _interactions_table(sample):
+    trs = [
+        f'<tr><td class="c-num">{_esc(i.get("timestamp"))}</td><td class="c-name">{_esc(i.get("app_host"))}</td>'
+        f'<td>{_esc(i.get("user"))}</td><td><span class="c-tag">{_esc(i.get("direction"))}</span></td>'
+        f'<td>{"".join(f"<span class=\'c-tag\'>{_esc(s)}</span>" for s in i.get("sits") or []) or "—"}</td></tr>'
+        for i in sample]
+    return _table(["Zaman", "Uygulama", "Kullanıcı", "Yön", "Veri türü"], trs,
+                 "Purview'da hassas etkileşim yok (veya kaynak bağlı değil).")
+
+
+# ---------- inceleme: uygulama/agent detayı (expandable) ----------
+def _application_detail_html(rows):
+    if not rows:
+        return '<div class="empty">İncelenecek uygulama yok.</div>'
+    parts = []
+    for p in rows:
+        s = p["sensitive_data_summary"]
+        dirs = ", ".join(f"{k}:{v}" for k, v in p["directions"].items() if v) or "—"
+        sits = ", ".join(s["sit_types"]) or "—"
+        findings_html = "".join(
+            f'<li><b style="color:{_SEV.get(f["severity"], "#6b7280")}">{_esc(f["severity"]).upper()}</b> '
+            f'{_esc(f["detail"])}</li>' for f in p["findings"]) or "<li>Bulgu yok.</li>"
+        parts.append(f"""<details class="c-detail"><summary><b>{_esc(p['display_name'])}</b>
+<span class="c-tag">{_esc(p.get('sanctioned_state') or '—')}</span>
+<span style="color:var(--muted)">{s['window_30d']['sensitive']} hassas / {s['window_30d']['interactions']} etkileşim (30g)</span></summary>
+<div class="c-detail-body">
+<div><b>Veri türleri:</b> {_esc(sits)}</div>
+<div><b>Etiketler:</b> {_esc(", ".join(s["labels"]) or "—")}</div>
+<div><b>Yön dağılımı:</b> {_esc(dirs)}</div>
+<div><b>Engellenen / izin verilen:</b> {s['blocked']} / {s['allowed']}</div>
+<div><b>Bulgular:</b><ul>{findings_html}</ul></div>
+</div></details>""")
+    return "".join(parts)
+
+
+def _agent_detail_html(rows):
+    if not rows:
+        return '<div class="empty">İncelenecek agent identity yok.</div>'
+    parts = []
+    for i in rows:
+        owners = ", ".join(o.get("upn") or o.get("display_name") or "—" for o in i["owners"]) or "yok"
+        sponsors = ", ".join(o.get("upn") or o.get("display_name") or "—" for o in i["sponsors"]) or "yok"
+        app_perms = ", ".join(p.get("resource_display_name") or "—" for p in i["application_permissions"]) or "yok"
+        del_perms = ", ".join(s for p in i["delegated_permissions"] for s in p.get("scopes", [])) or "yok"
+        groups = ", ".join(g.get("display_name") or "—" for g in i["group_memberships"]) or "yok"
+        bp = (i.get("blueprint") or {}).get("display_name") or "yok"
+        state = "🟢 enabled" if i["account_enabled"] else "🔴 disabled"
+        parts.append(f"""<details class="c-detail"><summary><b>{_esc(i['display_name'])}</b>
+<span style="color:var(--muted)">{state}</span></summary>
+<div class="c-detail-body">
+<div><b>Owner:</b> {_esc(owners)}</div>
+<div><b>Sponsor:</b> {_esc(sponsors)}</div>
+<div><b>App-only izinler:</b> {_esc(app_perms)}</div>
+<div><b>Delegated izinler:</b> {_esc(del_perms)}</div>
+<div><b>Grup üyelikleri:</b> {_esc(groups)}</div>
+<div><b>Blueprint:</b> {_esc(bp)}</div>
+</div></details>""")
+    return "".join(parts)
+
+
+_EXTRA_CSS = """
+.c-subtitle{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;
+ letter-spacing:.03em;margin:4px 0 8px}
+.c-tbl-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px}
+table.c-tbl{width:100%;border-collapse:collapse;font-size:13px;min-width:520px}
+table.c-tbl thead th{text-align:left;font-size:11px;text-transform:uppercase;color:var(--muted);
+ letter-spacing:.03em;padding:9px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+table.c-tbl tbody td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+table.c-tbl tbody tr:last-child td{border-bottom:none}
+.c-name{font-weight:600}
+.c-num{font-variant-numeric:tabular-nums}
+.c-tag{display:inline-block;font-size:11px;background:var(--track);color:var(--ink);
+ padding:1px 7px;border-radius:5px;margin:1px 3px 1px 0}
+.c-chip{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.02em}
+.c-detail{border:1px solid var(--line);border-radius:10px;margin-bottom:8px;overflow:hidden;
+ background:var(--panel)}
+.c-detail summary{padding:11px 15px;cursor:pointer;display:flex;gap:10px;align-items:center;
+ list-style:none;font-size:13.5px}
+.c-detail summary::-webkit-details-marker{display:none}
+.c-detail-body{padding:0 15px 14px;font-size:13px;color:var(--ink);display:flex;
+ flex-direction:column;gap:5px}
+.c-detail-body b{color:var(--muted);font-weight:600}
+.c-detail-body ul{margin:2px 0 0;padding-left:18px}
+header .navlink{text-decoration:none}
+"""
+
+
 def html_string(result: dict, tenant_id: str = "", now=None) -> str:
     a = assessment(result, now)
     exec_ = a["executive"]
-    kpis = "".join([
-        _kpi("Bağlı kaynak", f'{exec_["connectors_connected"]}/{exec_["connectors_total"]}'),
-        _kpi("Hassas veri paylaşan app", exec_.get("apps_with_sensitive_data", 0), "high"),
-        _kpi("Etkilenen kullanıcı", exec_.get("total_affected_users", 0)),
-        _kpi("Engellenen (DLP)", exec_.get("total_blocked", 0)),
-        _kpi("Yüksek önem bulgu", exec_.get("high_severity_findings", 0), "high"),
+    sev = exec_.get("findings_by_severity", {})
+    donut = _donut([
+        ("Yüksek", sev.get("high", 0), _SEV["high"]),
+        ("Orta", sev.get("medium", 0), _SEV["medium"]),
+        ("Düşük", sev.get("low", 0), _SEV["low"]),
+        ("Bilgi", sev.get("info", 0), _SEV["info"]),
+    ], center_label="Bulgu")
+    legend = "".join(
+        f'<div><span class="dot" style="background:{_SEV[k]}"></span>{lbl} '
+        f'<b style="margin-left:auto">{sev.get(k, 0)}</b></div>'
+        for k, lbl in (("high", "Yüksek"), ("medium", "Orta"), ("low", "Düşük"), ("info", "Bilgi")))
+
+    tiles = "".join([
+        f'<div class="card tile{" high" if exec_.get("apps_with_sensitive_data") else ""}">'
+        f'<span class="n">{_esc(exec_.get("apps_with_sensitive_data", 0))}</span>'
+        f'<span class="l">Hassas veri paylaşan app</span></div>',
+        f'<div class="card tile"><span class="n">{_esc(exec_.get("total_affected_users", 0))}</span>'
+        f'<span class="l">Etkilenen kullanıcı</span></div>',
+        f'<div class="card tile"><span class="n">{_esc(exec_.get("total_blocked", 0))}</span>'
+        f'<span class="l">Engellenen (DLP)</span></div>',
+        f'<div class="card tile{" high" if exec_.get("high_severity_findings") else ""}">'
+        f'<span class="n">{_esc(exec_.get("high_severity_findings", 0))}</span>'
+        f'<span class="l">Yüksek önem bulgu</span></div>',
     ])
+
+    nav = "".join(
+        f'<a class="navlink" href="#{href}">{label}</a>'
+        for href, label in (("coverage", "Coverage"), ("agents", "Agents"), ("traffic", "Traffic"),
+                            ("exposure", "Exposure"), ("detail", "İnceleme"),
+                            ("findings", "Findings"), ("gaps", "Gaps")))
+
+    quick = "".join([
+        f'<a class="card kpi" href="#coverage"><span class="n">{exec_["connectors_connected"]}/{exec_["connectors_total"]}</span>'
+        f'<span class="l">Bağlı veri kaynağı</span></a>',
+        f'<a class="card kpi" href="#agents"><span class="n">{len(a["agent365_packages"]["packages"]) + len(a["agent_identities"]["identities"])}</span>'
+        f'<span class="l">Agent (365 + Identity)</span></a>',
+        f'<a class="card kpi" href="#traffic"><span class="n">{len(a["shadow_ai_usage"]["applications"])}</span>'
+        f'<span class="l">Shadow AI uygulaması</span></a>',
+        f'<a class="card kpi high" href="#exposure"><span class="n">{len(a["sensitive_exposure"])}</span>'
+        f'<span class="l">Hassas veri exposure</span></a>',
+    ])
+
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <title>AI-SPM — Microsoft AI Data Sources Assessment</title>
-<style>{CSS}</style></head><body>
-<header><div class="logo"></div><h1>AI-SPM — Microsoft AI Data Sources</h1>
+<style>{CSS}{_EXTRA_CSS}</style></head><body>
+<header>{_MS_LOGO_SVG}<h1>AI-SPM · Microsoft AI Data Sources</h1>
+<nav class="tabs">{nav}</nav>
 <div class="spacer"></div><div class="tenant">{_esc(tenant_id)}</div></header>
 <main>
-<section class="grid cols-4" style="margin-bottom:16px">{kpis}</section>
-<div class="card"><h3>1-2. Veri kaynağı coverage</h3>{_coverage_html(a["data_source_coverage"])}</div>
-<div class="card" style="margin-top:16px"><h3>3. Applications with Sensitive Data Exposure</h3>
+<div class="hero">
+  <div class="card">
+    <h3>Kaynak Durumu</h3>
+    <div class="tenant-facts">
+      <b>Tenant</b><span>{_esc(tenant_id) or "—"}</span>
+      <b>Bağlı kaynak</b><span>{exec_["connectors_connected"]}/{exec_["connectors_total"]}</span>
+      <b>Eşleşen varlık</b><span>{_esc(exec_.get("matched_to_inventory", 0))}/{_esc(exec_.get("total_apps", 0))}</span>
+      <b>Üretildi</b><span>{_esc(a["_generated_at"])[:19].replace("T", " ")} UTC</span>
+    </div>
+  </div>
+  <div class="tiles">{tiles}</div>
+  <div class="card">
+    <h3>Bulgu Dağılımı</h3>
+    <div class="summary">{donut}<div class="legend">{legend}</div></div>
+  </div>
+</div>
+<div class="kpi-grid" style="margin-top:16px">{quick}</div>
+
+<div class="card" style="margin-top:16px" id="coverage"><h3>1-2. Veri kaynağı coverage</h3>
+{_coverage_html(a["data_source_coverage"])}</div>
+{_inventory_html(a)}
+<div class="card" style="margin-top:16px" id="interactions"><h3>7. Purview — Son Hassas Etkileşimler / Trafik</h3>
+{_interactions_table(a["sensitive_interactions"]["sample"])}</div>
+<div class="card" style="margin-top:16px" id="exposure"><h3>3. Applications with Sensitive Data Exposure</h3>
 {_exposure_table(a["sensitive_exposure"])}</div>
-<div class="card" style="margin-top:16px"><h3>8. Bulgular</h3>{_findings_html(a["findings"])}</div>
-<div class="card" style="margin-top:16px"><h3>15. Bilinen eksikler / API sınırları</h3>
+<div class="card" style="margin-top:16px" id="detail"><h3>11. İnceleme — Uygulama Detayı</h3>
+{_application_detail_html(a["application_detail"])}</div>
+<div class="card" style="margin-top:16px"><h3>12. İnceleme — Agent Identity Detayı</h3>
+{_agent_detail_html(a["agent_detail"])}</div>
+<div class="card" style="margin-top:16px" id="findings"><h3>8. Bulgular</h3>{_findings_html(a["findings"])}</div>
+<div class="card" style="margin-top:16px" id="gaps"><h3>15. Bilinen eksikler / API sınırları</h3>
 <ul class="na">{"".join(f"<li>{_esc(g)}</li>" for g in a["known_gaps"])}</ul></div>
+<div class="foot">AI-SPM — Microsoft AI Data Sources · connectors_report.assessment()</div>
 </main></body></html>"""
 
 

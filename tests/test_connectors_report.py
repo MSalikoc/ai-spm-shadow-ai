@@ -129,6 +129,37 @@ def test_json_and_html_render_without_error(monkeypatch):
     assert "<html>" in doc and "AI Data Sources" in doc
     assert "contoso.onmicrosoft.com" in doc
     assert "Applications with Sensitive Data Exposure" in doc
+    # Adım 7 HTML'i keşif/trafik/inceleme bölümlerini de basıyor (yalnızca 4 bölümle
+    # sınırlı kalmasın diye) — agent envanteri, shadow AI trafiği, Purview etkileşim
+    # log'u ve expandable uygulama/agent detay panelleri.
+    assert "Finance Assistant" in doc                    # Agent 365 paket tablosu
+    assert "Orphan Agent Identity" in doc                # Entra Agent Identity tablosu
+    assert "ChatGPT" in doc                              # Shadow AI trafik tablosu
+    assert "<details" in doc                             # inceleme panelleri (expandable)
+    assert "alice@contoso.com" in doc or "Alice Admin" in doc  # agent detail owner görünür
+
+
+def test_html_tables_render_even_with_only_partial_data(monkeypatch):
+    """Bazı connector'lar boşken (ör. entra_agent_id) sayfa çökmemeli, dürüst 'yok' mesajı basmalı."""
+    monkeypatch.setenv("ENABLE_AGENT365", "true")
+    for f in ("ENABLE_ENTRA_AGENT_ID", "ENABLE_DEFENDER_CLOUD_APPS", "ENABLE_PURVIEW_AUDIT"):
+        monkeypatch.delenv(f, raising=False)
+    monkeypatch.delenv("PURVIEW_DSPM_IMPORT_PATH", raising=False)
+
+    class _FG:
+        def get_all(self, path, params=None, max_items=None):
+            if path == "/copilot/admin/catalog/packages":
+                return [{"id": "p1", "displayName": "Solo Agent", "applicationId": "APP-1"}]
+            return []
+
+        def get(self, path, params=None):
+            return {}
+
+    result = pipeline.run_connectors(_FG())
+    doc = connectors_report.html_string(result)
+    assert "Solo Agent" in doc
+    assert "Entra Agent Identity keşfedilmedi" in doc
+    assert "Shadow AI uygulaması keşfedilmedi" in doc
 
 
 def test_coverage_section_reports_not_configured_when_all_off():
