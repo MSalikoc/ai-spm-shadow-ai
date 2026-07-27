@@ -6,6 +6,56 @@ All notable changes to AI-SPM are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **Microsoft AI Data Sources — Steps 3-8/8 (connectors now live, opt-in via env flags)**
+  - **Entra Agent ID collector (Step 3)** — `connectors/entra_agent_id.py`:
+    `servicePrincipals/microsoft.graph.agentIdentity` + `applications/
+    microsoft.graph.agentIdentityBlueprint` + per-identity owners/sponsors/
+    appRoleAssignments/oauth2PermissionGrants/memberOf → unified `AGENT_IDENTITY` &
+    `AGENT_BLUEPRINT` assets (app-only vs delegated permissions kept separate). A failing
+    sub-resource never drops the identity (`PARTIALLY_CONNECTED`, not lost).
+  - **Defender for Cloud Apps / Shadow AI collector (Step 4)** — `connectors/
+    defender_cloud_apps.py`: beta `dataDiscovery/cloudAppDiscovery/uploadedStreams` +
+    `aggregatedAppsDetails(period=P30D)`. AI-app filter is **code-free**
+    (`connectors/catalogs/ai_applications.json` + MDCA category). Each AI app →
+    `AI_APPLICATION` (users/devices/IP/traffic, sanctioned state, risk score); each
+    (stream, app) → `USAGE_OBSERVATION`. Upload volume is **never** treated as "sensitive
+    sharing" on its own — flagged `UNDETERMINED_REQUIRES_PURVIEW` until correlated.
+  - **Purview Audit + DSPM import (Step 5)** — `connectors/purview_audit.py`: `POST
+    security/auditLog/queries` → poll → records (`CopilotInteraction`/
+    `ConnectedAIAppInteraction`/`AIAppInteraction`) → `SENSITIVE_INTERACTION` (SIT,
+    sensitivity label, DLP policy/rule/action, direction). **Raw prompt/response content
+    is never stored** unless `STORE_RAW_AI_CONTENT=true`. `connectors/
+    purview_dspm_import.py` additionally imports a versioned JSON/CSV DSPM export file
+    (no portal scraping).
+  - **Cross-source correlation (Step 6)** — `connectors/sensitive_data.py` merges all four
+    sources per application/agent: 7d/30d sensitive-data summary, affected users,
+    SIT/label/workload distribution, and a direction taxonomy (`ACCESSED` ≠ `SHARED` ≠
+    `UPLOADED` ≠ `BLOCKED`/`ALLOWED`). Produces findings such as
+    `SENSITIVE_DATA_SHARED_WITH_UNSANCTIONED_AI`. Fixed a Step-3 correlation gap: a
+    blueprint no longer *merges* multiple identities together (relate-not-merge).
+  - **Assessment + live wiring (Step 7)** — `connectors_report.py` builds a 15-section
+    assessment (executive summary, per-source coverage, "Applications with Sensitive
+    Data Exposure" table, per-app and per-agent detail, correlation quality, known
+    gaps/limitations, …) plus a standalone HTML view. New **`GET /api/connectors`**
+    endpoint (read-only; `?format=html` for the page). `pipeline.run_connectors()` is a
+    pure, stateless call — **returns `None` with zero Graph calls** while every
+    `ENABLE_*` flag stays off, so the existing Entra scan/dashboard/notify flow is
+    completely unaffected. `report.py`, `executive.py`, and the scheduled scan/digest
+    endpoints were deliberately left untouched.
+  - **Change-tracking (Step 8)** — `connectors_drift.py` runs in parallel to the existing
+    `drift.py` (separate snapshot/changes files) with new event types:
+    `NEW_AGENT_365_PACKAGE`, `AGENT_365_PACKAGE_BLOCKED/UNBLOCKED`,
+    `NEW_AGENT_IDENTITY`, `AGENT_IDENTITY_DISABLED/ENABLED`, `AGENT_OWNER_CHANGED`,
+    `AGENT_SPONSOR_CHANGED`, `NEW_UNSANCTIONED_AI_APP`, `AI_APP_SANCTIONED`,
+    `NEW_SENSITIVE_INTERACTION`, `SENSITIVE_INTERACTION_BLOCKED/ALLOWED`,
+    `PURVIEW_COVERAGE_CHANGED`, `DATA_SOURCE_CONNECTED/DISCONNECTED`. First scan is
+    always baseline (no events); a Purview interaction is only ever reported "new" once,
+    even though the 30-day audit window re-fetches it on every scan. Raw prompt/response
+    content is never persisted into the snapshot even if `STORE_RAW_AI_CONTENT=true`.
+  - `scripts/grant_connector_roles.sh` (+ `.ps1`) and `scripts/enable_connectors.sh` —
+    opt-in setup for the four connectors, kept separate from the core
+    `grant_graph_roles`/`postdeploy` scripts.
+  - 153 tests total (from 89 at the end of Step 2).
 - **Agent 365 collector (Step 2/8)** — `connectors/agent365.py` reads the Agent 365 catalog
   (`/copilot/admin/catalog/packages` + per-package detail, `CopilotPackages.Read.All`),
   normalizes each package into a unified `AI_AGENT` asset (package type, publisher/build-type,
