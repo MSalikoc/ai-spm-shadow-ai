@@ -45,3 +45,17 @@ class GraphClient:
                 return {}
             return resp.json()
         return {}
+
+    def post(self, path: str, body: dict) -> dict:
+        """Tekil obje POST (ör. audit log query oluşturma). Hata → RuntimeError."""
+        url = path if path.startswith("http") else f"{GRAPH_BASE}{path}"
+        while True:
+            resp = requests.post(url, headers={**self._headers,
+                                               "Content-Type": "application/json"},
+                                 json=body, timeout=60)
+            if resp.status_code == 429:
+                time.sleep(int(resp.headers.get("Retry-After", "5")))
+                continue
+            if resp.status_code >= 400:
+                raise RuntimeError(f"Graph {resp.status_code} @ {url}: {resp.text[:400]}")
+            return resp.json() if resp.text else {}

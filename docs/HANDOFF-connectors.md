@@ -52,7 +52,16 @@ kaç kullanıcı etkilendi, ne zaman, ve uygulamanın kurumsal onay durumu nedir
   (`data_sensitivity=UNDETERMINED_REQUIRES_PURVIEW`, `sensitive_data_types=field(NOT_EXPOSED_BY_API)`). Beta URL
   tam-URL geçilerek (client v1.0 sabit, değişmedi). Stream hatası → PARTIALLY_CONNECTED. `metrics()` (9 metrik).
   Permission `CloudApp-Discovery.Read.All`, ENABLE_DEFENDER_CLOUD_APPS+ENABLE_PREVIEW_CONNECTORS. Mock testler.
-- **105 test geçiyor** (Adım 3 +8, Adım 4 +8).
+- ✅ **Adım 5** — `connectors/purview_audit.py`: `POST /security/auditLog/queries` → poll (`succeeded`) →
+  `/records`; op filtresi CopilotInteraction/ConnectedAIAppInteraction/AIAppInteraction. Her kayıt →
+  **SENSITIVE_INTERACTION** (user, app_host, SIT, sensitivity_label_id, referenced_resources, DLP policy/rule/
+  action, direction BLOCKED/ALLOWED/ACCESSED/SHARED/UNKNOWN). `sensitivity_label_name=field(NOT_EXPOSED_BY_API)`.
+  **Raw prompt/response STORE_RAW_AI_CONTENT=true değilse ASLA saklanmaz.** Permission `AuditLogsQuery.Read.All`.
+  `metrics()` (10 metrik). Ayrıca `connectors/purview_dspm_import.py`: JSON/CSV DSPM export adapter (versioned
+  schema, uyumsuz major → ApiUnavailable), kaynak PURVIEW_DSPM_EXPORT (audit'ten ayrı). Portal scraping YOK.
+  Altyapı: `model.EXTERNAL_ID_KEYS`'e `purview_record_id` (event'lere benzersiz id; **korelasyon token'ı DEĞİL**),
+  `GraphClient.post()` eklendi. Mock testler (poll/timeout/raw-gizlilik/CSV/schema-mismatch).
+- **119 test geçiyor** (Adım 3 +8, Adım 4 +8, Adım 5 +14).
   - ⚠️ **Bilinen korelasyon eksiği (Adım 6'da ele alınacak):** `agent_blueprint_id` korelasyon önceliği 90 →
     aynı blueprint'ten türeyen BİRDEN FAZLA identity tek asset'e collapse olur. 1:1 varsayımı; 1:N durumda
     identity'ler yanlış birleşir. Çözüm: blueprint'i "relate-not-merge" (parent link) sinyaline çevir.
@@ -62,8 +71,8 @@ kaç kullanıcı etkilendi, ne zaman, ve uygulamanın kurumsal onay durumu nedir
     defansif parse ediliyor; gerçek tenant'ta doğrulanmalı. Kullanıcı/IP stream'ler arası dedupe edilemiyor
     (conservative max); MDCA app'i appId taşımadığından cross-source korelasyon zayıf (isim-only merge etmez).
 
-## SIRADAKİ: Adım 5 — Purview Audit + DSPM import
-Detay için aşağıdaki "Kalan adımlar" bölümüne bak. Kullanıcı onayı bekleniyor.
+## SIRADAKİ: Adım 6 — Uygulama bazlı hassas veri korelasyonu
+Detay için aşağıdaki "Kalan adımlar" bölümüne bak. (Kullanıcı tüm adımları onayladı; sonda tek deploy.)
 
 ## Kalan adımlar (özet)
 - **Adım 4** — Defender for Cloud Apps: `/beta/security/dataDiscovery/cloudAppDiscovery/uploadedStreams`

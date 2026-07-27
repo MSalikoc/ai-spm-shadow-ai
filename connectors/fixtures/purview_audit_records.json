@@ -1,0 +1,56 @@
+[
+  {
+    "id": "rec-1",
+    "createdDateTime": "2026-07-20T10:00:00Z",
+    "userPrincipalName": "alice@contoso.com",
+    "operation": "CopilotInteraction",
+    "auditData": {
+      "Operation": "CopilotInteraction",
+      "Workload": "Copilot",
+      "CopilotEventData": {
+        "AppHost": "Microsoft Teams",
+        "SensitivityLabelId": "label-confidential",
+        "Contexts": [
+          {"Id": "https://contoso.sharepoint.com/finance/Q3.xlsx", "Type": "File", "Name": "Q3.xlsx"}
+        ]
+      },
+      "PolicyDetails": [
+        {"PolicyName": "Block Credit Cards", "Rules": [
+          {"RuleName": "CCN rule", "Actions": ["BlockAccess"],
+           "ConditionsMatched": {"SensitiveInformation": [
+             {"SensitiveInformationTypeName": "Credit Card Number", "Count": 3}]}}
+        ]}
+      ]
+    }
+  },
+  {
+    "id": "rec-2",
+    "createdDateTime": "2026-07-21T11:00:00Z",
+    "userPrincipalName": "bob@contoso.com",
+    "operation": "ConnectedAIAppInteraction",
+    "auditData": {
+      "Operation": "ConnectedAIAppInteraction",
+      "AppHost": "ChatGPT",
+      "PolicyDetails": [
+        {"PolicyName": "Audit PII", "Rules": [
+          {"RuleName": "SSN rule", "Actions": ["Audit"],
+           "ConditionsMatched": {"SensitiveInformation": [
+             {"SensitiveInformationTypeName": "U.S. Social Security Number", "Count": 1}]}}
+        ]}
+      ]
+    }
+  },
+  {
+    "id": "rec-3",
+    "createdDateTime": "2026-07-22T09:00:00Z",
+    "userPrincipalName": "alice@contoso.com",
+    "operation": "CopilotInteraction",
+    "auditData": {
+      "Operation": "CopilotInteraction",
+      "CopilotEventData": {
+        "AppHost": "Microsoft Teams",
+        "Contexts": [{"Id": "doc-2", "Type": "File", "Name": "notes.docx"}]
+      }
+    }
+  }
+]

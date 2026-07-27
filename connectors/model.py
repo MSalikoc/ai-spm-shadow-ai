@@ -8,10 +8,13 @@ farklı kaynaklardan aynı id'yi (veya korele edilebilir id'leri) alır.
 import hashlib
 
 # Korelasyon önceliğiyle hizalı external id anahtarları (güçlü → zayıf).
+# NOT: `purview_record_id` KORELASYON önceliğinde (correlation.PRIORITY) YOK → merge
+# token'ı değildir; yalnızca yüksek-kardinaliteli event entity'lerine (SENSITIVE_INTERACTION)
+# benzersiz/deterministik asset_id vermek için en sonda yer alır (asla varlık birleştirmez).
 EXTERNAL_ID_KEYS = [
     "entra_app_id", "agent_identity_id", "agent_blueprint_id",
     "agent365_package_id", "agent365_asset_id", "manifest_id",
-    "entra_object_id", "mdca_app_id",
+    "entra_object_id", "mdca_app_id", "purview_record_id",
 ]
 
 # Alan-availability durumları (özellikle Purview için — API'de olmayan alan gizlenmez).

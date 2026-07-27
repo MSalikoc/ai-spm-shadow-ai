@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "generated": "2026-07-26T00:00:00Z",
+  "source": "Purview DSPM Activity Explorer export",
+  "records": [
+    {"id": "d1", "timestamp": "2026-07-18T08:00:00Z", "user": "carol@contoso.com",
+     "app": "ChatGPT", "direction": "Shared", "action": "Audit",
+     "label": "Confidential", "sit": "Credit Card Number; U.S. Social Security Number"},
+    {"id": "d2", "timestamp": "2026-07-19T14:30:00Z", "user": "dave@contoso.com",
+     "app": "Claude", "direction": "Uploaded", "action": "Block",
+     "label": "Highly Confidential", "sit": ["Passport Number"]}
+  ]
+}
