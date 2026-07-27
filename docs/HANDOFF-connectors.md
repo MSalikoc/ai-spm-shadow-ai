@@ -88,22 +88,42 @@ kaç kullanıcı etkilendi, ne zaman, ve uygulamanın kurumsal onay durumu nedir
   Korelasyon notu: birleşik asset'lerde `asset_type` ilk üyeden miras kalabilir (ör. Agent365+Entra Identity
   merge'i `AI_AGENT` görünür) → bölümler `asset_type` değil alt-dict varlığına (`agent365`/`agent_identity`/…)
   göre filtreler (connector `metrics()` fonksiyonlarıyla aynı desen).
-- **137 test geçiyor** (Adım 3 +8, Adım 4 +8, Adım 5 +14, Adım 6 +8, Adım 7 +9).
-  - ✅ **(Adım 6'da giderildi)** `agent_blueprint_id` collapse riski → `_relate_blueprints` ile relate-not-merge.
-  - ⚠️ **API şema belirsizliği:** identity→blueprint bağı (`blueprintId`) kesin şema değil; birkaç olası anahtar
-    denenip `raw_reference` ile saklanıyor. Gerçek tenant'ta alan adı doğrulanmalı.
-  - ⚠️ **MDCA agg belirsizliği:** aggregatedAppsDetails alan adları (userCount/uploadedBytes/riskScore…) PREVIEW,
-    defansif parse ediliyor; gerçek tenant'ta doğrulanmalı. Kullanıcı/IP stream'ler arası dedupe edilemiyor
-    (conservative max); MDCA app'i appId taşımadığından cross-source korelasyon zayıf (isim-only merge etmez).
+- ✅ **Adım 8** — `connectors_drift.py`: connector kaynaklı snapshot/change-tracking, **`drift.py`'ye PARALEL**
+  (drift.py HİÇ DEĞİŞTİRİLMEDİ). Ayrı depolama anahtarları: `connectors_snapshot.json` / `connectors_changes.json`.
+  Event tipleri: `NEW_AGENT_365_PACKAGE`, `AGENT_365_PACKAGE_BLOCKED/UNBLOCKED`, `NEW_AGENT_IDENTITY`,
+  `AGENT_IDENTITY_DISABLED/ENABLED`, `AGENT_OWNER_CHANGED`, `AGENT_SPONSOR_CHANGED`,
+  `NEW_UNSANCTIONED_AI_APP`, `AI_APP_SANCTIONED`, `NEW_SENSITIVE_INTERACTION`,
+  `SENSITIVE_INTERACTION_BLOCKED/ALLOWED`, `PURVIEW_COVERAGE_CHANGED`, `DATA_SOURCE_CONNECTED/DISCONNECTED`.
+  İlk scan baseline (event üretmez, drift.py ile aynı kural). Purview interaction'lar yalnızca **hassas
+  içerikli + gerçekten yeni** olanlar için event üretir (30g pencere overlap'inde tekrar "yeni" sayılmaz).
+  **Gizlilik:** snapshot'a interaction'ların yalnızca minimal alanları yazılır — `raw_content`
+  (STORE_RAW_AI_CONTENT=true olsa bile) ASLA kalıcı depoya (Blob) kopyalanmaz (test ile doğrulandı).
+  `function_app.py`'nin `_run_scan`'ına **tek satır, try/except'li** entegre edildi: her scan sonunda
+  `pipeline.run_connectors(graph)` + `connectors_drift.process(...)` çağrılır — flag'ler kapalıyken
+  `run_connectors` None döner, `process(None)` storage'a hiç dokunmadan no-op döner (doğrulandı).
+  `daily_scan`/`weekly_digest`/`scan_now`'ın mevcut davranışı (scored/report/notify) DEĞİŞMEDİ, sadece bu tek
+  ek adım eklendi. Henüz hiçbir dashboard'da render edilmiyor (mevcut `report.py`'nin `_timeline_section`'ı
+  yalnızca klasik `drift.py` event'lerini gösterir) — bu bilinçli bir sonraki-adım notu, kapsam dışı bırakıldı.
+- **153 test geçiyor** (Adım 3 +8, Adım 4 +8, Adım 5 +14, Adım 6 +8, Adım 7 +9, Adım 8 +16).
 
-## SIRADAKİ: Adım 8 — Snapshot/change-tracking
-Kullanıcı tüm adımları onayladı; **push/deploy EN SONDA tek seferde** yapılacak.
-Adım 1-7 commit'lendi ama **HENÜZ PUSH EDİLMEDİ** (local `main`, origin'in ilerisinde; `git log --oneline
-origin/main..HEAD` ile görülebilir).
-Detay için aşağıdaki "Kalan adımlar" bölümüne bak (yeni event tipleri: NEW_AGENT_365_PACKAGE,
-NEW_SENSITIVE_INTERACTION, SENSITIVE_INTERACTION_BLOCKED/ALLOWED, AGENT_OWNER/SPONSOR_CHANGED,
-PURVIEW_COVERAGE_CHANGED vb. + mevcut `drift.py` motoruna entegrasyon — `drift.py` da dikkatli, additive
-şekilde genişletilecek, mevcut Entra drift akışı bozulmayacak).
+## 🎯 8 ADIMIN TAMAMI BİTTİ — deploy onayı bekleniyor
+Tüm commit'ler **lokalde**, origin'e **henüz push edilmedi** (`git -C AISPM log --oneline origin/main..HEAD`
+ile 8 commit görünür). Kullanıcı "hepsini bitirip sonda tek deploy" dedi — push/deploy için **açıkça onay
+gerekiyor** (bkz. Git Safety Protocol — push kullanıcı onayı gerektiren bir eylem).
+
+**Deploy sonrası bile hiçbir connector aktif olmaz** — tüm `ENABLE_*` env flag'leri Azure Function App
+Configuration'da set edilmediği sürece (bugün itibarıyla set değiller) çerçevenin runtime etkisi sıfırdır;
+mevcut Entra/OAuth scan+dashboard+e-posta akışı bire bir aynı çalışmaya devam eder. Connector'ları gerçekten
+açmak için ayrıca: (1) Azure Function App → Configuration'a `ENABLE_AGENT365`, `ENABLE_ENTRA_AGENT_ID`,
+`ENABLE_DEFENDER_CLOUD_APPS`, `ENABLE_PURVIEW_AUDIT` (+`ENABLE_PREVIEW_CONNECTORS` beta endpoint'ler için)
+eklenmeli, (2) Graph app-only permission'ları (bkz. her adımın "gerekli permission" notu) admin consent
+almalı, (3) opsiyonel `PURVIEW_DSPM_IMPORT_PATH` + DSPM export dosyası.
+
+## Sonraki oturum için olası devam noktaları (Adım 8 sonrası, kapsam dışı bırakıldı)
+- Connector change event'lerini (`connectors_drift.recent()`) bir dashboard'da göstermek (yeni sekme veya
+  `connectors_report.py`'ye 16. bölüm olarak, ya da `report.py`'nin `_timeline_section`'ına opsiyonel ek).
+- `notify.py`'ye connector-özel haftalık digest e-postası (şu an sadece klasik Entra digest'i var).
+- Yukarıdaki "Bilinen korelasyon eksikleri / API şema belirsizlikleri" maddelerinin gerçek tenant'ta doğrulanması.
 
 ## Kalan adımlar (özet)
 - **Adım 4** — Defender for Cloud Apps: `/beta/security/dataDiscovery/cloudAppDiscovery/uploadedStreams`

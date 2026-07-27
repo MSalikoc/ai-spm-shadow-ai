@@ -15,6 +15,7 @@ import os
 import azure.functions as func
 
 import auth
+import connectors_drift
 import connectors_report
 import drift
 import findings as findingsvc
@@ -51,6 +52,10 @@ def _run_scan(source: str):
     except Exception:
         logging.exception("findings hata")
         finding_records = []
+    try:  # connector drift (Adım 8) — flag kapalıysa run_connectors None döner, process no-op
+        connectors_drift.process(pipeline.run_connectors(graph))
+    except Exception:
+        logging.exception("connector drift hata")
     published = storage.publish(scored, tenant_id, changes, finding_records)
     summ = pipeline.summary(scored)
 
