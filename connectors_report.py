@@ -305,13 +305,20 @@ def _table(headers, rows_html, empty_msg):
            f'<tbody>{"".join(rows_html)}</tbody></table></div>')
 
 
+def _tags(values):
+    # Python 3.11 f-string'lerde ifade kısmında backslash yasak — nested f-string yerine
+    # ayrı bir fonksiyon (bkz. CI'da compileall hatası, lokal 3.13'te yakalanamadı).
+    spans = [f'<span class="c-tag">{_esc(v)}</span>' for v in values]
+    return "".join(spans) or "—"
+
+
 def _exposure_table(rows):
     trs = [
         f'<tr><td class="c-name">{_esc(p["display_name"])}</td>'
         f'<td>{_sanction_chip(p.get("sanctioned_state"))}</td>'
         f'<td class="c-num">{_esc(p["sensitive_data_summary"]["window_30d"]["sensitive"])}</td>'
         f'<td class="c-num">{_esc(p["affected_user_count"])}</td>'
-        f'<td>{"".join(f"<span class=\'c-tag\'>{_esc(t)}</span>" for t in p["sensitive_data_summary"]["sit_types"][:3]) or "—"}</td>'
+        f'<td>{_tags(p["sensitive_data_summary"]["sit_types"][:3])}</td>'
         f'<td class="c-num">{len(p["findings"])}</td></tr>' for p in rows]
     return _table(["Uygulama", "Onay durumu", "Hassas (30g)", "Etkilenen kullanıcı",
                   "Veri türleri", "Bulgu"], trs,
@@ -449,7 +456,7 @@ def _interactions_table(sample):
     trs = [
         f'<tr><td class="c-num">{_esc(i.get("timestamp"))}</td><td class="c-name">{_esc(i.get("app_host"))}</td>'
         f'<td>{_esc(i.get("user"))}</td><td><span class="c-tag">{_esc(i.get("direction"))}</span></td>'
-        f'<td>{"".join(f"<span class=\'c-tag\'>{_esc(s)}</span>" for s in i.get("sits") or []) or "—"}</td></tr>'
+        f'<td>{_tags(i.get("sits") or [])}</td></tr>'
         for i in sample]
     return _table(["Zaman", "Uygulama", "Kullanıcı", "Yön", "Veri türü"], trs,
                  "Purview'da hassas etkileşim yok (veya kaynak bağlı değil).")
