@@ -38,23 +38,21 @@ kaç kullanıcı etkilendi, ne zaman, ve uygulamanın kurumsal onay durumu nedir
 - ✅ **Adım 2** — `connectors/agent365.py`: `/copilot/admin/catalog/packages`(+detay) → AI_AGENT,
   elementDetails parse (declarative/custom-engine/bot ID, scopes, file_support), `raw_reference`,
   `metrics()` (9 metrik). Permission `CopilotPackages.Read.All`. Resilient. Mock testler.
-- **89 test geçiyor**, hepsi CI/CD ile deploy edildi.
+- ✅ **Adım 3** — `connectors/entra_agent_id.py`: `/servicePrincipals/microsoft.graph.agentIdentity` +
+  `/applications/microsoft.graph.agentIdentityBlueprint` + SP başına owners/sponsors/appRoleAssignments/
+  oauth2PermissionGrants/memberOf → **AGENT_IDENTITY** & **AGENT_BLUEPRINT** asset. app-only vs delege perm
+  ayrı; alt-kaynak hatası → PARTIALLY_CONNECTED (identity'ler yine gelir); blueprint listesi düşerse identity
+  korunur. `metrics()` (10 metrik). Permission `Application.Read.All`+`Directory.Read.All`. Mock testler
+  (tests/test_entra_agent_id.py, FakeGraph path router).
+- **97 test geçiyor** (Adım 3 ile +8).
+  - ⚠️ **Bilinen korelasyon eksiği (Adım 6'da ele alınacak):** `agent_blueprint_id` korelasyon önceliği 90 →
+    aynı blueprint'ten türeyen BİRDEN FAZLA identity tek asset'e collapse olur. 1:1 varsayımı; 1:N durumda
+    identity'ler yanlış birleşir. Çözüm: blueprint'i "relate-not-merge" (parent link) sinyaline çevir.
+  - ⚠️ **API şema belirsizliği:** identity→blueprint bağı (`blueprintId`) kesin şema değil; birkaç olası anahtar
+    denenip `raw_reference` ile saklanıyor. Gerçek tenant'ta alan adı doğrulanmalı.
 
-## SIRADAKİ: Adım 3 — Microsoft Entra Agent ID collector
-`connectors/entra_agent_id.py` (iskelet mevcut, implement edilecek). Kullanıcı onayladı, başla.
-- Endpoint: `GET /v1.0/servicePrincipals/microsoft.graph.agentIdentity`,
-  `GET /v1.0/applications/microsoft.graph.agentIdentityBlueprint`,
-  `GET /servicePrincipals/{id}/microsoft.graph.agentIdentity/owners|sponsors`,
-  `/appRoleAssignments`, `/oauth2PermissionGrants`.
-- Normalize → **AGENT_IDENTITY** (veya AI_AGENT) asset: agent_identity_id (object id), display_name,
-  app_id, blueprint_id, account_enabled, created_date, owners[], sponsors[], application_permissions[],
-  delegated_permissions[], group_memberships[]. external_ids: entra_app_id, agent_identity_id (entra_object_id),
-  agent_blueprint_id → korelasyona hazır.
-- Metrikler: total/enabled/disabled identities, without owner/sponsor/blueprint, with app-only/delegated
-  perms, uncorrelated.
-- Kabul: identities+blueprints listelenir; owner/sponsor gösterilir; app vs delegated perm ayrı; Agent365
-  package ile appId üzerinden korele; owner/sponsor'suz filtrelenebilir; identity'siz Agent365 package ayrı gösterilir.
-- Mock Graph ile offline test (bkz. tests/test_agent365.py deseni: FakeGraph get_all/get).
+## SIRADAKİ: Adım 4 — Defender for Cloud Apps
+Detay için aşağıdaki "Kalan adımlar" bölümüne bak. Kullanıcı onayı bekleniyor.
 
 ## Kalan adımlar (özet)
 - **Adım 4** — Defender for Cloud Apps: `/beta/security/dataDiscovery/cloudAppDiscovery/uploadedStreams`

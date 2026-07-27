@@ -1,0 +1,78 @@
+{
+  "identities": [
+    {
+      "sp": {
+        "id": "OID-1",
+        "appId": "APP-FIN-1",
+        "displayName": "Finance Agent Identity",
+        "accountEnabled": true,
+        "createdDateTime": "2026-06-01T00:00:00Z",
+        "servicePrincipalType": "Application",
+        "signInAudience": "AzureADMyOrg",
+        "blueprintId": "BP-1",
+        "appOwnerOrganizationId": "TENANT-1"
+      },
+      "owners": [
+        {"@odata.type": "#microsoft.graph.user", "id": "USR-ALICE",
+         "displayName": "Alice Admin", "userPrincipalName": "alice@contoso.com"}
+      ],
+      "sponsors": [
+        {"@odata.type": "#microsoft.graph.user", "id": "USR-BOB",
+         "displayName": "Bob Sponsor", "userPrincipalName": "bob@contoso.com"}
+      ],
+      "appRoleAssignments": [
+        {"appRoleId": "ROLE-FILES-READ", "resourceId": "RES-GRAPH",
+         "resourceDisplayName": "Microsoft Graph", "principalId": "OID-1",
+         "createdDateTime": "2026-06-02T00:00:00Z"}
+      ],
+      "oauth2PermissionGrants": [
+        {"resourceId": "RES-GRAPH", "consentType": "AllPrincipals",
+         "principalId": null, "scope": "User.Read Mail.Read"}
+      ],
+      "memberOf": [
+        {"@odata.type": "#microsoft.graph.group", "id": "GRP-FIN",
+         "displayName": "Finance-Agents"}
+      ]
+    },
+    {
+      "sp": {
+        "id": "OID-2",
+        "appId": null,
+        "displayName": "Orphan Agent Identity",
+        "accountEnabled": false,
+        "createdDateTime": "2026-07-10T00:00:00Z",
+        "servicePrincipalType": "Application",
+        "signInAudience": "AzureADMyOrg",
+        "blueprintId": null
+      },
+      "owners": [],
+      "sponsors": [],
+      "appRoleAssignments": [],
+      "oauth2PermissionGrants": [],
+      "memberOf": []
+    }
+  ],
+  "blueprints": [
+    {
+      "id": "BP-1",
+      "appId": "APP-BP-FIN",
+      "displayName": "Finance Agent Blueprint",
+      "createdDateTime": "2026-05-15T00:00:00Z",
+      "signInAudience": "AzureADMyOrg",
+      "publisherDomain": "contoso.com",
+      "requiredResourceAccess": [
+        {"resourceAppId": "00000003-0000-0000-c000-000000000000",
+         "resourceAccess": [{"id": "df021288-bdef-4463-88db-98f22de89214", "type": "Role"}]}
+      ]
+    },
+    {
+      "id": "BP-2",
+      "appId": "APP-BP-UNUSED",
+      "displayName": "Unused Agent Blueprint",
+      "createdDateTime": "2026-07-01T00:00:00Z",
+      "signInAudience": "AzureADMyOrg",
+      "publisherDomain": "contoso.com",
+      "requiredResourceAccess": []
+    }
+  ]
+}
