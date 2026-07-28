@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # AI-SPM tek-adım post-deploy (Azure Cloud Shell / Bash).
-# "Deploy to Azure" altyapıyı kurar; bu script kodu yükler ve Graph rollerini atar.
+# "Deploy to Azure" altyapıyı kurar; bu script kodu yükler, TÜM Graph rollerini atar
+# (çekirdek tarama + 4 Microsoft AI Data Sources connector'ı) ve connector'ları açar.
+# Tek script, tek çalıştırma — ayrı "opsiyonel adım" yok (haftalık e-posta özeti hariç,
+# bkz. README).
 #
 # Kullanım:
 #   git clone https://github.com/MSalikoc/ai-spm-shadow-ai.git
@@ -23,7 +26,7 @@ RG="$1"
 FUNC="$2"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-echo "==> 1/3 Kod deploy ediliyor (func publish, remote build)..."
+echo "==> 1/4 Kod deploy ediliyor (func publish, remote build)..."
 cd "$ROOT"
 # Varsa desteklenmeyen URL ayarını temizle
 az functionapp config appsettings delete -g "$RG" -n "$FUNC" \
@@ -42,7 +45,7 @@ else
   az functionapp deployment source config-zip -g "$RG" -n "$FUNC" --src "$TMP/src.zip"
 fi
 
-echo "==> 2/3 Managed Identity Graph rolleri atanıyor..."
+echo "==> 2/4 Managed Identity Graph rolleri atanıyor (çekirdek + 4 connector)..."
 # 'az functionapp identity show' bazı Cloud Shell sürümlerinde bilinen bir api-version
 # hatası verebiliyor (InvalidApiVersionParameter) — daha sağlam olan generic resource
 # show komutunu kullanıyoruz (aynı sonucu verir).
@@ -55,8 +58,17 @@ if [[ -z "$MI" ]]; then
 fi
 echo "    Managed Identity: $MI"
 "$ROOT/scripts/grant_graph_roles.sh" "$MI"
+"$ROOT/scripts/grant_connector_roles.sh" "$MI"
+
+echo "==> 3/4 Microsoft AI Data Sources connector'ları açılıyor..."
+"$ROOT/scripts/enable_connectors.sh" "$RG" "$FUNC"
 
 KEY="$(az functionapp keys list -g "$RG" -n "$FUNC" --query functionKeys.default -o tsv 2>/dev/null || true)"
-echo "==> 3/3 Tamam."
-echo "    İlk taramayı tetikle:  curl -s \"https://$FUNC.azurewebsites.net/api/scan?code=$KEY\""
-echo "    Dashboard'u aç      :  https://$FUNC.azurewebsites.net/api/report?code=$KEY"
+echo "==> 4/4 Tamam."
+echo "    İlk taramayı tetikle          :  curl -s \"https://$FUNC.azurewebsites.net/api/scan?code=$KEY\""
+echo "    Çekirdek dashboard            :  https://$FUNC.azurewebsites.net/api/report?code=$KEY"
+echo "    AI Data Sources dashboard     :  https://$FUNC.azurewebsites.net/api/connectors?code=$KEY&format=html"
+echo "    (Rol yayılması + Function App yeniden başlaması birkaç dakika sürebilir —"
+echo "     bu sürede AI Data Sources dashboard'u bazı kaynakları PERMISSION_MISSING"
+echo "     gösterebilir; birkaç dakika sonra sayfayı yenileyin. LICENSE_MISSING ise"
+echo "     tenant'ta o Microsoft özelliğinin lisansı yok demektir, script hatası değildir.)"
