@@ -11,10 +11,22 @@
 #   ./grant_connector_roles.sh <MANAGED_IDENTITY_OBJECT_ID>
 #
 # MI object id'yi bulmak için:
-#   az functionapp identity show -g <RG> -n <FUNC_NAME> --query principalId -o tsv
+#   az resource show -g <RG> -n <FUNC_NAME> --resource-type "Microsoft.Web/sites" \
+#     --query identity.principalId -o tsv
+# (Bu komut hata verirse: Portal → Function App → Identity → System assigned →
+#  "Object (principal) ID" değerini elle kopyalayın.)
 set -euo pipefail
 
-MI_OBJECT_ID="${1:?Kullanim: $0 <MANAGED_IDENTITY_OBJECT_ID>}"
+if [[ -z "${1:-}" ]]; then
+  echo "HATA: Managed Identity object ID boş geldi." >&2
+  echo "Kullanım: $0 <MANAGED_IDENTITY_OBJECT_ID>" >&2
+  echo "" >&2
+  echo "Cloud Shell'i bir süre boş bıraktıysanız değişkenleriniz sıfırlanmış olabilir —" >&2
+  echo "README'nin Step 2'sindeki RESOURCE_GROUP=/FUNCTION_APP= satırlarını tekrar" >&2
+  echo "çalıştırıp MI=\$(az resource show ...) komutunu yeniden deneyin." >&2
+  exit 1
+fi
+MI_OBJECT_ID="$1"
 GRAPH_APP_ID="00000003-0000-0000-c000-000000000000"   # Microsoft Graph
 
 # Application.Read.All / Directory.Read.All temel scan'de zaten atanmış olabilir —

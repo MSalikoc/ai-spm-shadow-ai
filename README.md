@@ -225,11 +225,26 @@ of, say, 65 always comes with the exact reasons that add up to it — never a ba
 
 ### Step 5 — Grant the extra permissions
 
-Same Cloud Shell session as Step 2 (so `$RESOURCE_GROUP`/`$FUNCTION_APP` are still set —
-if you closed and reopened Cloud Shell, set those two lines again first, same as in Step 2):
+> **Cloud Shell resets its variables after ~20 minutes idle** (the files stay, but
+> `$RESOURCE_GROUP`/`$FUNCTION_APP` don't). If it's been a while since Step 2, or you see
+> a `Kullanim: ... <RESOURCE_GROUP> <FUNCTION_APP_NAME>` usage error below, set the two
+> lines again first — same as in Step 2:
+> ```bash
+> RESOURCE_GROUP="aispm-rg"
+> FUNCTION_APP="aispm-xxxxxxxxxx"
+> ```
 
 ```bash
-MI=$(az functionapp identity show -g "$RESOURCE_GROUP" -n "$FUNCTION_APP" --query principalId -o tsv)
+MI=$(az resource show -g "$RESOURCE_GROUP" -n "$FUNCTION_APP" --resource-type "Microsoft.Web/sites" --query identity.principalId -o tsv)
+echo "$MI"
+```
+
+`echo "$MI"` should print a GUID. If it's empty or `az` errors out, get it from the
+**Portal instead**: your Function App → left menu **Identity** → **System assigned** tab
+→ copy the **Object (principal) ID**, then set `MI="paste-it-here"` yourself before
+continuing.
+
+```bash
 ./scripts/grant_connector_roles.sh "$MI"
 ```
 

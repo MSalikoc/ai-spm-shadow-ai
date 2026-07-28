@@ -9,8 +9,17 @@
 #   ./enable_connectors.sh <RESOURCE_GROUP> <FUNCTION_APP_NAME>
 set -euo pipefail
 
-RG="${1:?Kullanim: $0 <RESOURCE_GROUP> <FUNCTION_APP_NAME>}"
-FUNC="${2:?Kullanim: $0 <RESOURCE_GROUP> <FUNCTION_APP_NAME>}"
+if [[ -z "${1:-}" || -z "${2:-}" ]]; then
+  echo "HATA: Resource group veya Function App adı boş geldi." >&2
+  echo "Kullanım: $0 <RESOURCE_GROUP> <FUNCTION_APP_NAME>" >&2
+  echo "" >&2
+  echo "Cloud Shell'i bir süre boş bıraktıysanız değişkenleriniz sıfırlanmış olabilir —" >&2
+  echo "README'nin Step 2'sindeki RESOURCE_GROUP=/FUNCTION_APP= satırlarını tekrar" >&2
+  echo "çalıştırıp bu komutu yeniden deneyin." >&2
+  exit 1
+fi
+RG="$1"
+FUNC="$2"
 
 echo "[*] ENABLE_* connector flag'leri '$FUNC' üzerinde açılıyor..."
 az functionapp config appsettings set -g "$RG" -n "$FUNC" --settings \
@@ -22,9 +31,10 @@ az functionapp config appsettings set -g "$RG" -n "$FUNC" --settings \
   -o none
 
 echo "[✓] Açıldı. Function App birkaç dakika içinde yeniden başlayıp yeni ayarları alır."
-echo "    Doğrulamak için: curl \"https://$FUNC.azurewebsites.net/api/connectors?code=<KEY>\""
-echo "    Görsel (HTML) için: .../api/connectors?code=<KEY>&format=html"
+echo "    Doğrulamak için (KEY'i az functionapp keys list ile alın):"
+echo "      curl \"https://$FUNC.azurewebsites.net/api/connectors?code=\$KEY\""
+echo "    Görsel (HTML) için sonuna &format=html ekleyin."
 echo
 echo "Not: Purview DSPM (dosya import) opsiyoneldir ve ayrıca gerekir:"
 echo "  az functionapp config appsettings set -g $RG -n $FUNC \\"
-echo "    --settings PURVIEW_DSPM_IMPORT_PATH=<export-dosyasının-yolu>"
+echo "    --settings PURVIEW_DSPM_IMPORT_PATH=/home/data/export-dosyanizin-adi"

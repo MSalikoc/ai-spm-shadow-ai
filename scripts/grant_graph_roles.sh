@@ -6,10 +6,16 @@
 #   ./grant_graph_roles.sh <MANAGED_IDENTITY_OBJECT_ID>
 #
 # MI object id'yi bulmak için (Function'ın system-assigned identity'si):
-#   az functionapp identity show -g <RG> -n <FUNC_NAME> --query principalId -o tsv
+#   az resource show -g <RG> -n <FUNC_NAME> --resource-type "Microsoft.Web/sites" \
+#     --query identity.principalId -o tsv
 set -euo pipefail
 
-MI_OBJECT_ID="${1:?Kullanim: $0 <MANAGED_IDENTITY_OBJECT_ID>}"
+if [[ -z "${1:-}" ]]; then
+  echo "HATA: Managed Identity object ID boş geldi." >&2
+  echo "Kullanım: $0 <MANAGED_IDENTITY_OBJECT_ID>" >&2
+  exit 1
+fi
+MI_OBJECT_ID="$1"
 GRAPH_APP_ID="00000003-0000-0000-c000-000000000000"   # Microsoft Graph
 # Mail.Send: haftalık özet e-postası için (güvenlik: Exchange Application Access
 # Policy ile yalnızca gönderen mailbox'a kısıtla — README'ye bak).
