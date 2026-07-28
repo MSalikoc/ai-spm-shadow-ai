@@ -56,7 +56,13 @@ _CONNECTOR_INFO = {
     "entra_agent_id": ("Microsoft Entra Agent ID", "Application.Read.All + Directory.Read.All"),
     "defender_cloud_apps": ("Defender for Cloud Apps (Shadow AI)", "CloudApp-Discovery.Read.All"),
     "purview_audit": ("Microsoft Purview Audit", "AuditLogsQuery.Read.All"),
-    "purview_dspm_import": ("Purview DSPM import (dosya)", "n/a — dosya import"),
+    # NOT: "purview_dspm_import" bilerek burada YOK — dashboard coverage listesinde
+    # gösterilmiyor. O bir gerçek connector değil, dosya-yolu tabanlı manuel bir
+    # import adaptörü (bkz. connectors/purview_dspm_import.py): kendi başına her zaman
+    # NOT_CONFIGURED görünür ve tek başına açılamaz (Kudu ile dosya yükleme gerektirir),
+    # bu yüzden ekranda kafa karıştırmaması için gizlendi. `PURVIEW_DSPM_IMPORT_PATH`
+    # env var'ı hâlâ çalışır — ileri seviye kullanıcılar için sessizce kullanılabilir
+    # kalıyor, sadece coverage/gaps listesinde satır olarak görünmüyor.
 }
 
 

@@ -241,16 +241,16 @@ license — shown honestly, never faked.
 | `STORE_RAW_AI_CONTENT` | off | If `true`, persists raw prompt/response text with each interaction — **leave off**; every score/coverage field works without it |
 | `PURVIEW_DSPM_IMPORT_PATH` | — | Optional: path to a manually exported Purview DSPM JSON/CSV file, imported as a fifth, separate source |
 
-> **`PURVIEW_DSPM_IMPORT_PATH` is an advanced, fully optional 5th source — skip it unless
-> you specifically need it.** There is no Graph/API endpoint for DSPM analytics, so this
-> only reads a file that already exists on the Function App's own disk; there's no upload
-> button. To use it: export a report from the
-> [Purview compliance portal](https://purview.microsoft.com) as JSON/CSV, upload that file
-> to the Function App via **Advanced Tools (Kudu) → Debug console** (Portal → your
-> Function App → Development Tools → Advanced Tools → Go → Debug console → drag the file
-> into `/home/data/`), then set `PURVIEW_DSPM_IMPORT_PATH=/home/data/<your-file>`. This one
-> requires someone comfortable in the Azure Portal — it is not part of the standard
-> customer setup and none of the four connectors above need it.
+> **`PURVIEW_DSPM_IMPORT_PATH` is hidden from the dashboard on purpose — skip it.** There
+> is no Graph/API endpoint for DSPM analytics, so this can only read a file that's
+> manually placed on the Function App's own disk (via Kudu); there's no upload button and
+> no simple way to wire it in. Since it's not something a normal setup can actually use, it
+> doesn't appear as a row in the dashboard's coverage list or gap notes, so it never shows
+> up as a confusing permanently-empty item. **Sensitive-data detection does not depend on
+> it at all** — that's handled entirely by the Purview **Audit** connector above
+> (`ENABLE_PURVIEW_AUDIT`), which is fully automatic. This setting only exists for the rare
+> case where someone wants to feed in an extra, manually-exported DSPM report on top of
+> that — safe to ignore.
 
 ### What Part 2 deliberately does *not* touch
 
