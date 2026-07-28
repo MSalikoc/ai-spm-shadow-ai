@@ -667,6 +667,10 @@ a.card .n{font-size:24px}
 """
 
 THEME_JS = """
+(function(){
+var aiLink=document.getElementById('aiDataSourcesLink');
+if(aiLink){var aiQs=location.search?location.search+'&format=html':'?format=html';aiLink.href='/api/connectors'+aiQs;}
+})();
 (function(){var b=document.getElementById('tg');
 b.onclick=function(){var r=document.documentElement;
 var d=(r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'))==='dark';
@@ -910,6 +914,7 @@ def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None) -
   </nav>
   <span class="spacer"></span>
   <span class="tenant">{html.escape(tenant_id)}</span>
+  <a id="aiDataSourcesLink" class="themebtn" href="#" style="display:inline-block;text-decoration:none" title="Microsoft AI Data Sources dashboard'una git">AI Data Sources &#8594;</a>
   <button id="tg" class="themebtn" title="Tema">&#9790;</button>
 </header>
 <main>

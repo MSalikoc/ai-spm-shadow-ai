@@ -1003,6 +1003,8 @@ function showTab(n){
 document.querySelectorAll('.navlink').forEach(function(l){l.onclick=function(){showTab(l.getAttribute('data-tab'));};});
 document.querySelectorAll('[data-goto]').forEach(function(c){c.onclick=function(e){e.preventDefault();showTab(c.getAttribute('data-goto'));};});
 window.ztGoto = showTab;
+var coreLink=document.getElementById('coreDashboardLink');
+if(coreLink){coreLink.href='/api/report'+(location.search||'');}
 })();
 function ztRows(scope){return document.querySelectorAll('tr.zt-row[data-scope="'+scope+'"]');}
 function ztActiveChips(scope,key){
@@ -1230,7 +1232,9 @@ def html_string(result: dict, tenant_id: str = "", now=None) -> str:
 <style>{CSS}{_ZT_CSS}</style></head><body>
 <header>{_MS_LOGO_SVG}<h1>AI-SPM</h1>
 <nav class="tabs">{nav}</nav>
-<div class="spacer"></div><div class="tenant">{_esc(tenant_id)}</div></header>
+<div class="spacer"></div><div class="tenant">{_esc(tenant_id)}</div>
+<a id="coreDashboardLink" class="themebtn" href="#" style="display:inline-block;text-decoration:none;margin-left:10px" title="Core (OAuth-consent) dashboard'a git">&#8592; Core Dashboard</a>
+</header>
 <main>
 <section class="tab active" data-tab="overview">{overview}</section>
 <section class="tab" data-tab="agents">{agents_tab}</section>

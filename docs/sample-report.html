@@ -200,7 +200,9 @@ table.zt-table tbody tr:hover{background:var(--track)}
 <rect x="11" y="11" width="9" height="9" fill="#FFB900"/>
 </svg><h1>AI-SPM</h1>
 <nav class="tabs"><a class="navlink active" data-tab="overview">Overview</a><a class="navlink" data-tab="agents">Agents</a><a class="navlink" data-tab="shadow">Shadow AI</a><a class="navlink" data-tab="sensitive">Sensitive Data</a><a class="navlink" data-tab="findings">Findings</a><a class="navlink" data-tab="gaps">Gaps</a></nav>
-<div class="spacer"></div><div class="tenant">contoso.onmicrosoft.com (ÖRNEK VERİ)</div></header>
+<div class="spacer"></div><div class="tenant">contoso.onmicrosoft.com (ÖRNEK VERİ)</div>
+<a id="coreDashboardLink" class="themebtn" href="#" style="display:inline-block;text-decoration:none;margin-left:10px" title="Core (OAuth-consent) dashboard'a git">&#8592; Core Dashboard</a>
+</header>
 <div style="background:var(--accent);color:#fff;text-align:center;font-size:13px;
 font-weight:600;padding:10px 14px;letter-spacing:.02em">
 ÖRNEK RAPOR (SAMPLE) — Bu sayfa gerçek bir tenant'a bağlı değildir. 10 Agent 365 paketi,
@@ -217,7 +219,7 @@ bağladığınızda tüm sayılar gerçek verinizle değişir.
       <b>Tenant</b><span>contoso.onmicrosoft.com (ÖRNEK VERİ)</span>
       <b>Bağlı kaynak</b><span>4/5</span>
       <b>Eşleşen varlık</b><span>31/32</span>
-      <b>Üretildi</b><span>2026-07-28 13:20:03 UTC</span>
+      <b>Üretildi</b><span>2026-07-28 15:22:41 UTC</span>
     </div>
   </div>
   <div class="tiles"><div class="card tile high"><span class="n">6</span><span class="l">Hassas veri paylaşan app</span></div><div class="card tile"><span class="n">8</span><span class="l">Etkilenen kullanıcı</span></div><div class="card tile"><span class="n">12</span><span class="l">Engellenen (DLP)</span></div><div class="card tile high"><span class="n">3</span><span class="l">Yüksek önem bulgu</span></div></div>
@@ -302,6 +304,8 @@ function showTab(n){
 document.querySelectorAll('.navlink').forEach(function(l){l.onclick=function(){showTab(l.getAttribute('data-tab'));};});
 document.querySelectorAll('[data-goto]').forEach(function(c){c.onclick=function(e){e.preventDefault();showTab(c.getAttribute('data-goto'));};});
 window.ztGoto = showTab;
+var coreLink=document.getElementById('coreDashboardLink');
+if(coreLink){coreLink.href='/api/report'+(location.search||'');}
 })();
 function ztRows(scope){return document.querySelectorAll('tr.zt-row[data-scope="'+scope+'"]');}
 function ztActiveChips(scope,key){
