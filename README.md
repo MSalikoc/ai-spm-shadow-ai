@@ -167,6 +167,13 @@ that code is touched (see [What Part 2 doesn't touch](#what-part-2-deliberately-
 
 ### The dashboard you get
 
+> **See it before you deploy anything:** [**docs/sample-report.html**](docs/sample-report.html)
+> is a full, interactive example built with realistic mock data (10 agents, 18 Shadow AI
+> apps, 33 sensitive interactions) using the real rendering code — nothing hand-drawn.
+> [Open it rendered](https://htmlpreview.github.io/?https://github.com/MSalikoc/ai-spm-shadow-ai/blob/main/docs/sample-report.html)
+> or download the file and open it in any browser. It's clearly marked as sample data —
+> your own deployment shows your tenant's real numbers.
+
 One page, six tabs, all served from a single endpoint (`/api/connectors?format=html`):
 
 - **Overview** — headline KPIs, a findings-by-severity donut, two flow diagrams
