@@ -669,7 +669,14 @@ a.card .n{font-size:24px}
 THEME_JS = """
 (function(){
 var aiLink=document.getElementById('aiDataSourcesLink');
-if(aiLink){var aiQs=location.search?location.search+'&format=html':'?format=html';aiLink.href='/api/connectors'+aiQs;}
+if(aiLink){
+  if(location.pathname.indexOf('/api/')===0){
+    var aiQs=location.search?location.search+'&format=html':'?format=html';
+    aiLink.href='/api/connectors'+aiQs;
+  }else{
+    aiLink.remove();
+  }
+}
 })();
 (function(){var b=document.getElementById('tg');
 b.onclick=function(){var r=document.documentElement;

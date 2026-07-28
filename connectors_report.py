@@ -1004,7 +1004,13 @@ document.querySelectorAll('.navlink').forEach(function(l){l.onclick=function(){s
 document.querySelectorAll('[data-goto]').forEach(function(c){c.onclick=function(e){e.preventDefault();showTab(c.getAttribute('data-goto'));};});
 window.ztGoto = showTab;
 var coreLink=document.getElementById('coreDashboardLink');
-if(coreLink){coreLink.href='/api/report'+(location.search||'');}
+if(coreLink){
+  if(location.pathname.indexOf('/api/')===0){
+    coreLink.href='/api/report'+(location.search||'');
+  }else{
+    coreLink.remove();
+  }
+}
 })();
 function ztRows(scope){return document.querySelectorAll('tr.zt-row[data-scope="'+scope+'"]');}
 function ztActiveChips(scope,key){

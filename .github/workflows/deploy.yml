@@ -1,10 +1,11 @@
 name: Deploy to Azure Function
 
-# main'e her push'ta: önce test, testler geçerse deploy.
-# Kurulum (bir kere):
+# main'e her push'ta: test HER ZAMAN çalışır. Testler geçerse ve deploy hedefi
+# tanımlıysa deploy edilir.
+# Kurulum (bir kere, deploy'u açmak için):
 #   - Repo variable: AZURE_FUNCTIONAPP_NAME = <function app adı>
 #   - Repo secret:   AZURE_FUNCTIONAPP_PUBLISH_PROFILE = <publish profile XML>
-# Değişken tanımlı değilse (fork/müşteri) job'lar atlanır.
+# Değişken tanımlı değilse yalnızca deploy job'u atlanır — test yine çalışır.
 on:
   push:
     branches: [main]
@@ -21,7 +22,6 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    if: ${{ vars.AZURE_FUNCTIONAPP_NAME != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

@@ -219,7 +219,7 @@ bağladığınızda tüm sayılar gerçek verinizle değişir.
       <b>Tenant</b><span>contoso.onmicrosoft.com (ÖRNEK VERİ)</span>
       <b>Bağlı kaynak</b><span>4/5</span>
       <b>Eşleşen varlık</b><span>31/32</span>
-      <b>Üretildi</b><span>2026-07-28 15:22:41 UTC</span>
+      <b>Üretildi</b><span>2026-07-28 15:42:09 UTC</span>
     </div>
   </div>
   <div class="tiles"><div class="card tile high"><span class="n">6</span><span class="l">Hassas veri paylaşan app</span></div><div class="card tile"><span class="n">8</span><span class="l">Etkilenen kullanıcı</span></div><div class="card tile"><span class="n">12</span><span class="l">Engellenen (DLP)</span></div><div class="card tile high"><span class="n">3</span><span class="l">Yüksek önem bulgu</span></div></div>
@@ -305,7 +305,13 @@ document.querySelectorAll('.navlink').forEach(function(l){l.onclick=function(){s
 document.querySelectorAll('[data-goto]').forEach(function(c){c.onclick=function(e){e.preventDefault();showTab(c.getAttribute('data-goto'));};});
 window.ztGoto = showTab;
 var coreLink=document.getElementById('coreDashboardLink');
-if(coreLink){coreLink.href='/api/report'+(location.search||'');}
+if(coreLink){
+  if(location.pathname.indexOf('/api/')===0){
+    coreLink.href='/api/report'+(location.search||'');
+  }else{
+    coreLink.remove();
+  }
+}
 })();
 function ztRows(scope){return document.querySelectorAll('tr.zt-row[data-scope="'+scope+'"]');}
 function ztActiveChips(scope,key){
