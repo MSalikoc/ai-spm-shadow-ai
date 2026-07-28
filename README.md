@@ -67,8 +67,25 @@ In **Azure Cloud Shell** (or any terminal with `az` logged into the subscription
 ```bash
 git clone https://github.com/MSalikoc/ai-spm-shadow-ai.git
 cd ai-spm-shadow-ai
-./scripts/postdeploy.sh <RESOURCE_GROUP> <FUNCTION_APP_NAME>
 ```
+
+Then set these two lines to your own resource group and Function App name — you'll find
+both on the deployment's **Overview** page in the Azure Portal — and run them together
+with the command below:
+
+```bash
+RESOURCE_GROUP="aispm-rg"
+FUNCTION_APP="aispm-xxxxxxxxxx"
+
+./scripts/postdeploy.sh "$RESOURCE_GROUP" "$FUNCTION_APP"
+```
+
+> **Only edit the text inside the quotes** on the `RESOURCE_GROUP=` and `FUNCTION_APP=`
+> lines. Every command in the rest of this guide reuses `$RESOURCE_GROUP` and
+> `$FUNCTION_APP` — set them once per Cloud Shell session and every copy-pasted block
+> below just works. (If you ever see a literal `<...>` placeholder anywhere, replace the
+> whole `<...>` including the angle brackets — but this guide no longer uses that style
+> for anything you'd paste into a terminal.)
 
 This does two things:
 1. Deploys the application code (`func azure functionapp publish`, remote build — Linux
@@ -85,14 +102,14 @@ This does two things:
 Trigger a scan immediately (or just wait — it also runs daily at 06:00 UTC):
 
 ```bash
-KEY=$(az functionapp keys list -g <RESOURCE_GROUP> -n <FUNCTION_APP_NAME> --query functionKeys.default -o tsv)
-curl -s "https://<FUNCTION_APP_NAME>.azurewebsites.net/api/scan?code=$KEY" ; echo
+KEY=$(az functionapp keys list -g "$RESOURCE_GROUP" -n "$FUNCTION_APP" --query functionKeys.default -o tsv)
+curl -s "https://$FUNCTION_APP.azurewebsites.net/api/scan?code=$KEY" ; echo
 ```
 
-Then open the live dashboard in a browser:
+Then print the dashboard URL and open it in a browser:
 
-```
-https://<FUNCTION_APP_NAME>.azurewebsites.net/api/report?code=<FUNCTION_KEY>
+```bash
+echo "https://$FUNCTION_APP.azurewebsites.net/api/report?code=$KEY"
 ```
 
 That's the whole core product working. Everything below is optional.
@@ -103,22 +120,33 @@ Sends a weekly posture summary (headline numbers, notable findings, dashboard li
 Microsoft Graph `sendMail` — no SMTP secrets, sent by the Managed Identity.
 
 ```bash
-az functionapp config appsettings set -g <RESOURCE_GROUP> -n <FUNCTION_APP_NAME> --settings \
+az functionapp config appsettings set -g "$RESOURCE_GROUP" -n "$FUNCTION_APP" --settings \
   AISPM_MAIL_SENDER="secops@contoso.com" \
   AISPM_MAIL_TO="team@contoso.com,ciso@contoso.com" \
-  AISPM_REPORT_URL="https://<FUNCTION_APP_NAME>.azurewebsites.net/api/report?code=<FUNCTION_KEY>"
+  AISPM_REPORT_URL="https://$FUNCTION_APP.azurewebsites.net/api/report?code=$KEY"
 ```
 
+Replace `secops@contoso.com` and `team@contoso.com,ciso@contoso.com` with your own sender
+and recipient addresses (keep the quotes, no angle brackets anywhere here).
+
 `Mail.Send` was already granted in Step 2 — but that permission can send as *any*
-mailbox, so restrict it to your sender:
+mailbox, so restrict it to your sender. This one runs in **PowerShell**, not the bash
+Cloud Shell — switch to it (Cloud Shell has a PowerShell/Bash toggle), then set the same
+two values in quotes:
 
 ```powershell
-New-ApplicationAccessPolicy -AppId <MANAGED_IDENTITY_APPID> `
-  -PolicyScopeGroupId <mail-enabled-group-containing-sender> `
+$AppId = "PASTE_MANAGED_IDENTITY_APP_ID_HERE"
+$MailGroup = "PASTE_MAIL_ENABLED_GROUP_CONTAINING_SENDER_HERE"
+New-ApplicationAccessPolicy -AppId $AppId `
+  -PolicyScopeGroupId $MailGroup `
   -AccessRight RestrictAccess -Description "AI-SPM digest sender only"
 ```
 
-Test it: `curl "https://<FUNCTION_APP_NAME>.azurewebsites.net/api/digest?code=<FUNCTION_KEY>"`
+Test it:
+
+```bash
+curl "https://$FUNCTION_APP.azurewebsites.net/api/digest?code=$KEY"
+```
 
 ### Configuration reference (Part 1)
 
@@ -142,8 +170,10 @@ For a one-off scan against a tenant without deploying anything:
 
 ```bash
 pip install -r requirements.txt
-python main.py --tenant <TENANT_ID> --client-id <APP_ID>     # interactive device-code sign-in
+python main.py --tenant YOUR_TENANT_ID --client-id YOUR_APP_ID     # interactive device-code sign-in
 ```
+
+Replace `YOUR_TENANT_ID` and `YOUR_APP_ID` with your own values (no angle brackets).
 
 ---
 
@@ -195,10 +225,11 @@ of, say, 65 always comes with the exact reasons that add up to it — never a ba
 
 ### Step 5 — Grant the extra permissions
 
-Same pattern as Step 2, run from the same Cloud Shell session:
+Same Cloud Shell session as Step 2 (so `$RESOURCE_GROUP`/`$FUNCTION_APP` are still set —
+if you closed and reopened Cloud Shell, set those two lines again first, same as in Step 2):
 
 ```bash
-MI=$(az functionapp identity show -g <RESOURCE_GROUP> -n <FUNCTION_APP_NAME> --query principalId -o tsv)
+MI=$(az functionapp identity show -g "$RESOURCE_GROUP" -n "$FUNCTION_APP" --query principalId -o tsv)
 ./scripts/grant_connector_roles.sh "$MI"
 ```
 
@@ -213,7 +244,7 @@ is safe to re-run, it just skips those.
 ### Step 6 — Turn the connectors on
 
 ```bash
-./scripts/enable_connectors.sh <RESOURCE_GROUP> <FUNCTION_APP_NAME>
+./scripts/enable_connectors.sh "$RESOURCE_GROUP" "$FUNCTION_APP"
 ```
 
 Sets the five `ENABLE_*` application settings and restarts the Function App. Give it a
@@ -222,11 +253,12 @@ need a little time.
 
 ### Step 7 — View the dashboard
 
-```
-https://<FUNCTION_APP_NAME>.azurewebsites.net/api/connectors?code=<FUNCTION_KEY>&format=html
+```bash
+echo "https://$FUNCTION_APP.azurewebsites.net/api/connectors?code=$KEY&format=html"
 ```
 
-Or fetch the same data as JSON (no `format=html`) for scripting/integration.
+Open the printed URL in a browser. Or drop `&format=html` from it to get the same data
+as JSON for scripting/integration.
 
 If a connector still shows `PERMISSION_MISSING` after a few minutes, the two most common
 causes are: Microsoft 365 Copilot isn't licensed in the tenant (blocks Agent 365), or
@@ -308,7 +340,7 @@ your own deployment, set once:
 
 - Repository **variable** `AZURE_FUNCTIONAPP_NAME` = your function app name
 - Repository **secret** `AZURE_FUNCTIONAPP_PUBLISH_PROFILE` = the app's publish profile
-  (`az functionapp deployment list-publishing-profiles -g <RG> -n <FUNC> --xml`)
+  (`az functionapp deployment list-publishing-profiles -g "$RESOURCE_GROUP" -n "$FUNCTION_APP" --xml`)
 
 Without these, the deploy workflow is skipped — the one-click button + `postdeploy.sh`
 remain the primary path.
