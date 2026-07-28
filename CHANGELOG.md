@@ -36,12 +36,20 @@ All notable changes to AI-SPM are documented here. Format based on
   - **Assessment + live wiring (Step 7)** — `connectors_report.py` builds a 15-section
     assessment (executive summary, per-source coverage, "Applications with Sensitive
     Data Exposure" table, per-app and per-agent detail, correlation quality, known
-    gaps/limitations, …) plus a standalone HTML view. New **`GET /api/connectors`**
-    endpoint (read-only; `?format=html` for the page). `pipeline.run_connectors()` is a
-    pure, stateless call — **returns `None` with zero Graph calls** while every
-    `ENABLE_*` flag stays off, so the existing Entra scan/dashboard/notify flow is
-    completely unaffected. `report.py`, `executive.py`, and the scheduled scan/digest
-    endpoints were deliberately left untouched.
+    gaps/limitations, …) plus a **6-tab standalone dashboard** (Overview / Agents /
+    Shadow AI / Sensitive Data / Findings / Gaps) at **`GET /api/connectors`**
+    (`?format=html` for the page; JSON otherwise). Every agent/app/finding gets a
+    **transparent 0–100 risk score** — additive, named point contributions
+    (`+35 — Owner atanmamış`, …), so a score is always traceable to its reasons; risk
+    level is derived from the score, never hand-picked. Overview includes two
+    hand-rolled SVG flow ("Sankey-style") diagrams and the top-5 highest-scoring items
+    across all sources. The Shadow AI tab mirrors Defender for Cloud Apps' own
+    *Discovered apps* grid (Risk Score / Tag / Traffic / Upload / Transactions / Users /
+    IP Addresses / Devices / Last Seen). `pipeline.run_connectors()` is a pure, stateless
+    call — **returns `None` with zero Graph calls** while every `ENABLE_*` flag stays
+    off, so the existing Entra scan/dashboard/notify flow is completely unaffected.
+    `report.py`, `executive.py`, and the scheduled scan/digest endpoints were
+    deliberately left untouched.
   - **Change-tracking (Step 8)** — `connectors_drift.py` runs in parallel to the existing
     `drift.py` (separate snapshot/changes files) with new event types:
     `NEW_AGENT_365_PACKAGE`, `AGENT_365_PACKAGE_BLOCKED/UNBLOCKED`,
@@ -55,7 +63,7 @@ All notable changes to AI-SPM are documented here. Format based on
   - `scripts/grant_connector_roles.sh` (+ `.ps1`) and `scripts/enable_connectors.sh` —
     opt-in setup for the four connectors, kept separate from the core
     `grant_graph_roles`/`postdeploy` scripts.
-  - 153 tests total (from 89 at the end of Step 2).
+  - 159 tests total (from 89 at the end of Step 2).
 - **Agent 365 collector (Step 2/8)** — `connectors/agent365.py` reads the Agent 365 catalog
   (`/copilot/admin/catalog/packages` + per-package detail, `CopilotPackages.Read.All`),
   normalizes each package into a unified `AI_AGENT` asset (package type, publisher/build-type,

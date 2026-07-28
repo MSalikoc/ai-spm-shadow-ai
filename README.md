@@ -18,33 +18,51 @@ secrets), and produces a ranked, explainable posture report on every run.
 
 - **Automated discovery** — enumerates every third-party AI application connected to
   your tenant (ChatGPT, Gemini, Glean, Grammarly, Otter, and more) via OAuth consent.
-- **Explainable risk scoring** — a transparent 0–100 score per app driven by data-scope
-  sensitivity, blast radius (admin vs. user consent, number of users), publisher
-  verification, and persistence (`offline_access`). Every score ships with its reasons.
+- **Explainable risk scoring** — a transparent 0–100 score per app/agent/finding, driven
+  by additive, named factors (data-scope sensitivity, blast radius, publisher trust,
+  persistence). Every score ships with the exact list of reasons that produced it.
 - **Actionable remediation** — concrete, prioritized next steps for each finding.
 - **Secretless & scheduled** — daily automated scans using a system-assigned Managed
   Identity; findings published to Blob Storage as a self-contained HTML report plus JSON.
 - **On-demand API** — an HTTP endpoint to trigger a scan and retrieve a summary at any time.
-- **Microsoft AI Data Sources (optional, opt-in)** — four additional Microsoft-native
-  connectors — Agent 365, Entra Agent ID, Defender for Cloud Apps (Shadow AI), Purview
-  Audit — correlate *which* AI app/agent handled *which* sensitive data, for how many
-  users, and whether it was blocked or allowed. Off by default; see
-  [Microsoft AI Data Sources](#microsoft-ai-data-sources-optional-extended-phase) below.
+- **Microsoft AI Data Sources (optional, opt-in)** — a second, richer dashboard fed by
+  four Microsoft-native connectors (Agent 365, Entra Agent ID, Defender for Cloud Apps,
+  Purview Audit): a multi-page assessment with flow diagrams, an MDCA-style traffic grid
+  per Shadow AI app, and a transparent risk score for every agent/app/finding. Off by
+  default — see **[Part 2](#part-2--microsoft-ai-data-sources-optional)** below.
 
 ---
 
-## Deploy to Azure
+## Setup roadmap
+
+Two independent parts. Part 1 is the core product; Part 2 is optional and adds nothing
+until you explicitly turn it on.
+
+| # | Step | Where |
+| - | --- | --- |
+| 1 | Deploy the infrastructure (one click) | [Part 1, Step 1](#step-1--deploy-the-infrastructure) |
+| 2 | Run the post-deploy script (code + core Graph permissions) | [Part 1, Step 2](#step-2--post-deploy-script) |
+| 3 | Trigger the first scan and view the dashboard | [Part 1, Step 3](#step-3--first-scan--dashboard) |
+| 4 | *(optional)* Set up the weekly email digest | [Part 1, Step 4](#step-4--optional-weekly-email-digest) |
+| 5 | *(optional)* Grant the extra Microsoft AI Data Sources permissions | [Part 2, Step 5](#step-5--grant-the-extra-permissions) |
+| 6 | *(optional)* Turn the four connectors on | [Part 2, Step 6](#step-6--turn-the-connectors-on) |
+| 7 | *(optional)* View the Microsoft AI Data Sources dashboard | [Part 2, Step 7](#step-7--view-the-dashboard) |
+
+---
+
+## Part 1 — Core scan (Entra ID / OAuth consent)
+
+### Step 1 — Deploy the infrastructure
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FMSalikoc%2Fai-spm-shadow-ai%2Fmain%2Fdeploy%2Fazuredeploy.json)
 
-One click provisions the infrastructure — Function App, system-assigned Managed Identity,
-and Storage. The portal form lets you set the target tenant, scan schedule, and report
-container.
+One click provisions everything: Function App, system-assigned Managed Identity, and
+Storage account. The portal form asks for the target tenant, scan schedule, and report
+container name — fill those in and click Create.
 
-### Post-deployment (one step, in Azure Cloud Shell)
+### Step 2 — Post-deploy script
 
-Run the post-deploy script once. It deploys the application code (remote build) and grants
-the Managed Identity the read-only Microsoft Graph permissions it needs.
+In **Azure Cloud Shell** (or any terminal with `az` logged into the subscription):
 
 ```bash
 git clone https://github.com/MSalikoc/ai-spm-shadow-ai.git
@@ -52,197 +70,75 @@ cd ai-spm-shadow-ai
 ./scripts/postdeploy.sh <RESOURCE_GROUP> <FUNCTION_APP_NAME>
 ```
 
-The script performs:
-1. `func azure functionapp publish` — deploys the code (Python is built remotely; Linux
-   Consumption does not support URL-based run-from-package).
-2. Assigns Graph **application** permissions to the Managed Identity:
+This does two things:
+1. Deploys the application code (`func azure functionapp publish`, remote build — Linux
+   Consumption doesn't support URL-based run-from-package).
+2. Grants the Managed Identity three read-only Graph **application** permissions:
    `Directory.Read.All`, `Application.Read.All`, `AuditLog.Read.All`.
 
-> Assigning Graph roles requires a directory role that can grant app permissions
-> (e.g. Privileged Role Administrator / Global Administrator).
+> Step 2 requires a directory role that can grant application permissions
+> (Privileged Role Administrator or Global Administrator). If you don't have it, ask
+> whoever does to run this one command — everything else needs no special access.
 
-Trigger the first scan immediately (or wait for the schedule):
+### Step 3 — First scan & dashboard
+
+Trigger a scan immediately (or just wait — it also runs daily at 06:00 UTC):
 
 ```bash
 KEY=$(az functionapp keys list -g <RESOURCE_GROUP> -n <FUNCTION_APP_NAME> --query functionKeys.default -o tsv)
 curl -s "https://<FUNCTION_APP_NAME>.azurewebsites.net/api/scan?code=$KEY" ; echo
 ```
 
-On each run (06:00 UTC by default) AI-SPM scans your tenant and writes `latest.html` plus
-a timestamped history to the `aispm-reports` Blob container.
-
----
-
-## How it works
+Then open the live dashboard in a browser:
 
 ```
-[Deploy to Azure]  ──►  ARM template
-        │
-        ├─ Storage + Consumption plan
-        └─ Function App (Python 3.11, system-assigned Managed Identity)
-        ▼
-[post-deploy]  postdeploy.sh  ──►  deploy code (remote build) + grant read-only Graph roles
-        ▼
-[daily 06:00 UTC]  timer  ──►  enumerate AI apps  ──►  map OAuth consents
-                            ──►  score risk  ──►  publish HTML + JSON to Blob
+https://<FUNCTION_APP_NAME>.azurewebsites.net/api/report?code=<FUNCTION_KEY>
 ```
 
-The engine is standalone by design: it holds state, runs on a schedule, and does not
-depend on any interactive session — the foundation for continuous posture tracking.
+That's the whole core product working. Everything below is optional.
 
----
+### Step 4 — *(optional)* Weekly email digest
 
-## Configuration
+Sends a weekly posture summary (headline numbers, notable findings, dashboard link) via
+Microsoft Graph `sendMail` — no SMTP secrets, sent by the Managed Identity.
 
-Set as Function App application settings (the template wires these up for you):
+```bash
+az functionapp config appsettings set -g <RESOURCE_GROUP> -n <FUNCTION_APP_NAME> --settings \
+  AISPM_MAIL_SENDER="secops@contoso.com" \
+  AISPM_MAIL_TO="team@contoso.com,ciso@contoso.com" \
+  AISPM_REPORT_URL="https://<FUNCTION_APP_NAME>.azurewebsites.net/api/report?code=<FUNCTION_KEY>"
+```
 
-| Setting            | Default            | Description                                       |
-| ------------------ | ------------------ | ------------------------------------------------- |
-| `AISPM_TENANT_ID`  | deployment tenant  | Entra tenant to scan                              |
-| `SCAN_SCHEDULE`    | `0 0 6 * * *`      | NCRONTAB scan schedule (sec min hour day month dow) |
-| `REPORT_CONTAINER` | `aispm-reports`    | Blob container for published reports              |
-| `EMAIL_SCHEDULE`   | `0 0 8 * * 1`      | Weekly digest schedule (default Mon 08:00 UTC)    |
-| `AISPM_MAIL_SENDER`| —                  | Sender mailbox (UPN) for the weekly digest        |
-| `AISPM_MAIL_TO`    | —                  | Recipient(s), comma-separated                     |
-| `AISPM_REPORT_URL` | —                  | Full `/api/report` URL used for the dashboard button |
+`Mail.Send` was already granted in Step 2 — but that permission can send as *any*
+mailbox, so restrict it to your sender:
+
+```powershell
+New-ApplicationAccessPolicy -AppId <MANAGED_IDENTITY_APPID> `
+  -PolicyScopeGroupId <mail-enabled-group-containing-sender> `
+  -AccessRight RestrictAccess -Description "AI-SPM digest sender only"
+```
+
+Test it: `curl "https://<FUNCTION_APP_NAME>.azurewebsites.net/api/digest?code=<FUNCTION_KEY>"`
+
+### Configuration reference (Part 1)
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `AISPM_TENANT_ID` | deployment tenant | Entra tenant to scan |
+| `SCAN_SCHEDULE` | `0 0 6 * * *` | NCRONTAB scan schedule (sec min hour day month dow) |
+| `REPORT_CONTAINER` | `aispm-reports` | Blob container for published reports |
+| `EMAIL_SCHEDULE` | `0 0 8 * * 1` | Weekly digest schedule (default Mon 08:00 UTC) |
+| `AISPM_MAIL_SENDER` | — | Sender mailbox (UPN) for the weekly digest |
+| `AISPM_MAIL_TO` | — | Recipient(s), comma-separated |
+| `AISPM_REPORT_URL` | — | Full `/api/report` URL used for the dashboard button |
 
 What counts as an "AI application" and how each permission is weighted is defined in a
 single place — [`config.py`](config.py) — so the catalog and scoring policy are easy to
 tune to your environment.
 
----
+### Running a scan from a workstation (no deployment needed)
 
-## Viewing the dashboard
-
-The published report is served live from the Function — open one URL in a browser:
-
-```
-https://<FUNCTION_APP>.azurewebsites.net/api/report?code=<FUNCTION_KEY>
-```
-
-## Weekly email digest
-
-AI-SPM can email a weekly posture digest (headline numbers, notable findings, and a link
-to the live dashboard) via Microsoft Graph, sent by the Managed Identity — no SMTP secrets.
-
-1. The post-deploy script already grants the Managed Identity `Mail.Send`.
-2. Set the mail settings:
-   ```bash
-   az functionapp config appsettings set -g <RG> -n <FUNC> --settings \
-     AISPM_MAIL_SENDER="secops@contoso.com" \
-     AISPM_MAIL_TO="team@contoso.com,ciso@contoso.com" \
-     AISPM_REPORT_URL="https://<FUNC>.azurewebsites.net/api/report?code=<KEY>"
-   ```
-3. **Harden `Mail.Send`** — this application permission can otherwise send as any mailbox.
-   Scope it to only the sender with an Exchange application access policy:
-   ```powershell
-   New-ApplicationAccessPolicy -AppId <MANAGED_IDENTITY_APPID> `
-     -PolicyScopeGroupId <mail-enabled-group-containing-sender> `
-     -AccessRight RestrictAccess -Description "AI-SPM digest sender only"
-   ```
-4. Test immediately: `curl "https://<FUNC>.azurewebsites.net/api/digest?code=<KEY>"`
-
----
-
-## Microsoft AI Data Sources (optional, extended phase)
-
-The core scan above answers *"which third-party AI apps have OAuth access, and how
-risky is that access?"* This optional, opt-in phase adds four more Microsoft-native
-sources to answer a different question: **which AI application or agent actually
-handled sensitive data, how much, for how many users, and was it blocked or allowed?**
-
-| Connector | Source | What it discovers |
-| --- | --- | --- |
-| **Agent 365** | `copilot/admin/catalog/packages` | Registered Copilot/agent packages — build type, blocked state, deployment scope |
-| **Entra Agent ID** | `servicePrincipals/…agentIdentity` + blueprints | Agent identities: owners, sponsors, app-only vs. delegated permissions |
-| **Defender for Cloud Apps** | `dataDiscovery/cloudAppDiscovery` (beta) | Shadow AI web usage: which AI sites, how many users, sanctioned/unsanctioned |
-| **Purview Audit** | `security/auditLog/queries` | Sensitive-data AI interactions: SIT, sensitivity label, DLP action, direction |
-
-All four correlate into one picture (`connectors_report.py`): a 15-section assessment
-with an executive summary, an **"Applications with Sensitive Data Exposure"** table,
-per-application and per-agent detail, and a coverage section that is honest about what
-each connector could and couldn't see — no source is ever faked as "connected."
-
-**It is entirely opt-in.** Every connector is gated by its own environment variable
-and defaults to off; with nothing enabled, this phase has **zero effect** on the core
-scan, dashboard, or weekly digest — none of that code is touched.
-
-### Turn it on (one-time setup)
-
-Same pattern as the core deploy: grant read-only Graph roles to the Managed Identity,
-then flip the feature flags. Run both from Azure Cloud Shell (or anywhere `az` is
-logged into the subscription):
-
-```bash
-git clone https://github.com/MSalikoc/ai-spm-shadow-ai.git
-cd ai-spm-shadow-ai
-
-# 1) Grant the additional read-only Graph application roles this phase needs
-#    (Application.Read.All / Directory.Read.All are no-ops if the core setup already
-#    granted them — this script is safe to re-run).
-MI=$(az functionapp identity show -g <RESOURCE_GROUP> -n <FUNCTION_APP_NAME> --query principalId -o tsv)
-./scripts/grant_connector_roles.sh "$MI"
-
-# 2) Turn the connectors on
-./scripts/enable_connectors.sh <RESOURCE_GROUP> <FUNCTION_APP_NAME>
-```
-
-> Both steps require a directory role that can grant application permissions
-> (Privileged Role Administrator / Global Administrator) — same requirement as the
-> core `grant_graph_roles.sh`.
-
-Give the Function App a minute to pick up the new settings, then check it:
-
-```bash
-KEY=$(az functionapp keys list -g <RESOURCE_GROUP> -n <FUNCTION_APP_NAME> --query functionKeys.default -o tsv)
-curl -s "https://<FUNCTION_APP_NAME>.azurewebsites.net/api/connectors?code=$KEY" | python3 -m json.tool
-```
-
-Or open the standalone dashboard page directly in a browser:
-
-```
-https://<FUNCTION_APP_NAME>.azurewebsites.net/api/connectors?code=<FUNCTION_KEY>&format=html
-```
-
-If any `ENABLE_*` flag is still off, this returns `{"status": "NOT_CONFIGURED", ...}` —
-by design, never fabricated data. The response also tells you, per connector, whether
-it's `CONNECTED`, `PERMISSION_MISSING` (role not yet propagated — wait a few minutes and
-retry), or `LICENSE_MISSING` (e.g. Defender for Cloud Apps requires its own license;
-its `CloudApp-Discovery.Read.All` permission is still in **preview**).
-
-### Configuration
-
-| Setting | Default | Description |
-| --- | --- | --- |
-| `ENABLE_AGENT365` | off | Agent 365 package/agent inventory |
-| `ENABLE_ENTRA_AGENT_ID` | off | Entra Agent Identity + blueprint inventory |
-| `ENABLE_DEFENDER_CLOUD_APPS` | off | Shadow AI web-usage discovery (requires `ENABLE_PREVIEW_CONNECTORS=true` too — beta Graph API) |
-| `ENABLE_PREVIEW_CONNECTORS` | off | Unlocks beta/preview Graph endpoints (currently only Defender for Cloud Apps) |
-| `ENABLE_PURVIEW_AUDIT` | off | Sensitive AI-interaction audit records |
-| `STORE_RAW_AI_CONTENT` | off | If `true`, persists raw prompt/response text with each interaction — **off is strongly recommended**; every honesty/coverage field still works without it |
-| `PURVIEW_DSPM_IMPORT_PATH` | — | Optional: path to a manually exported Purview DSPM JSON/CSV file, imported as a fifth, separate source |
-
-### What this phase deliberately does *not* touch
-
-To keep the already-deployed scan/dashboard/email flow risk-free, this phase ships as
-genuinely additive code: `report.py`, `executive.py`, `drift.py`, and the
-`daily_scan`/`weekly_digest`/`scan_now`/`digest_now` endpoints are **unmodified**.
-The new assessment lives in its own module (`connectors_report.py`) behind its own
-endpoint (`/api/connectors`), change-tracking lives in its own engine
-(`connectors_drift.py`, own snapshot files), and neither one renders inside the
-existing dashboard yet — that integration is a natural next step, not done here.
-
----
-
-## Running on demand
-
-Trigger a scan and get a JSON summary from the HTTP endpoint:
-
-```bash
-curl "https://<FUNCTION_APP>.azurewebsites.net/api/scan?code=<FUNCTION_KEY>"
-```
-
-Operators can also run a scan from a workstation against a tenant using the CLI:
+For a one-off scan against a tenant without deploying anything:
 
 ```bash
 pip install -r requirements.txt
@@ -251,44 +147,128 @@ python main.py --tenant <TENANT_ID> --client-id <APP_ID>     # interactive devic
 
 ---
 
+## Part 2 — Microsoft AI Data Sources (optional)
+
+Part 1 answers *"which third-party AI apps have OAuth access, and how risky is that
+access?"* Part 2 adds four more Microsoft-native sources to answer a different
+question: **which AI application or agent actually handled sensitive data, how much
+traffic did it generate, and was that data blocked or allowed?**
+
+| Connector | Source | What it discovers |
+| --- | --- | --- |
+| **Agent 365** | `copilot/admin/catalog/packages` | Registered Copilot/agent packages — build type, blocked state, deployment scope |
+| **Entra Agent ID** | `servicePrincipals/…agentIdentity` + blueprints | Agent identities: owners, sponsors, app-only vs. delegated permissions |
+| **Defender for Cloud Apps** | `dataDiscovery/cloudAppDiscovery` (beta) | Shadow AI usage: which AI sites, traffic/users/devices/IP counts, sanctioned state |
+| **Purview Audit** | `security/auditLog/queries` | Sensitive-data AI interactions: SIT, sensitivity label, DLP action, direction |
+
+**It is entirely opt-in.** Every connector is gated by its own environment variable and
+defaults to off. With nothing enabled, Part 2 has **zero effect** on Part 1 — none of
+that code is touched (see [What Part 2 doesn't touch](#what-part-2-deliberately-does-not-touch)).
+
+### The dashboard you get
+
+One page, six tabs, all served from a single endpoint (`/api/connectors?format=html`):
+
+- **Overview** — headline KPIs, a findings-by-severity donut, two flow diagrams
+  (Shadow AI: sanction status → risk; Agent Identity: owner/sponsor coverage → risk),
+  and the 5 highest-scoring items across every source.
+- **Agents** — Agent 365 packages + Entra Agent Identities, each with a transparent
+  0–100 risk score.
+- **Shadow AI** — a traffic grid styled like Defender for Cloud Apps' own *Discovered
+  apps* view: Risk Score, Tag (Sanctioned/Unsanctioned), Traffic, Upload, Transactions,
+  Users, IP Addresses, Devices, Last Seen.
+- **Sensitive Data** — the "Applications with Sensitive Data Exposure" table plus the
+  Purview interaction log.
+- **Findings** — every finding, scored and explained the same way.
+- **Gaps** — an honest list of what each connector could *not* see (never fabricated).
+
+Click any row anywhere to open a detail panel: **facts → risk score with its full
+point-by-point breakdown → result → what was checked → remediation action.** A score
+of, say, 65 always comes with the exact reasons that add up to it — never a bare number.
+
+### Step 5 — Grant the extra permissions
+
+Same pattern as Step 2, run from the same Cloud Shell session:
+
+```bash
+MI=$(az functionapp identity show -g <RESOURCE_GROUP> -n <FUNCTION_APP_NAME> --query principalId -o tsv)
+./scripts/grant_connector_roles.sh "$MI"
+```
+
+This grants 5 read-only Graph application roles (`CopilotPackages.Read.All`,
+`Application.Read.All`, `Directory.Read.All`, `CloudApp-Discovery.Read.All`,
+`AuditLogsQuery.Read.All`). Two of them may already be granted from Step 2 — the script
+is safe to re-run, it just skips those.
+
+> Requires the same directory role as Step 2 (Privileged Role Administrator / Global
+> Administrator).
+
+### Step 6 — Turn the connectors on
+
+```bash
+./scripts/enable_connectors.sh <RESOURCE_GROUP> <FUNCTION_APP_NAME>
+```
+
+Sets the five `ENABLE_*` application settings and restarts the Function App. Give it a
+couple of minutes — both the app restart and the Graph role propagation from Step 5
+need a little time.
+
+### Step 7 — View the dashboard
+
+```
+https://<FUNCTION_APP_NAME>.azurewebsites.net/api/connectors?code=<FUNCTION_KEY>&format=html
+```
+
+Or fetch the same data as JSON (no `format=html`) for scripting/integration.
+
+If a connector still shows `PERMISSION_MISSING` after a few minutes, the two most common
+causes are: Microsoft 365 Copilot isn't licensed in the tenant (blocks Agent 365), or
+Microsoft Purview **Audit (Standard/Premium)** recording isn't turned on in the
+[Purview compliance portal](https://purview.microsoft.com) (blocks Purview Audit) —
+neither is a bug in this connector, both are tenant-side prerequisites.
+`LICENSE_MISSING` (e.g. Defender for Cloud Apps) means the tenant doesn't hold that
+license — shown honestly, never faked.
+
+### Configuration reference (Part 2)
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `ENABLE_AGENT365` | off | Agent 365 package/agent inventory |
+| `ENABLE_ENTRA_AGENT_ID` | off | Entra Agent Identity + blueprint inventory |
+| `ENABLE_DEFENDER_CLOUD_APPS` | off | Shadow AI usage discovery (needs `ENABLE_PREVIEW_CONNECTORS=true` too — beta Graph API) |
+| `ENABLE_PREVIEW_CONNECTORS` | off | Unlocks beta/preview Graph endpoints (currently only Defender for Cloud Apps) |
+| `ENABLE_PURVIEW_AUDIT` | off | Sensitive AI-interaction audit records |
+| `STORE_RAW_AI_CONTENT` | off | If `true`, persists raw prompt/response text with each interaction — **leave off**; every score/coverage field works without it |
+| `PURVIEW_DSPM_IMPORT_PATH` | — | Optional: path to a manually exported Purview DSPM JSON/CSV file, imported as a fifth, separate source |
+
+### What Part 2 deliberately does *not* touch
+
+`report.py`, `executive.py`, `drift.py`, and the `daily_scan`/`weekly_digest`/`scan_now`/
+`digest_now` endpoints from Part 1 are **unmodified**. Part 2's dashboard
+(`connectors_report.py`) and change-tracking (`connectors_drift.py`) live in their own
+files behind their own endpoint — so turning Part 2 on or off can never break Part 1.
+
+---
+
 ## Architecture
 
 ```
-function_app.py → Azure Function: daily_scan (timer) + scan_now (HTTP) + connectors_now (HTTP)
-pipeline.py     → shared scan flow (discovery → consent mapping → scoring)
-                  + run_connectors() (opt-in, stateless — None while all ENABLE_* are off)
-collectors.py   → Graph: servicePrincipals + oauth2PermissionGrants → normalized findings
-config.py       → AI application catalog + sensitive-scope weights (single tuning point)
-scoring.py      → transparent 0–100 risk score with reasons + remediation
-report.py       → HTML + JSON report rendering (core scan — unmodified by connectors/)
-storage.py      → report publishing to Blob (latest.* + history)
-auth.py         → Entra token (Managed Identity / device code / client credentials)
-graph_client.py → Microsoft Graph paging + throttling (+ post() for audit log queries)
-main.py         → command-line entry point
-notify.py       → weekly digest email via Microsoft Graph sendMail
-executive.py    → executive dashboard KPIs/narratives (core scan)
-findings.py     → managed finding records + lifecycle
-drift.py        → core scan snapshot/change-tracking (snapshot.json / changes.json)
-deploy/         → azuredeploy.json (ARM template, one-click Deploy to Azure)
-scripts/        → postdeploy.sh, grant_graph_roles.{sh,ps1}
-                  grant_connector_roles.{sh,ps1}, enable_connectors.sh (opt-in phase)
-.github/        → deploy.yml (CI/CD: auto-deploy on push to main)
+function_app.py              Azure Function entry points (timers + HTTP routes)
+pipeline.py                  Part 1 scan flow, plus the opt-in Part 2 entry point
+collectors.py, scoring.py    Part 1: OAuth-consent discovery + transparent risk scoring
+report.py, executive.py      Part 1: HTML dashboard + executive KPIs
+findings.py, drift.py        Part 1: managed findings + change-tracking
+notify.py                    Part 1: weekly email digest
 
-connectors/                → Microsoft AI Data Sources connector framework (opt-in)
-  base.py                    BaseCollector interface, connector states, resilient safe_run()
-  model.py                   unified asset model, deterministic asset IDs, field availability
-  correlation.py              priority-based cross-source merge (appId > identity > blueprint > …)
-  registry.py                 runs all connectors resiliently (one failure never stops the rest)
-  agent365.py                 Agent 365 package/agent inventory
-  entra_agent_id.py           Entra Agent Identity + blueprint inventory
-  defender_cloud_apps.py       Shadow AI web-usage discovery (beta)
-  purview_audit.py             sensitive AI-interaction audit records
-  purview_dspm_import.py       optional manual DSPM export (JSON/CSV) import
-  sensitive_data.py            per-app/agent correlation, findings, portfolio summary
-  catalogs/ai_applications.json  code-free AI-app catalog (used by defender_cloud_apps.py)
-connectors_report.py       → 15-section assessment + standalone HTML (own page, own endpoint)
-connectors_drift.py        → change-tracking for the four connectors (own snapshot/changes files,
-                              runs alongside drift.py without modifying it)
+connectors/                  Part 2: the four connectors + correlation engine
+connectors_report.py         Part 2: the assessment dashboard (6-tab, /api/connectors)
+connectors_drift.py          Part 2: change-tracking (parallel to drift.py, untouched)
+
+auth.py, graph_client.py,    shared: authentication, Graph client, tunable AI-app catalog
+config.py
+deploy/                      ARM template (one-click Deploy to Azure)
+scripts/                     setup scripts for Step 2 and Steps 5-6
+.github/                     CI/CD (auto-deploy on push to main)
 ```
 
 ## Local testing
@@ -321,9 +301,8 @@ remain the primary path.
 
 - **Read-only.** AI-SPM only reads directory and audit data; it makes no changes.
 - **No stored secrets.** Authentication uses a system-assigned Managed Identity in Azure.
-- **Least privilege.** The core scan needs only three read-only Graph application
-  permissions; the optional [Microsoft AI Data Sources](#microsoft-ai-data-sources-optional-extended-phase)
-  phase adds a few more read-only roles, and only for the connectors you explicitly enable.
+- **Least privilege.** Part 1 needs only three read-only Graph application permissions;
+  Part 2 adds a few more, and only for the connectors you explicitly enable.
 - **Your data stays in your tenant.** Reports are written to your own Storage account.
 - **No raw AI content by default.** Sensitive-interaction records keep metadata (user,
   app, data type, DLP action) but never the prompt/response text itself unless you
