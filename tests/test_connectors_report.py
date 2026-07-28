@@ -131,12 +131,16 @@ def test_json_and_html_render_without_error(monkeypatch):
     assert "Applications with Sensitive Data Exposure" in doc
     # Adım 7 HTML'i keşif/trafik/inceleme bölümlerini de basıyor (yalnızca 4 bölümle
     # sınırlı kalmasın diye) — agent envanteri, shadow AI trafiği, Purview etkileşim
-    # log'u ve expandable uygulama/agent detay panelleri.
+    # log'u ve "assessment results" tablosu + tıklanınca açılan slide-over detay paneli
+    # (Microsoft Zero Trust Assessment deseni: Risk/Status rozetleri, facts, Result,
+    # What was checked, Remediation action).
     assert "Finance Assistant" in doc                    # Agent 365 paket tablosu
     assert "Orphan Agent Identity" in doc                # Entra Agent Identity tablosu
     assert "ChatGPT" in doc                              # Shadow AI trafik tablosu
-    assert "<details" in doc                             # inceleme panelleri (expandable)
-    assert "alice@contoso.com" in doc or "Alice Admin" in doc  # agent detail owner görünür
+    assert 'class="zt-row"' in doc                       # tıklanabilir assessment satırları
+    assert 'id="zt-panel"' in doc and "What was checked" in doc and "Remediation action" in doc
+    assert "data-detail=" in doc                         # her satırın detay verisi gömülü
+    assert "alice@contoso.com" in doc                    # agent detail owner (JSON içinde) görünür
 
 
 def test_html_tables_render_even_with_only_partial_data(monkeypatch):

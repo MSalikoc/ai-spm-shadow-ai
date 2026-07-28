@@ -22,6 +22,12 @@ counts/profiles/portfolio) — connector'lar env-flag ile kapalıysa bu modül h
 13. sit_distribution      — estate-geneli SIT/label dağılımı
 14. users_and_groups      — en çok etkilenen kullanıcılar + owner/sponsor'suz grup üyelikleri
 15. known_gaps            — API'de olmayan alanlar + bilinen korelasyon eksikleri (dürüst coverage)
+
+HTML görünümü (html_string), Microsoft'un Zero Trust Assessment aracındaki "assessment
+sonuçları" desenini izler: her madde (agent/uygulama/bulgu) filtrelenebilir bir tabloda
+satır olarak listelenir (Risk + Status rozetleri); satıra tıklayınca sağdan bir panel açılır
+(facts satırı → Result → What was checked → Remediation action). Bu bir client-side
+vanilla-JS bileşenidir (bağımsız, framework yok); veri `assessment()`'tan gelir.
 """
 import html
 import json
@@ -276,7 +282,11 @@ def json_string(result: dict, now=None) -> str:
     return json.dumps(assessment(result, now), ensure_ascii=False, indent=2, default=str)
 
 
-# ---------- standalone HTML ----------
+# ---------- ortak HTML yardımcıları ----------
+_SEV = {"high": "#c0392b", "medium": "#b8860b", "low": "#2e8b57", "info": "#6b7280"}
+_RISK_LABEL = {"high": "Yüksek", "medium": "Orta", "low": "Düşük", "info": "Bilgi"}
+
+
 def _esc(s):
     return html.escape(str(s)) if s is not None else "—"
 
@@ -306,33 +316,23 @@ def _table(headers, rows_html, empty_msg):
 
 
 def _tags(values):
-    # Python 3.11 f-string'lerde ifade kısmında backslash yasak — nested f-string yerine
-    # ayrı bir fonksiyon (bkz. CI'da compileall hatası, lokal 3.13'te yakalanamadı).
     spans = [f'<span class="c-tag">{_esc(v)}</span>' for v in values]
     return "".join(spans) or "—"
 
 
-def _exposure_table(rows):
+def _interactions_table(sample):
     trs = [
-        f'<tr><td class="c-name">{_esc(p["display_name"])}</td>'
-        f'<td>{_sanction_chip(p.get("sanctioned_state"))}</td>'
-        f'<td class="c-num">{_esc(p["sensitive_data_summary"]["window_30d"]["sensitive"])}</td>'
-        f'<td class="c-num">{_esc(p["affected_user_count"])}</td>'
-        f'<td>{_tags(p["sensitive_data_summary"]["sit_types"][:3])}</td>'
-        f'<td class="c-num">{len(p["findings"])}</td></tr>' for p in rows]
-    return _table(["Uygulama", "Onay durumu", "Hassas (30g)", "Etkilenen kullanıcı",
-                  "Veri türleri", "Bulgu"], trs,
-                 "Hassas veri paylaşımı tespit edilmedi (veya kaynaklar bağlı değil).")
-
-
-def _sanction_chip(state):
-    color = {"sanctioned": "#2e8b57", "unsanctioned": "#c0392b"}.get(state, "#6b7280")
-    return f'<span class="c-chip" style="color:{color}">{_esc(state or "—")}</span>'
+        f'<tr><td class="c-num">{_esc(i.get("timestamp"))}</td><td class="c-name">{_esc(i.get("app_host"))}</td>'
+        f'<td>{_esc(i.get("user"))}</td><td><span class="c-tag">{_esc(i.get("direction"))}</span></td>'
+        f'<td>{_tags(i.get("sits") or [])}</td></tr>'
+        for i in sample]
+    return _table(["Zaman", "Uygulama", "Kullanıcı", "Yön", "Veri türü"], trs,
+                 "Purview'da hassas etkileşim yok (veya kaynak bağlı değil).")
 
 
 # ---------- klasik dashboard'un (report.py) görsel dilini yeniden kullanan yardımcılar ----------
 # report.py'ye DOKUNULMUYOR — sadece aynı CSS (import edilen `CSS`) üzerine, aynı bileşen
-# desenleriyle (donut/bars/kpi-grid/finding) kendi, bağımsız bir sayfa kuruyoruz.
+# desenleriyle (donut/bars/kpi-grid) kendi, bağımsız bir sayfa kuruyoruz.
 def _donut(segments, size=180, stroke=28, center_label="Bulgu"):
     import math
     total = sum(v for _, v, _ in segments) or 1
@@ -383,138 +383,249 @@ _MS_LOGO_SVG = """<svg width="21" height="21" viewBox="0 0 21 21" xmlns="http://
 </svg>"""
 
 
-def _findings_html(findings):
-    if not findings:
-        return '<div class="empty">Bulgu yok.</div>'
-    items = "".join(
-        f'<div class="finding"><summary style="display:flex;gap:14px;padding:12px 16px">'
-        f'<b style="color:{_SEV.get(f["severity"], "#6b7280")}">{_esc(f["severity"]).upper()}</b>'
-        f'<span>{_esc(f["type"])}</span><span style="color:var(--muted)">{_esc(f["detail"])}</span>'
-        f'</summary></div>' for f in findings)
+# ==================================================================================
+# "Assessment results" bileşeni — Microsoft Zero Trust Assessment aracındaki desen:
+# filtrelenebilir/aranabilir tablo (Ad | Risk | Status) + satıra tıklayınca açılan
+# yan panel (facts → Result → What was checked → Remediation action).
+# Her madde tipi (Agent 365 paketi, Entra identity, Shadow AI app, hassas veri
+# exposure'ı, bulgu) kendi _*_items() fonksiyonuyla bu ortak şemaya çevrilir:
+#   {id, name, risk_label, risk_color, status_label, status_color,
+#    facts:[(label,value),...], result_line, what_checked, remediation:[str,...]}
+# ==================================================================================
+def _item(item_id, name, risk_label, risk_color, status_label, status_color,
+         facts, result_line, what_checked, remediation):
+    return {
+        "id": item_id, "name": name,
+        "risk_label": risk_label, "risk_color": risk_color,
+        "status_label": status_label, "status_color": status_color,
+        "facts": facts, "result_line": result_line, "what_checked": what_checked,
+        "remediation": remediation if isinstance(remediation, list) else [remediation],
+    }
+
+
+def _agent365_items(packages):
+    items = []
+    for idx, p in enumerate(packages):
+        name, build_type = p["display_name"], p["build_type"] or "bilinmiyor"
+        deployed_to, available_to = p["deployed_to"] or "belirsiz", p["available_to"] or "belirsiz"
+        available_all = available_to.strip().lower() in ("everyone", "all", "alltenant", "organization")
+        correlated = bool(p.get("entra_app_id"))
+
+        if p["blocked"]:
+            risk, status, status_c = "info", "Blocked", _SEV["high"]
+            result_line = "Paket engellenmiş durumda."
+            remediation = ["Engelleme nedenini yayıncı/sorumlu ekiple doğrulayın; gerekmiyorsa kaldırmayın."]
+        elif available_all and not correlated:
+            risk, status, status_c = "high", "Investigate", _SEV["medium"]
+            result_line = "Herkese açık ve Entra kimliğiyle korele değil."
+            remediation = ["Paketin kime açık olduğunu (deployment scope) daraltın.",
+                          "Entra Agent ID ile korelasyon için ilgili appId'yi doğrulayın."]
+        elif available_all:
+            risk, status, status_c = "medium", "Investigate", _SEV["medium"]
+            result_line = "Herkese açık dağıtım."
+            remediation = ["Dağıtım kapsamının iş gerekliliğiyle örtüştüğünü doğrulayın."]
+        else:
+            risk, status, status_c = "low", "Passed", _SEV["low"]
+            result_line = "Kapsamı sınırlı, ek risk sinyali yok."
+            remediation = ["Ek aksiyon gerekmiyor; periyodik olarak gözden geçirin."]
+
+        what_checked = (
+            f"{name}, Agent 365 kataloğunda kayıtlı bir {build_type} pakettir. "
+            f"{deployed_to} kapsamına deploy edilmiş ve {available_to} kullanıcılara açık. "
+            + ("Paket şu anda engellenmiş durumda. " if p["blocked"] else "Paket aktif ve engellenmemiş. ")
+            + (f"Entra uygulaması ile korele: {p['entra_app_id']}."
+               if correlated else "Herhangi bir Entra uygulamasıyla korele değil.")
+        )
+        facts = [("Risk", _RISK_LABEL[risk]), ("Build Type", build_type), ("Deployment", deployed_to)]
+        items.append(_item(f"agent365-{idx}", name, risk, _SEV[risk], status, status_c,
+                          facts, result_line, what_checked, remediation))
     return items
 
 
-_SEV = {"high": "#c0392b", "medium": "#b8860b", "low": "#2e8b57", "info": "#6b7280"}
+def _identity_items(identities):
+    items = []
+    for idx, i in enumerate(identities):
+        name = i["display_name"]
+        has_owner, has_sponsor = bool(i["owners"]), bool(i["sponsors"])
+        perm_type = ("app-only + delegated" if i["app_only_perms"] and i["delegated_perms"]
+                    else "yalnızca app-only" if i["app_only_perms"]
+                    else "yalnızca delegated" if i["delegated_perms"] else "izin yok")
+
+        if not i["enabled"]:
+            risk, status, status_c = "info", "Disabled", _SEV["info"]
+            result_line = "Devre dışı — aktif erişim riski yok."
+            remediation = ["Ek aksiyon gerekmiyor; kullanılmıyorsa kaldırılmasını değerlendirin."]
+        elif has_owner and has_sponsor:
+            risk, status, status_c = "low", "Passed", _SEV["low"]
+            result_line = "Owner ve sponsor atanmış."
+            remediation = ["Ek aksiyon gerekmiyor."]
+        elif has_owner or has_sponsor:
+            risk, status, status_c = "medium", "Investigate", _SEV["medium"]
+            result_line = "Owner veya sponsor eksik."
+            remediation = ["Eksik olan (owner veya sponsor) atamasını tamamlayın."]
+        else:
+            risk, status, status_c = "high", "Failed", _SEV["high"]
+            result_line = "Owner ve sponsor atanmamış."
+            remediation = ["Bu agent identity'sine bir owner atayın — hesap verebilirlik için gereklidir.",
+                          "Bir sponsor atayın (özellikle app-only izinleri varsa)."]
+
+        what_checked = (
+            f"{name} " + ("etkin (enabled) durumda. " if i["enabled"] else "devre dışı (disabled) durumda. ")
+            + f"Owner: {', '.join(i['owners']) if has_owner else 'atanmamış'}. "
+            + f"Sponsor: {', '.join(i['sponsors']) if has_sponsor else 'atanmamış'}. "
+            + f"{i['app_only_perms']} app-only ve {i['delegated_perms']} delegated izne sahip ({perm_type}). "
+            + (f"Blueprint: {i['blueprint_id']}." if i.get("blueprint_id") else "Herhangi bir blueprint'e bağlı değil.")
+        )
+        facts = [("Risk", _RISK_LABEL[risk]), ("Owner Coverage", "Var" if has_owner else "Yok"),
+                ("Permission Type", perm_type)]
+        items.append(_item(f"identity-{idx}", name, risk, _SEV[risk], status, status_c,
+                          facts, result_line, what_checked, remediation))
+    return items
 
 
-# ---------- keşif: envanter (Agent 365 / Entra Agent ID / Shadow AI app'leri) ----------
-def _agent365_table(packages):
-    trs = [
-        f'<tr><td class="c-name">{_esc(p["display_name"])}</td><td>{_esc(p["build_type"])}</td>'
-        f'<td>{"🔴 evet" if p["blocked"] else "🟢 hayır"}</td>'
-        f'<td>{_esc(p["available_to"])}</td><td>{_esc(p["deployed_to"])}</td>'
-        f'<td>{_esc(p.get("entra_app_id")) if p.get("entra_app_id") else "<i>korele değil</i>"}</td></tr>'
-        for p in packages]
-    return _table(["Paket", "Build type", "Engelli mi", "Kime açık", "Nereye deploy",
-                  "Entra App ID"], trs, "Agent 365 paketi keşfedilmedi.")
+def _shadow_items(apps):
+    items = []
+    for idx, a in enumerate(apps):
+        name, state = a["display_name"], a.get("sanctioned_state")
+        high_risk_score = isinstance(a.get("risk_score"), int) and a["risk_score"] <= 3
+
+        if state == "unsanctioned" or high_risk_score:
+            risk, status, status_c = "high", "Failed", _SEV["high"]
+            result_line = "Onaysız (unsanctioned) uygulama."
+            remediation = ["Uygulamayı Defender for Cloud Apps'te sanctioned veya blocked olarak işaretleyin.",
+                          "Kullanıcıları onaylı bir alternatife yönlendirin."]
+        elif state == "unreviewed":
+            risk, status, status_c = "medium", "Investigate", _SEV["medium"]
+            result_line = "Henüz gözden geçirilmedi."
+            remediation = ["Uygulamayı gözden geçirip sanctioned/unsanctioned olarak sınıflandırın."]
+        elif state == "sanctioned":
+            risk, status, status_c = "low", "Passed", _SEV["low"]
+            result_line = "Kurumsal onaylı (sanctioned)."
+            remediation = ["Ek aksiyon gerekmiyor; periyodik olarak trafiği izlemeye devam edin."]
+        else:
+            risk, status, status_c = "info", "Investigate", _SEV["info"]
+            result_line = "Onay durumu bilinmiyor."
+            remediation = ["Onay durumunu MDCA'da belirleyin."]
+
+        what_checked = (
+            f"{name}, Defender for Cloud Apps tarafından son 30 günde {a['users']} kullanıcı ve "
+            f"{a['uploaded_bytes']:,} bayt trafikle keşfedildi. Onay durumu: {state or 'bilinmiyor'}. "
+            + (f"Risk skoru: {a['risk_score']}/10. " if a.get("risk_score") is not None else "")
+            + f"Hassaslık durumu: {a.get('data_sensitivity') or 'bilinmiyor'} "
+              "— Purview korelasyonu olmadan kesinleşmez."
+        )
+        facts = [("Risk", _RISK_LABEL[risk]), ("Onay Durumu", state or "—"), ("Kullanıcı (30g)", a["users"])]
+        items.append(_item(f"shadow-{idx}", name, risk, _SEV[risk], status, status_c,
+                          facts, result_line, what_checked, remediation))
+    return items
 
 
-def _identities_table(identities):
-    trs = []
-    for i in identities:
-        owners = ", ".join(i["owners"]) or "<i>owner yok</i>"
-        sponsors = ", ".join(i["sponsors"]) or "<i>sponsor yok</i>"
-        trs.append(
-            f'<tr><td class="c-name">{_esc(i["display_name"])}</td>'
-            f'<td>{"🟢 enabled" if i["enabled"] else "🔴 disabled"}</td>'
-            f'<td>{owners}</td><td>{sponsors}</td>'
-            f'<td class="c-num">{i["app_only_perms"]}</td><td class="c-num">{i["delegated_perms"]}</td>'
-            f'<td>{_esc(i.get("blueprint_id")) if i.get("blueprint_id") else "<i>yok</i>"}</td></tr>')
-    return _table(["Identity", "Durum", "Owner", "Sponsor", "App-only izin",
-                  "Delegated izin", "Blueprint"], trs, "Entra Agent Identity keşfedilmedi.")
+def _exposure_items(rows):
+    items = []
+    for idx, p in enumerate(rows):
+        s = p["sensitive_data_summary"]
+        name = p["display_name"]
+        dirs = ", ".join(f"{k}:{v}" for k, v in p["directions"].items() if v) or "yok"
+
+        if s["allowed"] > 0:
+            risk, status, status_c = "high", "Failed", _SEV["high"]
+            result_line = "DLP eşleşti ama izin verildi — inceleme gerekli."
+        elif s["blocked"] > 0:
+            risk, status, status_c = "low", "Passed", _SEV["low"]
+            result_line = "Tüm hassas etkileşimler engellendi."
+        else:
+            risk, status, status_c = "medium", "Investigate", _SEV["medium"]
+            result_line = "Erişim var ama DLP eşleşmesi/engeli yok."
+
+        what_checked = (
+            f"{name} son 30 günde {s['window_30d']['sensitive']}/{s['window_30d']['interactions']} "
+            f"hassas etkileşime sahip, {p['affected_user_count']} kullanıcıyı etkiliyor. "
+            f"Veri türleri: {', '.join(s['sit_types']) or 'yok'}. Yön dağılımı: {dirs}. "
+            f"{s['blocked']} engellendi, {s['allowed']} izin verildi."
+        )
+        remediation = [f["detail"] for f in p["findings"]] or ["Ek aksiyon gerekmiyor."]
+        facts = [("Risk", _RISK_LABEL[risk]), ("Etkilenen Kullanıcı", p["affected_user_count"]),
+                ("Hassas Etkileşim (30g)", s["window_30d"]["sensitive"])]
+        items.append(_item(f"exposure-{idx}", name, risk, _SEV[risk], status, status_c,
+                          facts, result_line, what_checked, remediation))
+    return items
 
 
-_SANCTION_COLOR = {"sanctioned": "#2e8b57", "unsanctioned": "#c0392b", "unreviewed": "#8b98a6"}
+_FINDING_REMEDIATION = {
+    "SENSITIVE_DATA_SHARED_WITH_UNSANCTIONED_AI":
+        "Bu uygulamayı Defender for Cloud Apps'te sanctioned veya blocked olarak işaretleyin; "
+        "DLP politikasını bu uygulamayı da kapsayacak şekilde genişletin; kullanıcıları onaylı "
+        "bir alternatife yönlendirin.",
+    "SENSITIVE_DATA_BLOCKED_TO_AI":
+        "Pozitif kontrol — DLP politikası çalışıyor. Ek aksiyon gerekmez; politika kapsamını "
+        "periyodik olarak gözden geçirin.",
+    "AI_APP_ACCESSING_LABELED_DATA":
+        "Bu uygulamanın etiketli veriye erişiminin iş gerekliliği olup olmadığını doğrulayın; "
+        "gerekirse ek bir DLP politikası tanımlayın.",
+    "UNSANCTIONED_AI_UPLOAD_UNDETERMINED":
+        "Purview Audit/DSPM bağlantısını etkinleştirerek bu uygulamanın gerçek veri hassaslığını "
+        "belirleyin; bağlanana kadar upload hacmini izlemeye devam edin.",
+}
+_DEFAULT_REMEDIATION = "Bulgu detayını inceleyip ilgili ekiple bir aksiyon planı oluşturun."
 
 
-def _shadow_traffic_bars(apps):
-    """Klasik dashboard'un `_bars()` deseniyle — kullanıcı sayısına göre trafik sıralaması."""
-    if not apps:
-        return '<div class="empty">Shadow AI uygulaması keşfedilmedi (veya kaynak bağlı değil).</div>'
-    ranked = sorted(apps, key=lambda a: a["users"], reverse=True)
-    rows = [
-        (a["display_name"], f"{a.get('sanctioned_state') or '—'} · {a['uploaded_bytes']:,} B yüklendi",
-         a["users"], _SANCTION_COLOR.get(a.get("sanctioned_state"), "#6b7280"))
-        for a in ranked]
-    return _bars(rows, max((a["users"] for a in apps), default=1))
+def _finding_items(findings):
+    items = []
+    for idx, f in enumerate(findings):
+        risk = f["severity"] if f["severity"] in _SEV else "info"
+        status, status_c = ("Passed", _SEV["low"]) if risk == "info" else ("Failed", _SEV[risk])
+        facts = [("Risk", _RISK_LABEL[risk]), ("Uygulama", f.get("app") or "—"),
+                ("Etkilenen Kullanıcı", f.get("affected_users", "—"))]
+        items.append(_item(
+            f"finding-{idx}", f["type"].replace("_", " ").title(), risk, _SEV[risk], status, status_c,
+            facts, f["detail"], f["detail"], [_FINDING_REMEDIATION.get(f["type"], _DEFAULT_REMEDIATION)]))
+    return items
 
 
-def _inventory_html(a):
+def _zt_section(section_id, title, subtitle, items, empty_msg):
+    if not items:
+        return (f'<div class="card" id="{section_id}"><h3>{_esc(title)}</h3>'
+               f'<div class="empty">{_esc(empty_msg)}</div></div>')
+
+    risks = sorted({it["risk_label"] for it in items}, key=lambda r: list(_RISK_LABEL.values()).index(r)
+                  if r in _RISK_LABEL.values() else 9)
+    statuses = sorted({it["status_label"] for it in items})
+
+    risk_chips = "".join(
+        f'<button class="zt-chip" data-scope="{section_id}" data-key="risk" data-val="{_esc(r)}" '
+        f'onclick="ztChip(this)">{_esc(r)}</button>' for r in risks)
+    status_chips = "".join(
+        f'<button class="zt-chip" data-scope="{section_id}" data-key="status" data-val="{_esc(s)}" '
+        f'onclick="ztChip(this)">{_esc(s)}</button>' for s in statuses)
+
+    rows = []
+    for it in items:
+        detail_json = html.escape(json.dumps(it), quote=True)
+        rows.append(
+            f'<tr class="zt-row" data-scope="{section_id}" data-risk="{_esc(it["risk_label"])}" '
+            f'data-status="{_esc(it["status_label"])}" data-name="{_esc(it["name"]).lower()}" '
+            f"data-detail='{detail_json}' onclick=\"ztOpen(this)\">"
+            f'<td class="c-name">{_esc(it["name"])}</td>'
+            f'<td><span class="zt-pill" style="--pc:{it["risk_color"]}">{_esc(it["risk_label"])}</span></td>'
+            f'<td><span class="zt-pill" style="--pc:{it["status_color"]}">{_esc(it["status_label"])}</span></td>'
+            f'</tr>')
+
     return f"""
-<div class="card" id="agents"><h3>4-5. Agent Envanteri — Agent 365 &amp; Entra Agent ID</h3>
-<div class="c-subtitle">Agent 365 paketleri</div>{_agent365_table(a["agent365_packages"]["packages"])}
-<div class="c-subtitle" style="margin-top:14px">Entra Agent Identities</div>
-{_identities_table(a["agent_identities"]["identities"])}
+<div class="card" id="{section_id}"><h3>{_esc(title)}</h3>
+<div class="c-subtitle">{_esc(subtitle)}</div>
+<div class="zt-toolbar">
+  <input class="zt-search" data-scope="{section_id}" placeholder="Ara..." oninput="ztSearch(this)">
+  <div class="zt-chips"><span class="zt-chip-label">Risk</span>{risk_chips}</div>
+  <div class="zt-chips"><span class="zt-chip-label">Status</span>{status_chips}</div>
 </div>
-<div class="card" style="margin-top:16px" id="traffic"><h3>6. Shadow AI Uygulama Keşfi &amp; Trafik</h3>
-<div class="c-subtitle">Defender for Cloud Apps — kullanıcı sayısına göre (30g)</div>
-{_shadow_traffic_bars(a["shadow_ai_usage"]["applications"])}
+<div class="zt-tbl-wrap"><table class="zt-table"><thead><tr><th>Ad</th><th>Risk</th><th>Status</th></tr></thead>
+<tbody>{"".join(rows)}</tbody></table></div>
 </div>"""
 
 
-def _interactions_table(sample):
-    trs = [
-        f'<tr><td class="c-num">{_esc(i.get("timestamp"))}</td><td class="c-name">{_esc(i.get("app_host"))}</td>'
-        f'<td>{_esc(i.get("user"))}</td><td><span class="c-tag">{_esc(i.get("direction"))}</span></td>'
-        f'<td>{_tags(i.get("sits") or [])}</td></tr>'
-        for i in sample]
-    return _table(["Zaman", "Uygulama", "Kullanıcı", "Yön", "Veri türü"], trs,
-                 "Purview'da hassas etkileşim yok (veya kaynak bağlı değil).")
-
-
-# ---------- inceleme: uygulama/agent detayı (expandable) ----------
-def _application_detail_html(rows):
-    if not rows:
-        return '<div class="empty">İncelenecek uygulama yok.</div>'
-    parts = []
-    for p in rows:
-        s = p["sensitive_data_summary"]
-        dirs = ", ".join(f"{k}:{v}" for k, v in p["directions"].items() if v) or "—"
-        sits = ", ".join(s["sit_types"]) or "—"
-        findings_html = "".join(
-            f'<li><b style="color:{_SEV.get(f["severity"], "#6b7280")}">{_esc(f["severity"]).upper()}</b> '
-            f'{_esc(f["detail"])}</li>' for f in p["findings"]) or "<li>Bulgu yok.</li>"
-        parts.append(f"""<details class="c-detail"><summary><b>{_esc(p['display_name'])}</b>
-<span class="c-tag">{_esc(p.get('sanctioned_state') or '—')}</span>
-<span style="color:var(--muted)">{s['window_30d']['sensitive']} hassas / {s['window_30d']['interactions']} etkileşim (30g)</span></summary>
-<div class="c-detail-body">
-<div><b>Veri türleri:</b> {_esc(sits)}</div>
-<div><b>Etiketler:</b> {_esc(", ".join(s["labels"]) or "—")}</div>
-<div><b>Yön dağılımı:</b> {_esc(dirs)}</div>
-<div><b>Engellenen / izin verilen:</b> {s['blocked']} / {s['allowed']}</div>
-<div><b>Bulgular:</b><ul>{findings_html}</ul></div>
-</div></details>""")
-    return "".join(parts)
-
-
-def _agent_detail_html(rows):
-    if not rows:
-        return '<div class="empty">İncelenecek agent identity yok.</div>'
-    parts = []
-    for i in rows:
-        owners = ", ".join(o.get("upn") or o.get("display_name") or "—" for o in i["owners"]) or "yok"
-        sponsors = ", ".join(o.get("upn") or o.get("display_name") or "—" for o in i["sponsors"]) or "yok"
-        app_perms = ", ".join(p.get("resource_display_name") or "—" for p in i["application_permissions"]) or "yok"
-        del_perms = ", ".join(s for p in i["delegated_permissions"] for s in p.get("scopes", [])) or "yok"
-        groups = ", ".join(g.get("display_name") or "—" for g in i["group_memberships"]) or "yok"
-        bp = (i.get("blueprint") or {}).get("display_name") or "yok"
-        state = "🟢 enabled" if i["account_enabled"] else "🔴 disabled"
-        parts.append(f"""<details class="c-detail"><summary><b>{_esc(i['display_name'])}</b>
-<span style="color:var(--muted)">{state}</span></summary>
-<div class="c-detail-body">
-<div><b>Owner:</b> {_esc(owners)}</div>
-<div><b>Sponsor:</b> {_esc(sponsors)}</div>
-<div><b>App-only izinler:</b> {_esc(app_perms)}</div>
-<div><b>Delegated izinler:</b> {_esc(del_perms)}</div>
-<div><b>Grup üyelikleri:</b> {_esc(groups)}</div>
-<div><b>Blueprint:</b> {_esc(bp)}</div>
-</div></details>""")
-    return "".join(parts)
-
-
-_EXTRA_CSS = """
+_ZT_CSS = """
 .c-subtitle{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;
- letter-spacing:.03em;margin:4px 0 8px}
+ letter-spacing:.03em;margin:4px 0 10px}
 .c-tbl-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px}
 table.c-tbl{width:100%;border-collapse:collapse;font-size:13px;min-width:520px}
 table.c-tbl thead th{text-align:left;font-size:11px;text-transform:uppercase;color:var(--muted);
@@ -525,17 +636,94 @@ table.c-tbl tbody tr:last-child td{border-bottom:none}
 .c-num{font-variant-numeric:tabular-nums}
 .c-tag{display:inline-block;font-size:11px;background:var(--track);color:var(--ink);
  padding:1px 7px;border-radius:5px;margin:1px 3px 1px 0}
-.c-chip{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.02em}
-.c-detail{border:1px solid var(--line);border-radius:10px;margin-bottom:8px;overflow:hidden;
- background:var(--panel)}
-.c-detail summary{padding:11px 15px;cursor:pointer;display:flex;gap:10px;align-items:center;
- list-style:none;font-size:13.5px}
-.c-detail summary::-webkit-details-marker{display:none}
-.c-detail-body{padding:0 15px 14px;font-size:13px;color:var(--ink);display:flex;
- flex-direction:column;gap:5px}
-.c-detail-body b{color:var(--muted);font-weight:600}
-.c-detail-body ul{margin:2px 0 0;padding-left:18px}
 header .navlink{text-decoration:none}
+.zt-toolbar{display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+.zt-search{border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:8px;
+ padding:7px 12px;font-size:13px;min-width:160px}
+.zt-chips{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.zt-chip-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;margin-right:2px}
+.zt-chip{cursor:pointer;border:1px solid var(--line);background:transparent;color:var(--ink);
+ border-radius:999px;padding:4px 12px;font-size:12px}
+.zt-chip.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+table.zt-table{width:100%;border-collapse:collapse;font-size:13px;min-width:420px}
+table.zt-table thead th{text-align:left;font-size:11px;text-transform:uppercase;color:var(--muted);
+ letter-spacing:.03em;padding:9px 12px;border-bottom:1px solid var(--line)}
+table.zt-table tbody td{padding:10px 12px;border-bottom:1px solid var(--line)}
+table.zt-table tbody tr:last-child td{border-bottom:none}
+table.zt-table tbody tr{cursor:pointer;transition:background .12s}
+table.zt-table tbody tr:hover{background:var(--track)}
+.zt-pill{display:inline-block;background:var(--pc,#6b7280);color:#fff;font-size:11px;font-weight:700;
+ padding:3px 10px;border-radius:999px}
+.zt-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);opacity:0;pointer-events:none;
+ transition:opacity .18s;z-index:20}
+.zt-overlay.open{opacity:1;pointer-events:auto}
+.zt-panel{position:fixed;top:0;right:0;bottom:0;width:min(480px,92vw);background:var(--panel);
+ box-shadow:-8px 0 30px rgba(0,0,0,.18);transform:translateX(100%);transition:transform .22s ease;
+ z-index:21;overflow-y:auto;padding:26px}
+.zt-panel.open{transform:translateX(0)}
+.zt-panel-close{position:absolute;top:18px;right:18px;cursor:pointer;border:1px solid var(--line);
+ background:transparent;color:var(--ink);border-radius:8px;width:30px;height:30px;font-size:16px;
+ line-height:1}
+.zt-panel h2{font-size:19px;margin:0 34px 20px 0;text-wrap:balance}
+.zt-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:14px;
+ border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:20px}
+.zt-fact{display:flex;flex-direction:column;gap:3px}
+.zt-fact-l{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
+.zt-fact-v{font-size:14px;font-weight:600}
+.zt-result{display:flex;align-items:center;gap:10px;margin-bottom:20px;padding-bottom:20px;
+ border-bottom:1px solid var(--line)}
+.zt-result b{font-size:15px}
+.zt-panel h4{font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);
+ margin:0 0 8px}
+.zt-panel section{margin-bottom:20px}
+.zt-panel p{font-size:13.5px;line-height:1.65;margin:0;color:var(--ink)}
+.zt-panel ul{margin:0;padding-left:18px;font-size:13.5px;line-height:1.65}
+.zt-panel ul li{margin:5px 0}
+"""
+
+_ZT_SCRIPT = """
+function ztRows(scope){return document.querySelectorAll('tr.zt-row[data-scope="'+scope+'"]');}
+function ztActiveChips(scope,key){
+  var sel='.zt-chip.active[data-scope="'+scope+'"][data-key="'+key+'"]';
+  return Array.prototype.map.call(document.querySelectorAll(sel), function(c){return c.dataset.val;});
+}
+function ztApply(scope){
+  var risks=ztActiveChips(scope,'risk'), statuses=ztActiveChips(scope,'status');
+  var searchEl=document.querySelector('.zt-search[data-scope="'+scope+'"]');
+  var q=searchEl?searchEl.value.trim().toLowerCase():'';
+  ztRows(scope).forEach(function(row){
+    var okRisk=risks.length===0||risks.indexOf(row.dataset.risk)>-1;
+    var okStatus=statuses.length===0||statuses.indexOf(row.dataset.status)>-1;
+    var okSearch=!q||row.dataset.name.indexOf(q)>-1;
+    row.style.display=(okRisk&&okStatus&&okSearch)?'':'none';
+  });
+}
+function ztChip(btn){btn.classList.toggle('active');ztApply(btn.dataset.scope);}
+function ztSearch(input){ztApply(input.dataset.scope);}
+function ztOpen(row){
+  var d=JSON.parse(row.getAttribute('data-detail'));
+  document.getElementById('zt-title').textContent=d.name;
+  var factsEl=document.getElementById('zt-facts');factsEl.innerHTML='';
+  d.facts.forEach(function(f){
+    var wrap=document.createElement('div');wrap.className='zt-fact';
+    var l=document.createElement('span');l.className='zt-fact-l';l.textContent=f[0];
+    var v=document.createElement('span');v.className='zt-fact-v';v.textContent=f[1];
+    wrap.appendChild(l);wrap.appendChild(v);factsEl.appendChild(wrap);
+  });
+  var pill=document.getElementById('zt-result-pill');
+  pill.textContent=d.status_label;pill.style.setProperty('--pc',d.status_color);
+  document.getElementById('zt-result-line').textContent=d.result_line;
+  document.getElementById('zt-checked').textContent=d.what_checked;
+  var remEl=document.getElementById('zt-remediation');remEl.innerHTML='';
+  d.remediation.forEach(function(r){var li=document.createElement('li');li.textContent=r;remEl.appendChild(li);});
+  document.getElementById('zt-overlay').classList.add('open');
+  document.getElementById('zt-panel').classList.add('open');
+}
+function ztClose(){
+  document.getElementById('zt-overlay').classList.remove('open');
+  document.getElementById('zt-panel').classList.remove('open');
+}
+document.addEventListener('keydown',function(e){if(e.key==='Escape')ztClose();});
 """
 
 
@@ -570,23 +758,28 @@ def html_string(result: dict, tenant_id: str = "", now=None) -> str:
     nav = "".join(
         f'<a class="navlink" href="#{href}">{label}</a>'
         for href, label in (("coverage", "Coverage"), ("agents", "Agents"), ("traffic", "Traffic"),
-                            ("exposure", "Exposure"), ("detail", "İnceleme"),
-                            ("findings", "Findings"), ("gaps", "Gaps")))
+                            ("exposure", "Exposure"), ("findings", "Findings"), ("gaps", "Gaps")))
+
+    agent365_items = _agent365_items(a["agent365_packages"]["packages"])
+    identity_items = _identity_items(a["agent_identities"]["identities"])
+    shadow_items = _shadow_items(a["shadow_ai_usage"]["applications"])
+    exposure_items = _exposure_items(a["sensitive_exposure"])
+    finding_items = _finding_items(a["findings"])
 
     quick = "".join([
         f'<a class="card kpi" href="#coverage"><span class="n">{exec_["connectors_connected"]}/{exec_["connectors_total"]}</span>'
         f'<span class="l">Bağlı veri kaynağı</span></a>',
-        f'<a class="card kpi" href="#agents"><span class="n">{len(a["agent365_packages"]["packages"]) + len(a["agent_identities"]["identities"])}</span>'
+        f'<a class="card kpi" href="#agents"><span class="n">{len(agent365_items) + len(identity_items)}</span>'
         f'<span class="l">Agent (365 + Identity)</span></a>',
-        f'<a class="card kpi" href="#traffic"><span class="n">{len(a["shadow_ai_usage"]["applications"])}</span>'
+        f'<a class="card kpi" href="#traffic"><span class="n">{len(shadow_items)}</span>'
         f'<span class="l">Shadow AI uygulaması</span></a>',
-        f'<a class="card kpi high" href="#exposure"><span class="n">{len(a["sensitive_exposure"])}</span>'
+        f'<a class="card kpi high" href="#exposure"><span class="n">{len(exposure_items)}</span>'
         f'<span class="l">Hassas veri exposure</span></a>',
     ])
 
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <title>AI-SPM — Microsoft AI Data Sources Assessment</title>
-<style>{CSS}{_EXTRA_CSS}</style></head><body>
+<style>{CSS}{_ZT_CSS}</style></head><body>
 <header>{_MS_LOGO_SVG}<h1>AI-SPM · Microsoft AI Data Sources</h1>
 <nav class="tabs">{nav}</nav>
 <div class="spacer"></div><div class="tenant">{_esc(tenant_id)}</div></header>
@@ -611,20 +804,37 @@ def html_string(result: dict, tenant_id: str = "", now=None) -> str:
 
 <div class="card" style="margin-top:16px" id="coverage"><h3>1-2. Veri kaynağı coverage</h3>
 {_coverage_html(a["data_source_coverage"])}</div>
-{_inventory_html(a)}
+
+{_zt_section("agents", "4-5. Agent Envanteri — Entra Agent Identities", "Owner/sponsor/izin ataması assessment sonucu olarak değerlendirilir", identity_items, "Entra Agent Identity keşfedilmedi.")}
+{_zt_section("agent365", "5. Agent Envanteri — Agent 365 Paketleri", "Deployment kapsamı ve korelasyon durumu assessment sonucu olarak değerlendirilir", agent365_items, "Agent 365 paketi keşfedilmedi.")}
+{_zt_section("traffic", "6. Shadow AI Uygulama Keşfi &amp; Trafik", "Defender for Cloud Apps — onay durumu ve kullanım hacmi assessment sonucu olarak değerlendirilir", shadow_items, "Shadow AI uygulaması keşfedilmedi (veya kaynak bağlı değil).")}
+
 <div class="card" style="margin-top:16px" id="interactions"><h3>7. Purview — Son Hassas Etkileşimler / Trafik</h3>
 {_interactions_table(a["sensitive_interactions"]["sample"])}</div>
-<div class="card" style="margin-top:16px" id="exposure"><h3>3. Applications with Sensitive Data Exposure</h3>
-{_exposure_table(a["sensitive_exposure"])}</div>
-<div class="card" style="margin-top:16px" id="detail"><h3>11. İnceleme — Uygulama Detayı</h3>
-{_application_detail_html(a["application_detail"])}</div>
-<div class="card" style="margin-top:16px"><h3>12. İnceleme — Agent Identity Detayı</h3>
-{_agent_detail_html(a["agent_detail"])}</div>
-<div class="card" style="margin-top:16px" id="findings"><h3>8. Bulgular</h3>{_findings_html(a["findings"])}</div>
+
+{_zt_section("exposure", "3. Applications with Sensitive Data Exposure", "Hassas veri paylaşımı olan uygulamalar — DLP sonucu assessment olarak değerlendirilir", exposure_items, "Hassas veri paylaşımı tespit edilmedi (veya kaynaklar bağlı değil).")}
+{_zt_section("findings", "8. Bulgular", "Her bulgu bir başarısız (failed) assessment kontrolü olarak listelenir", finding_items, "Bulgu yok.")}
+
 <div class="card" style="margin-top:16px" id="gaps"><h3>15. Bilinen eksikler / API sınırları</h3>
 <ul class="na">{"".join(f"<li>{_esc(g)}</li>" for g in a["known_gaps"])}</ul></div>
 <div class="foot">AI-SPM — Microsoft AI Data Sources · connectors_report.assessment()</div>
-</main></body></html>"""
+</main>
+
+<div class="zt-overlay" id="zt-overlay" onclick="ztClose()"></div>
+<aside class="zt-panel" id="zt-panel" role="dialog" aria-label="Detay">
+  <button class="zt-panel-close" onclick="ztClose()" aria-label="Kapat">&times;</button>
+  <h2 id="zt-title"></h2>
+  <div class="zt-facts" id="zt-facts"></div>
+  <div class="zt-result">
+    <span>Test result →</span>
+    <span class="zt-pill" id="zt-result-pill"></span>
+    <span id="zt-result-line" style="color:var(--muted);font-size:13px"></span>
+  </div>
+  <section><h4>What was checked</h4><p id="zt-checked"></p></section>
+  <section><h4>Remediation action</h4><ul id="zt-remediation"></ul></section>
+</aside>
+<script>{_ZT_SCRIPT}</script>
+</body></html>"""
 
 
 def write_html(result: dict, path: str, tenant_id: str = "") -> None:
