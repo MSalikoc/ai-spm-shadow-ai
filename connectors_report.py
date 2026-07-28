@@ -162,14 +162,19 @@ def _agent365_section(agents, m):
 def _shadow_ai(apps, m):
     rows = sorted([{
         "display_name": a.get("display_name"),
+        "vendor": (a.get("mdca") or {}).get("vendor") or a.get("publisher") or "",
+        "category": (a.get("mdca") or {}).get("category") or "",
         "sanctioned_state": (a.get("mdca") or {}).get("sanctioned_state"),
         "users": (a.get("mdca") or {}).get("users", 0),
         "devices": (a.get("mdca") or {}).get("devices", 0),
         "ip_addresses": (a.get("mdca") or {}).get("ip_addresses", 0),
+        "transactions": (a.get("mdca") or {}).get("transactions", 0),
         "uploaded_bytes": (a.get("mdca") or {}).get("uploaded_bytes", 0),
+        "downloaded_bytes": (a.get("mdca") or {}).get("downloaded_bytes", 0),
         "risk_score": (a.get("mdca") or {}).get("risk_score"),
         "data_sensitivity": (a.get("mdca") or {}).get("data_sensitivity"),
-    } for a in apps], key=lambda r: r["uploaded_bytes"], reverse=True)
+        "last_seen": a.get("last_seen"),
+    } for a in apps], key=lambda r: r["uploaded_bytes"] + r["downloaded_bytes"], reverse=True)
     return {"metrics": m, "applications": rows}
 
 
@@ -663,8 +668,9 @@ def _shadow_items(apps):
 
         what_checked = (
             f"{name}, Defender for Cloud Apps tarafından son 30 günde {a['users']} kullanıcı, "
-            f"{a['devices']} cihaz ve {a['ip_addresses']} farklı IP adresinden gelen trafikle keşfedildi "
-            f"({a['uploaded_bytes']:,} bayt yüklendi). Onay durumu: {state or 'bilinmiyor'}. "
+            f"{a['devices']} cihaz ve {a['ip_addresses']} farklı IP adresinden gelen trafikle keşfedildi: "
+            f"{a.get('transactions', 0):,} işlem, {a['uploaded_bytes']:,} bayt upload, "
+            f"{a.get('downloaded_bytes', 0):,} bayt download. Onay durumu: {state or 'bilinmiyor'}. "
             + (f"MDCA risk skoru: {a['risk_score']}/10. " if a.get("risk_score") is not None else "")
             + f"Hassaslık durumu: {a.get('data_sensitivity') or 'bilinmiyor'} "
               "— Purview korelasyonu olmadan kesinleşmez. Not: bu sayılar TOPLAM'dır; MDCA "
@@ -681,8 +687,19 @@ def _shadow_items(apps):
 
         facts = [("Kullanıcı (30g)", a["users"]), ("Cihaz (30g)", a["devices"]),
                 ("IP Adresi (30g)", a["ip_addresses"])]
-        items.append(_item(f"shadow-{idx}", name, score, reasons, status_label, status_c,
-                          facts, result_line, what_checked, remediation, bucket=state or "Bilinmiyor"))
+        it = _item(f"shadow-{idx}", name, score, reasons, status_label, status_c,
+                  facts, result_line, what_checked, remediation, bucket=state or "Bilinmiyor")
+        # Defender for Cloud Apps "Discovered apps" grid ile aynı sütunlar (Risk score/Tag/
+        # Traffic/Upload/Transactions/Users/IP addresses/Devices/Last seen) için ham veri.
+        it["traffic"] = {
+            "vendor": a.get("vendor") or "", "category": a.get("category") or "",
+            "sanctioned_state": state, "risk_score": a.get("risk_score"),
+            "users": a["users"], "devices": a["devices"], "ip_addresses": a["ip_addresses"],
+            "transactions": a.get("transactions", 0),
+            "uploaded_bytes": a["uploaded_bytes"], "downloaded_bytes": a.get("downloaded_bytes", 0),
+            "last_seen": a.get("last_seen"),
+        }
+        items.append(it)
     return items
 
 
@@ -772,21 +789,99 @@ def _finding_items(findings):
     return items
 
 
-def _zt_section(section_id, title, subtitle, items, empty_msg):
-    if not items:
-        return (f'<div class="card" id="{section_id}"><h3>{_esc(title)}</h3>'
-               f'<div class="empty">{_esc(empty_msg)}</div></div>')
+def _fmt_bytes(n):
+    n = n or 0
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024:
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} PB"
 
+
+def _mdca_risk_bar(score):
+    """Defender for Cloud Apps'teki risk skoru barının aynısı — 0-10, 10=güvenli (yeşil)."""
+    if score is None:
+        return '<span style="color:var(--muted)">—</span>'
+    color = "#2e8b57" if score >= 7 else ("#b8860b" if score >= 4 else "#c0392b")
+    pct = max(5, score * 10)
+    return (f'<div style="display:flex;align-items:center;gap:6px">'
+           f'<div style="width:46px;height:7px;border-radius:4px;background:var(--track);overflow:hidden">'
+           f'<div style="width:{pct}%;height:100%;background:{color}"></div></div>'
+           f'<span class="c-num">{score}</span></div>')
+
+
+def _sanction_pill(state):
+    color = {"sanctioned": "#2e8b57", "unsanctioned": "#c0392b", "unreviewed": "#b8860b"}.get(state, "#6b7280")
+    label = {"sanctioned": "Sanctioned", "unsanctioned": "Unsanctioned",
+            "unreviewed": "Unreviewed"}.get(state, "—")
+    return f'<span class="zt-pill" style="--pc:{color}">{_esc(label)}</span>'
+
+
+def _zt_toolbar(section_id, items):
     risk_order = list(_RISK_LABEL.values())
     risks = sorted({it["risk_label"] for it in items}, key=lambda r: risk_order.index(r))
     statuses = sorted({it["status_label"] for it in items})
-
     risk_chips = "".join(
         f'<button class="zt-chip" data-scope="{section_id}" data-key="risk" data-val="{_esc(r)}" '
         f'onclick="ztChip(this)">{_esc(r)}</button>' for r in risks)
     status_chips = "".join(
         f'<button class="zt-chip" data-scope="{section_id}" data-key="status" data-val="{_esc(s)}" '
         f'onclick="ztChip(this)">{_esc(s)}</button>' for s in statuses)
+    return (f'<div class="zt-toolbar">'
+           f'<input class="zt-search" data-scope="{section_id}" placeholder="Ara..." oninput="ztSearch(this)">'
+           f'<div class="zt-chips"><span class="zt-chip-label">Risk</span>{risk_chips}</div>'
+           f'<div class="zt-chips"><span class="zt-chip-label">Status</span>{status_chips}</div>'
+           f'</div>')
+
+
+def _shadow_traffic_section(section_id, title, subtitle, items, empty_msg):
+    """Defender for Cloud Apps'ın 'Discovered apps' grid'iyle aynı sütunlar: Risk score/Tag/
+    Traffic/Upload/Transactions/Users/IP addresses/Devices/Last seen. Satıra tıklamak yine
+    aynı assessment detay panelini (skor+gerekçe+remediation) açar."""
+    if not items:
+        return (f'<div class="card" id="{section_id}"><h3>{_esc(title)}</h3>'
+               f'<div class="empty">{_esc(empty_msg)}</div></div>')
+
+    rows = []
+    for it in sorted(items, key=lambda x: x["traffic"]["uploaded_bytes"] + x["traffic"]["downloaded_bytes"],
+                     reverse=True):
+        t = it["traffic"]
+        total = t["uploaded_bytes"] + t["downloaded_bytes"]
+        detail_json = html.escape(json.dumps(it), quote=True)
+        last_seen = (t["last_seen"] or "")[:10] or "—"
+        rows.append(
+            f'<tr class="zt-row" data-scope="{section_id}" data-risk="{_esc(it["risk_label"])}" '
+            f'data-status="{_esc(it["status_label"])}" data-name="{_esc(it["name"]).lower()}" '
+            f"data-detail='{detail_json}' onclick=\"ztOpen(this)\">"
+            f'<td><div class="c-name">{_esc(it["name"])}</div>'
+            f'<div style="font-size:11px;color:var(--muted)">{_esc(t["category"] or t["vendor"] or "—")}</div></td>'
+            f'<td>{_mdca_risk_bar(t["risk_score"])}</td>'
+            f'<td>{_sanction_pill(t["sanctioned_state"])}</td>'
+            f'<td class="c-num">{_fmt_bytes(total)}</td>'
+            f'<td class="c-num">{_fmt_bytes(t["uploaded_bytes"])}</td>'
+            f'<td class="c-num">{t["transactions"]:,}</td>'
+            f'<td class="c-num">{t["users"]}</td>'
+            f'<td class="c-num">{t["ip_addresses"]}</td>'
+            f'<td class="c-num">{t["devices"]}</td>'
+            f'<td class="c-num" style="white-space:nowrap">{_esc(last_seen)}</td>'
+            f"</tr>")
+
+    headers = ["Uygulama", "Risk Score", "Tag", "Traffic", "Upload", "Transactions",
+              "Users", "IP Addresses", "Devices", "Last Seen"]
+    ths = "".join(f"<th>{_esc(h)}</th>" for h in headers)
+    return f"""
+<div class="card" id="{section_id}"><h3>{_esc(title)}</h3>
+<div class="c-subtitle">{_esc(subtitle)}</div>
+{_zt_toolbar(section_id, items)}
+<div class="c-tbl-wrap"><table class="c-tbl zt-table"><thead><tr>{ths}</tr></thead>
+<tbody>{"".join(rows)}</tbody></table></div>
+</div>"""
+
+
+def _zt_section(section_id, title, subtitle, items, empty_msg):
+    if not items:
+        return (f'<div class="card" id="{section_id}"><h3>{_esc(title)}</h3>'
+               f'<div class="empty">{_esc(empty_msg)}</div></div>')
 
     rows = []
     for it in sorted(items, key=lambda x: x["score"], reverse=True):
@@ -804,11 +899,7 @@ def _zt_section(section_id, title, subtitle, items, empty_msg):
     return f"""
 <div class="card" id="{section_id}"><h3>{_esc(title)}</h3>
 <div class="c-subtitle">{_esc(subtitle)}</div>
-<div class="zt-toolbar">
-  <input class="zt-search" data-scope="{section_id}" placeholder="Ara..." oninput="ztSearch(this)">
-  <div class="zt-chips"><span class="zt-chip-label">Risk</span>{risk_chips}</div>
-  <div class="zt-chips"><span class="zt-chip-label">Status</span>{status_chips}</div>
-</div>
+{_zt_toolbar(section_id, items)}
 <div class="zt-tbl-wrap"><table class="zt-table">
 <thead><tr><th>Ad</th><th>Skor</th><th>Risk</th><th>Status</th></tr></thead>
 <tbody>{"".join(rows)}</tbody></table></div>
@@ -1107,10 +1198,11 @@ def html_string(result: dict, tenant_id: str = "", now=None) -> str:
                      "Deployment kapsamı ve Entra korelasyonu — skor: geniş kapsam + korelasyon eksikliği",
                      agent365_items, "Agent 365 paketi keşfedilmedi."))
 
-    shadow_tab = _zt_section(
-        "shadow", "Shadow AI Uygulama Keşfi",
-        "Defender for Cloud Apps — onay durumu, kullanım hacmi, MDCA risk skoru "
-        "(kullanıcı/cihaz/IP SAYILARI; bireysel kimlik listesi API'de yok — bkz. Gaps)",
+    shadow_tab = _shadow_traffic_section(
+        "shadow", "Shadow AI — Discovered Apps",
+        "Defender for Cloud Apps 'Discovered apps' görünümüyle aynı sütunlar — "
+        "kullanıcı/cihaz/IP SAYILARI (bireysel kimlik listesi API'de yok — bkz. Gaps). "
+        "Satıra tıklayınca risk skoru + gerekçesi + remediation paneli açılır.",
         shadow_items, "Shadow AI uygulaması keşfedilmedi (veya kaynak bağlı değil).")
 
     sensitive_tab = (

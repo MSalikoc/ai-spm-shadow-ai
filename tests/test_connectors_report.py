@@ -151,6 +151,44 @@ def test_json_and_html_render_without_error(monkeypatch):
     assert 'class="flow"' in doc
     # En yüksek riskli 5 madde
     assert "En Yüksek Riskli 5 Madde" in doc
+    # Shadow AI sekmesi Defender for Cloud Apps'in kendi "Discovered apps" grid'iyle aynı
+    # sütunları göstermeli (Risk Score/Tag/Traffic/Upload/Transactions/Users/IP Addresses/
+    # Devices/Last Seen) — düz facts değil, gerçek trafik tablosu.
+    for col in ("Risk Score", "Tag", "Traffic", "Upload", "Transactions",
+               "Users", "IP Addresses", "Devices", "Last Seen"):
+        assert f"<th>{col}</th>" in doc
+
+
+def test_shadow_traffic_table_shows_mdca_style_columns(monkeypatch):
+    _enable_all(monkeypatch)
+    result = pipeline.run_connectors(MegaFakeGraph())
+    a = connectors_report.assessment(result)
+    items = connectors_report._shadow_items(a["shadow_ai_usage"]["applications"])
+    chatgpt = next(i for i in items if i["name"] == "ChatGPT")
+    # Aggregate: stream-fw-1 (users40/devices35/ips12/up2M) + stream-proxy-2 (users25/devices20/
+    # ips8/up1M) -> conservative max için users/devices/ips, additive için upload/transactions.
+    t = chatgpt["traffic"]
+    assert t["users"] == 40 and t["devices"] == 35 and t["ip_addresses"] == 12
+    assert t["uploaded_bytes"] == 3_000_000
+
+    table = connectors_report._shadow_traffic_section("shadow", "t", "s", items, "empty")
+    # Görünür hücrelerde (data-detail JSON'u DEĞİL) insan-okunur bayt formatı ve sayılar olmalı.
+    visible = re.sub(r"data-detail='.*?' onclick", "", table, flags=re.S)
+    chatgpt_row = re.search(r'<tr class="zt-row"[^>]*data-name="chatgpt"[^>]*>.*?</tr>', visible, re.S)
+    assert chatgpt_row, "ChatGPT satırı bulunamadı"
+    row = chatgpt_row.group(0)
+    assert "2.9 MB" in row          # upload bayt insan-okunur formatta (3,000,000 B, 1024 tabanlı)
+    assert ">40<" in row            # users
+    assert ">35<" in row            # devices
+    assert ">12<" in row            # ip addresses
+    assert 'style="--pc:' in row    # risk score bar / sanction pill rengi
+
+
+def test_fmt_bytes():
+    assert connectors_report._fmt_bytes(0) == "0 B"
+    assert connectors_report._fmt_bytes(500) == "500 B"
+    assert connectors_report._fmt_bytes(3_000_000) == "2.9 MB"
+    assert connectors_report._fmt_bytes(1_500_000_000) == "1.4 GB"
 
 
 def test_item_scores_are_transparent_0_to_100_with_reasons(monkeypatch):
