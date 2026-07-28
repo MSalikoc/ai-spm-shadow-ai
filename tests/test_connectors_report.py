@@ -1,6 +1,8 @@
 """Adım 7 — connectors_report.py: 15-bölümlü assessment + standalone HTML/JSON."""
+import html
 import json
 import os
+import re
 
 import connectors
 import connectors_report
@@ -141,6 +143,50 @@ def test_json_and_html_render_without_error(monkeypatch):
     assert 'id="zt-panel"' in doc and "What was checked" in doc and "Remediation action" in doc
     assert "data-detail=" in doc                         # her satırın detay verisi gömülü
     assert "alice@contoso.com" in doc                    # agent detail owner (JSON içinde) görünür
+    # Çok sayfalı yapı (Overview + Agents + Shadow AI + Sensitive Data + Findings + Gaps)
+    for tab in ("overview", "agents", "shadow", "sensitive", "findings", "gaps"):
+        assert f'data-tab="{tab}"' in doc
+    assert 'class="tab active" data-tab="overview"' in doc   # yalnızca Overview başlangıçta aktif
+    # Akış (Sankey-tarzı) diyagramlar Overview'da
+    assert 'class="flow"' in doc
+    # En yüksek riskli 5 madde
+    assert "En Yüksek Riskli 5 Madde" in doc
+
+
+def test_item_scores_are_transparent_0_to_100_with_reasons(monkeypatch):
+    """'45 diyorsa neye göre 45?' — her maddenin reasons listesi puan gerekçesini taşımalı."""
+    _enable_all(monkeypatch)
+    result = pipeline.run_connectors(MegaFakeGraph())
+    doc = connectors_report.html_string(result)
+
+    for m in re.finditer(r"data-detail='(.*?)' onclick", doc):
+        d = json.loads(html.unescape(m.group(1)))
+        assert 0 <= d["score"] <= 100
+        assert isinstance(d["reasons"], list) and len(d["reasons"]) >= 1
+        assert d["risk_label"] == connectors_report._RISK_LABEL[connectors_report._risk_tier(d["score"])]
+        # her reason ya "+N — sebep" formatında (pozitif katkı) ya da 0-puanlık düz açıklama
+        for r in d["reasons"]:
+            assert isinstance(r, str) and r
+
+
+def test_shadow_item_exposes_user_device_ip_counts(monkeypatch):
+    """Defender for Cloud Apps gibi kullanıcı/cihaz/IP SAYISI facts'te görünmeli (bireysel kimlik değil)."""
+    _enable_all(monkeypatch)
+    result = pipeline.run_connectors(MegaFakeGraph())
+    a = connectors_report.assessment(result)
+    items = connectors_report._shadow_items(a["shadow_ai_usage"]["applications"])
+    assert items
+    chatgpt = next(i for i in items if i["name"] == "ChatGPT")
+    fact_labels = {f[0] for f in chatgpt["facts"]}
+    assert {"Kullanıcı (30g)", "Cihaz (30g)", "IP Adresi (30g)"} <= fact_labels
+    assert "bireysel kullanıcı/cihaz/IP kimliği vermez" in chatgpt["what_checked"]
+
+
+def test_risk_tier_derives_from_score():
+    assert connectors_report._risk_tier(85) == "high"
+    assert connectors_report._risk_tier(50) == "medium"
+    assert connectors_report._risk_tier(20) == "low"
+    assert connectors_report._risk_tier(5) == "info"
 
 
 def test_html_tables_render_even_with_only_partial_data(monkeypatch):

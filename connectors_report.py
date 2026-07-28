@@ -2,9 +2,11 @@
 Microsoft AI Data Sources — birleşik assessment/rapor (Adım 7).
 
 `report.py` (mevcut Entra/OAuth dashboard'u) HİÇ DEĞİŞTİRİLMEDİ; bu modül tamamen ayrı,
-standalone bir sayfa üretir (aynı CSS/tema diliyle — `report.CSS` içe aktarılır, kopyalanmaz).
-Girdi `pipeline.run_connectors()`'ın döndürdüğü sonuç sözlüğü (assets/coverage/health/
-counts/profiles/portfolio) — connector'lar env-flag ile kapalıysa bu modül hiç çağrılmaz.
+standalone bir sayfa üretir (aynı CSS/tema diliyle — `report.CSS` içe aktarılır, kopyalanmaz;
+tab-switching JS deseni de report.py'den ilham alınarak — kopyalanarak, import edilmeden —
+yeniden kurulur). Girdi `pipeline.run_connectors()`'ın döndürdüğü sonuç sözlüğü
+(assets/coverage/health/counts/profiles/portfolio) — connector'lar env-flag ile kapalıysa
+bu modül hiç çağrılmaz.
 
 15 bölüm (assessment(result) sözlük anahtarları):
  1. executive            — portfolio özeti (apps_with_sensitive_data, affected_users, findings…)
@@ -23,11 +25,20 @@ counts/profiles/portfolio) — connector'lar env-flag ile kapalıysa bu modül h
 14. users_and_groups      — en çok etkilenen kullanıcılar + owner/sponsor'suz grup üyelikleri
 15. known_gaps            — API'de olmayan alanlar + bilinen korelasyon eksikleri (dürüst coverage)
 
-HTML görünümü (html_string), Microsoft'un Zero Trust Assessment aracındaki "assessment
-sonuçları" desenini izler: her madde (agent/uygulama/bulgu) filtrelenebilir bir tabloda
-satır olarak listelenir (Risk + Status rozetleri); satıra tıklayınca sağdan bir panel açılır
-(facts satırı → Result → What was checked → Remediation action). Bu bir client-side
-vanilla-JS bileşenidir (bağımsız, framework yok); veri `assessment()`'tan gelir.
+HTML görünümü (html_string), Microsoft'un Zero Trust Assessment aracındaki desenle çok
+sayfalı bir dashboard kurar:
+  - Overview   : hero (tenant/KPI/bulgu donut) + akış diyagramları (Shadow AI ve Agent
+                 Identity için) + estate genelinde en yüksek skorlu 5 madde.
+  - Agents     : Agent 365 paketleri + Entra Agent Identities (assessment tablosu).
+  - Shadow AI  : Defender/MDCA keşfedilen uygulamalar (kullanıcı/cihaz/IP SAYILARI ile —
+                 bireysel kimlik listesi API'de yok, bkz. known_gaps).
+  - Sensitive Data: hassas veri exposure tablosu + Purview etkileşim log'u.
+  - Findings   : bulgular.
+  - Gaps       : bilinen eksikler / API sınırları.
+Her madde (agent/uygulama/bulgu) 0-100 ŞEFFAF RİSK SKORU alır — `scoring.py`'nin
+"toplanan puan + gerekçe" felsefesiyle aynı: her puan bileşeni "+N — sebep" olarak
+gösterilir, skor uydurulmaz. Satıra tıklayınca açılan panelde: facts → Risk Skoru +
+gerekçe listesi → Result → What was checked → Remediation action.
 """
 import html
 import json
@@ -153,6 +164,8 @@ def _shadow_ai(apps, m):
         "display_name": a.get("display_name"),
         "sanctioned_state": (a.get("mdca") or {}).get("sanctioned_state"),
         "users": (a.get("mdca") or {}).get("users", 0),
+        "devices": (a.get("mdca") or {}).get("devices", 0),
+        "ip_addresses": (a.get("mdca") or {}).get("ip_addresses", 0),
         "uploaded_bytes": (a.get("mdca") or {}).get("uploaded_bytes", 0),
         "risk_score": (a.get("mdca") or {}).get("risk_score"),
         "data_sensitivity": (a.get("mdca") or {}).get("data_sensitivity"),
@@ -274,6 +287,10 @@ def _known_gaps(coverage):
                "yoksa data_sensitivity=UNDETERMINED_REQUIRES_PURVIEW kalır.")
     gaps.append("agent_blueprint_id merge token'ı DEĞİL (relate-not-merge); aynı blueprint'ten "
                "türeyen birden fazla identity ayrı asset olarak kalır.")
+    gaps.append("Defender for Cloud Apps (aggregatedAppsDetails) yalnızca kullanıcı/cihaz/IP "
+               "SAYISI verir — bireysel kullanıcı/cihaz/IP kimliği bu API'de YOK; bu yüzden "
+               "'hangi kullanıcı/cihaz' sorusu yalnızca Purview etkileşimleri (gerçek kullanıcı "
+               "kimliği taşır) üzerinden cevaplanabilir.")
     return gaps
 
 
@@ -285,6 +302,17 @@ def json_string(result: dict, now=None) -> str:
 # ---------- ortak HTML yardımcıları ----------
 _SEV = {"high": "#c0392b", "medium": "#b8860b", "low": "#2e8b57", "info": "#6b7280"}
 _RISK_LABEL = {"high": "Yüksek", "medium": "Orta", "low": "Düşük", "info": "Bilgi"}
+
+
+def _risk_tier(score):
+    """Skor → risk kademesi. Tek doğruluk kaynağı: risk_label HER ZAMAN score'dan türetilir."""
+    if score >= 70:
+        return "high"
+    if score >= 40:
+        return "medium"
+    if score >= 15:
+        return "low"
+    return "info"
 
 
 def _esc(s):
@@ -331,9 +359,7 @@ def _interactions_table(sample):
 
 
 # ---------- klasik dashboard'un (report.py) görsel dilini yeniden kullanan yardımcılar ----------
-# report.py'ye DOKUNULMUYOR — sadece aynı CSS (import edilen `CSS`) üzerine, aynı bileşen
-# desenleriyle (donut/bars/kpi-grid) kendi, bağımsız bir sayfa kuruyoruz.
-def _donut(segments, size=180, stroke=28, center_label="Bulgu"):
+def _donut(segments, size=170, stroke=26, center_label="Bulgu"):
     import math
     total = sum(v for _, v, _ in segments) or 1
     r = (size - stroke) / 2
@@ -374,6 +400,72 @@ def _bars(rows, maxv):
     return "".join(out) or '<div class="empty">Veri yok</div>'
 
 
+def _flow_diagram(columns, flows, width=520, height=210, node_w=10):
+    """
+    Bağımlılıksız (D3 yok), el yapımı "akış" (Sankey-tarzı) diyagram — Microsoft'un
+    Zero Trust Assessment aracındaki boru-temalı grafiklerle aynı fikir.
+    columns: [[(node_id, label, color, value), ...], ...] — bitişik kolonlar arası akış olur.
+    flows: [(from_id, to_id, value), ...] — yalnızca bitişik kolonlar arası desteklenir.
+    """
+    n_cols = len(columns)
+    if n_cols < 2 or not any(columns):
+        return '<div class="empty">Veri yok</div>'
+    col_gap = (width - node_w * n_cols) / max(1, n_cols - 1)
+    pad_y, gap_between = 10, 6
+    usable_h = height - 2 * pad_y
+
+    positions = {}
+    for ci, col in enumerate(columns):
+        total = sum(v for _, _, _, v in col) or 1
+        avail = usable_h - gap_between * max(0, len(col) - 1)
+        y = pad_y
+        for nid, label, color, value in col:
+            h = max(2.0, avail * value / total)
+            positions[nid] = {"col": ci, "y0": y, "y1": y + h, "color": color,
+                              "label": label, "value": value}
+            y += h + gap_between
+
+    svg = [f'<svg viewBox="0 0 {width} {height}" width="100%" height="{height}" '
+          f'role="img" class="flow" preserveAspectRatio="xMidYMid meet">']
+    out_used, in_used = {}, {}
+    for fid, tid, value in flows:
+        if fid not in positions or tid not in positions:
+            continue
+        f_pos, t_pos = positions[fid], positions[tid]
+        fx = f_pos["col"] * (node_w + col_gap) + node_w
+        tx = t_pos["col"] * (node_w + col_gap)
+        f_span = (f_pos["y1"] - f_pos["y0"])
+        t_span = (t_pos["y1"] - t_pos["y0"])
+        f_h = f_span * (value / f_pos["value"]) if f_pos["value"] else 0
+        t_h = t_span * (value / t_pos["value"]) if t_pos["value"] else 0
+        fy = f_pos["y0"] + out_used.get(fid, 0)
+        ty = t_pos["y0"] + in_used.get(tid, 0)
+        out_used[fid] = out_used.get(fid, 0) + f_h
+        in_used[tid] = in_used.get(tid, 0) + t_h
+        midx = (fx + tx) / 2
+        path = (f"M{fx:.1f},{fy:.1f} C{midx:.1f},{fy:.1f} {midx:.1f},{ty:.1f} {tx:.1f},{ty:.1f} "
+               f"L{tx:.1f},{ty + t_h:.1f} C{midx:.1f},{ty + t_h:.1f} {midx:.1f},{fy + f_h:.1f} "
+               f"{fx:.1f},{fy + f_h:.1f} Z")
+        svg.append(f'<path d="{path}" fill="{f_pos["color"]}" opacity="0.42"/>')
+
+    for nid, pos in positions.items():
+        x = pos["col"] * (node_w + col_gap)
+        h = max(1.0, pos["y1"] - pos["y0"])
+        svg.append(f'<rect x="{x:.1f}" y="{pos["y0"]:.1f}" width="{node_w}" height="{h:.1f}" '
+                  f'fill="{pos["color"]}" rx="2"/>')
+        ly = (pos["y0"] + pos["y1"]) / 2
+        if pos["col"] == 0:
+            anchor, tx_label = "start", x + node_w + 6
+        elif pos["col"] == n_cols - 1:
+            anchor, tx_label = "end", x - 6
+        else:
+            anchor, tx_label = "middle", x + node_w / 2
+        svg.append(f'<text x="{tx_label:.1f}" y="{ly:.1f}" dy="4" text-anchor="{anchor}" '
+                  f'class="flow-label">{_esc(pos["label"])} ({pos["value"]})</text>')
+    svg.append("</svg>")
+    return "".join(svg)
+
+
 # Gerçek Microsoft logosu (4 renkli kare) — inline SVG, harici kaynağa bağımlılık yok.
 _MS_LOGO_SVG = """<svg width="21" height="21" viewBox="0 0 21 21" xmlns="http://www.w3.org/2000/svg">
 <rect x="1" y="1" width="9" height="9" fill="#F25022"/>
@@ -386,17 +478,20 @@ _MS_LOGO_SVG = """<svg width="21" height="21" viewBox="0 0 21 21" xmlns="http://
 # ==================================================================================
 # "Assessment results" bileşeni — Microsoft Zero Trust Assessment aracındaki desen:
 # filtrelenebilir/aranabilir tablo (Ad | Risk | Status) + satıra tıklayınca açılan
-# yan panel (facts → Result → What was checked → Remediation action).
-# Her madde tipi (Agent 365 paketi, Entra identity, Shadow AI app, hassas veri
-# exposure'ı, bulgu) kendi _*_items() fonksiyonuyla bu ortak şemaya çevrilir:
-#   {id, name, risk_label, risk_color, status_label, status_color,
-#    facts:[(label,value),...], result_line, what_checked, remediation:[str,...]}
+# yan panel (facts → Risk Skoru+gerekçe → Result → What was checked → Remediation).
+# Skor 0-100, `scoring.py`'nin "toplanan puan + gerekçe" felsefesiyle: her puan
+# bileşeni ayrı bir gerekçe cümlesiyle gelir, risk_label HER ZAMAN score'dan türetilir
+# (bkz. _risk_tier) — "45 diyorsa neye göre 45?" sorusunun cevabı panelde satır satır.
 # ==================================================================================
-def _item(item_id, name, risk_label, risk_color, status_label, status_color,
-         facts, result_line, what_checked, remediation):
+def _item(item_id, name, score, reasons, status_label, status_color,
+         facts, result_line, what_checked, remediation, bucket=None):
+    score = max(0, min(100, score))
+    risk = _risk_tier(score)
     return {
-        "id": item_id, "name": name,
-        "risk_label": risk_label, "risk_color": risk_color,
+        "id": item_id, "name": name, "bucket": bucket,
+        "score": score, "risk_key": risk,
+        "risk_label": _RISK_LABEL[risk], "risk_color": _SEV[risk],
+        "reasons": [f"+{p} — {r}" if p > 0 else r for p, r in reasons],
         "status_label": status_label, "status_color": status_color,
         "facts": facts, "result_line": result_line, "what_checked": what_checked,
         "remediation": remediation if isinstance(remediation, list) else [remediation],
@@ -406,28 +501,39 @@ def _item(item_id, name, risk_label, risk_color, status_label, status_color,
 def _agent365_items(packages):
     items = []
     for idx, p in enumerate(packages):
-        name, build_type = p["display_name"], p["build_type"] or "bilinmiyor"
+        name = p["display_name"]
+        build_type = p["build_type"] or "bilinmiyor"
         deployed_to, available_to = p["deployed_to"] or "belirsiz", p["available_to"] or "belirsiz"
         available_all = available_to.strip().lower() in ("everyone", "all", "alltenant", "organization")
         correlated = bool(p.get("entra_app_id"))
 
+        reasons = []
         if p["blocked"]:
-            risk, status, status_c = "info", "Blocked", _SEV["high"]
-            result_line = "Paket engellenmiş durumda."
-            remediation = ["Engelleme nedenini yayıncı/sorumlu ekiple doğrulayın; gerekmiyorsa kaldırmayın."]
-        elif available_all and not correlated:
-            risk, status, status_c = "high", "Investigate", _SEV["medium"]
-            result_line = "Herkese açık ve Entra kimliğiyle korele değil."
-            remediation = ["Paketin kime açık olduğunu (deployment scope) daraltın.",
-                          "Entra Agent ID ile korelasyon için ilgili appId'yi doğrulayın."]
-        elif available_all:
-            risk, status, status_c = "medium", "Investigate", _SEV["medium"]
-            result_line = "Herkese açık dağıtım."
-            remediation = ["Dağıtım kapsamının iş gerekliliğiyle örtüştüğünü doğrulayın."]
+            score = 5
+            reasons.append((5, "Paket şu anda engellenmiş — aktif kullanılamıyor"))
+            status_label, status_c, result_line = "Blocked", _SEV["high"], "Paket engellenmiş durumda."
         else:
-            risk, status, status_c = "low", "Passed", _SEV["low"]
-            result_line = "Kapsamı sınırlı, ek risk sinyali yok."
-            remediation = ["Ek aksiyon gerekmiyor; periyodik olarak gözden geçirin."]
+            score = 0
+            if available_all:
+                score += 35
+                reasons.append((35, "Deployment kapsamı 'everyone' — tüm organizasyona açık"))
+            if not correlated:
+                score += 30
+                reasons.append((30, "Entra Agent ID ile korele değil — kimlik/izin görünürlüğü yok"))
+            if build_type == "custom":
+                score += 20
+                reasons.append((20, "Custom (özel geliştirilmiş) build — daha az denetimden geçmiş olabilir"))
+            if not reasons:
+                reasons.append((0, "Belirgin bir risk sinyali yok"))
+            if available_all and not correlated:
+                status_label, status_c = "Investigate", _SEV["medium"]
+                result_line = "Herkese açık ve Entra kimliğiyle korele değil."
+            elif available_all:
+                status_label, status_c = "Investigate", _SEV["medium"]
+                result_line = "Herkese açık dağıtım."
+            else:
+                status_label, status_c = "Passed", _SEV["low"]
+                result_line = "Kapsamı sınırlı, ek risk sinyali yok."
 
         what_checked = (
             f"{name}, Agent 365 kataloğunda kayıtlı bir {build_type} pakettir. "
@@ -436,9 +542,22 @@ def _agent365_items(packages):
             + (f"Entra uygulaması ile korele: {p['entra_app_id']}."
                if correlated else "Herhangi bir Entra uygulamasıyla korele değil.")
         )
-        facts = [("Risk", _RISK_LABEL[risk]), ("Build Type", build_type), ("Deployment", deployed_to)]
-        items.append(_item(f"agent365-{idx}", name, risk, _SEV[risk], status, status_c,
-                          facts, result_line, what_checked, remediation))
+        remediation = []
+        if not p["blocked"] and available_all and not correlated:
+            remediation += ["Paketin kime açık olduğunu (deployment scope) daraltın.",
+                          "Entra Agent ID ile korelasyon için ilgili appId'yi doğrulayın."]
+        elif not p["blocked"] and available_all:
+            remediation.append("Dağıtım kapsamının iş gerekliliğiyle örtüştüğünü doğrulayın.")
+        elif p["blocked"]:
+            remediation.append("Engelleme nedenini yayıncı/sorumlu ekiple doğrulayın; gerekmiyorsa kaldırmayın.")
+        else:
+            remediation.append("Ek aksiyon gerekmiyor; periyodik olarak gözden geçirin.")
+
+        facts = [("Build Type", build_type), ("Deployment", deployed_to),
+                ("Entra Korelasyonu", "Var" if correlated else "Yok")]
+        items.append(_item(f"agent365-{idx}", name, score, reasons, status_label, status_c,
+                          facts, result_line, what_checked, remediation,
+                          bucket="Blocked" if p["blocked"] else ("Everyone" if available_all else "Sınırlı")))
     return items
 
 
@@ -451,23 +570,35 @@ def _identity_items(identities):
                     else "yalnızca app-only" if i["app_only_perms"]
                     else "yalnızca delegated" if i["delegated_perms"] else "izin yok")
 
+        reasons = []
         if not i["enabled"]:
-            risk, status, status_c = "info", "Disabled", _SEV["info"]
-            result_line = "Devre dışı — aktif erişim riski yok."
-            remediation = ["Ek aksiyon gerekmiyor; kullanılmıyorsa kaldırılmasını değerlendirin."]
-        elif has_owner and has_sponsor:
-            risk, status, status_c = "low", "Passed", _SEV["low"]
-            result_line = "Owner ve sponsor atanmış."
-            remediation = ["Ek aksiyon gerekmiyor."]
-        elif has_owner or has_sponsor:
-            risk, status, status_c = "medium", "Investigate", _SEV["medium"]
-            result_line = "Owner veya sponsor eksik."
-            remediation = ["Eksik olan (owner veya sponsor) atamasını tamamlayın."]
+            score = 5
+            reasons.append((5, "Devre dışı (disabled) — aktif erişim riski yok"))
+            status_label, status_c, result_line = "Disabled", _SEV["info"], "Devre dışı — aktif risk yok."
+            bucket = "Disabled"
         else:
-            risk, status, status_c = "high", "Failed", _SEV["high"]
-            result_line = "Owner ve sponsor atanmamış."
-            remediation = ["Bu agent identity'sine bir owner atayın — hesap verebilirlik için gereklidir.",
-                          "Bir sponsor atayın (özellikle app-only izinleri varsa)."]
+            score = 0
+            if not has_owner:
+                score += 35
+                reasons.append((35, "Owner atanmamış"))
+            if not has_sponsor:
+                score += 20
+                reasons.append((20, "Sponsor atanmamış"))
+            if i["app_only_perms"] > 0:
+                score += 15
+                reasons.append((15, f"{i['app_only_perms']} app-only (kullanıcısız) izin var"))
+            if not i.get("blueprint_id"):
+                score += 10
+                reasons.append((10, "Herhangi bir blueprint'e bağlı değil"))
+            if not reasons:
+                reasons.append((0, "Owner/sponsor/blueprint ataması tam"))
+            if has_owner and has_sponsor:
+                status_label, status_c, result_line = "Passed", _SEV["low"], "Owner ve sponsor atanmış."
+            elif has_owner or has_sponsor:
+                status_label, status_c, result_line = "Investigate", _SEV["medium"], "Owner veya sponsor eksik."
+            else:
+                status_label, status_c, result_line = "Failed", _SEV["high"], "Owner ve sponsor atanmamış."
+            bucket = "Tam" if (has_owner and has_sponsor) else ("Kısmi" if (has_owner or has_sponsor) else "Yok")
 
         what_checked = (
             f"{name} " + ("etkin (enabled) durumda. " if i["enabled"] else "devre dışı (disabled) durumda. ")
@@ -476,10 +607,18 @@ def _identity_items(identities):
             + f"{i['app_only_perms']} app-only ve {i['delegated_perms']} delegated izne sahip ({perm_type}). "
             + (f"Blueprint: {i['blueprint_id']}." if i.get("blueprint_id") else "Herhangi bir blueprint'e bağlı değil.")
         )
-        facts = [("Risk", _RISK_LABEL[risk]), ("Owner Coverage", "Var" if has_owner else "Yok"),
+        remediation = []
+        if i["enabled"] and not has_owner:
+            remediation.append("Bu agent identity'sine bir owner atayın — hesap verebilirlik için gereklidir.")
+        if i["enabled"] and not has_sponsor:
+            remediation.append("Bir sponsor atayın (özellikle app-only izinleri varsa).")
+        if not remediation:
+            remediation.append("Ek aksiyon gerekmiyor.")
+
+        facts = [("Owner", ", ".join(i["owners"]) or "—"), ("Sponsor", ", ".join(i["sponsors"]) or "—"),
                 ("Permission Type", perm_type)]
-        items.append(_item(f"identity-{idx}", name, risk, _SEV[risk], status, status_c,
-                          facts, result_line, what_checked, remediation))
+        items.append(_item(f"identity-{idx}", name, score, reasons, status_label, status_c,
+                          facts, result_line, what_checked, remediation, bucket=bucket))
     return items
 
 
@@ -487,36 +626,63 @@ def _shadow_items(apps):
     items = []
     for idx, a in enumerate(apps):
         name, state = a["display_name"], a.get("sanctioned_state")
-        high_risk_score = isinstance(a.get("risk_score"), int) and a["risk_score"] <= 3
-
-        if state == "unsanctioned" or high_risk_score:
-            risk, status, status_c = "high", "Failed", _SEV["high"]
-            result_line = "Onaysız (unsanctioned) uygulama."
-            remediation = ["Uygulamayı Defender for Cloud Apps'te sanctioned veya blocked olarak işaretleyin.",
-                          "Kullanıcıları onaylı bir alternatife yönlendirin."]
+        reasons = []
+        score = 0
+        if state == "unsanctioned":
+            score += 45
+            reasons.append((45, "Onaysız (unsanctioned) uygulama"))
         elif state == "unreviewed":
-            risk, status, status_c = "medium", "Investigate", _SEV["medium"]
-            result_line = "Henüz gözden geçirilmedi."
-            remediation = ["Uygulamayı gözden geçirip sanctioned/unsanctioned olarak sınıflandırın."]
+            score += 25
+            reasons.append((25, "Henüz gözden geçirilmedi (unreviewed)"))
         elif state == "sanctioned":
-            risk, status, status_c = "low", "Passed", _SEV["low"]
-            result_line = "Kurumsal onaylı (sanctioned)."
-            remediation = ["Ek aksiyon gerekmiyor; periyodik olarak trafiği izlemeye devam edin."]
+            reasons.append((0, "Kurumsal onaylı (sanctioned)"))
         else:
-            risk, status, status_c = "info", "Investigate", _SEV["info"]
-            result_line = "Onay durumu bilinmiyor."
-            remediation = ["Onay durumunu MDCA'da belirleyin."]
+            score += 10
+            reasons.append((10, "Onay durumu bilinmiyor"))
+        if isinstance(a.get("risk_score"), int):
+            mdca_pts = round((10 - a["risk_score"]) / 10 * 25)
+            if mdca_pts:
+                score += mdca_pts
+                reasons.append((mdca_pts, f"MDCA risk skoru {a['risk_score']}/10 (düşük skor = yüksek risk)"))
+        if a["users"] >= 20:
+            score += 15
+            reasons.append((15, f"{a['users']} kullanıcı bu uygulamayı kullanıyor (geniş yayılım)"))
+        elif a["users"] >= 5:
+            score += 8
+            reasons.append((8, f"{a['users']} kullanıcı bu uygulamayı kullanıyor"))
+        if a["uploaded_bytes"] >= 1_000_000:
+            score += 10
+            reasons.append((10, f"{a['uploaded_bytes']:,} bayt veri yüklendi (30g)"))
+
+        result_line = {"unsanctioned": "Onaysız uygulama.", "sanctioned": "Kurumsal onaylı.",
+                      "unreviewed": "Henüz gözden geçirilmedi."}.get(state, "Onay durumu belirsiz.")
+        status_label, status_c = {
+            "unsanctioned": ("Failed", _SEV["high"]), "unreviewed": ("Investigate", _SEV["medium"]),
+            "sanctioned": ("Passed", _SEV["low"]),
+        }.get(state, ("Investigate", _SEV["info"]))
 
         what_checked = (
-            f"{name}, Defender for Cloud Apps tarafından son 30 günde {a['users']} kullanıcı ve "
-            f"{a['uploaded_bytes']:,} bayt trafikle keşfedildi. Onay durumu: {state or 'bilinmiyor'}. "
-            + (f"Risk skoru: {a['risk_score']}/10. " if a.get("risk_score") is not None else "")
+            f"{name}, Defender for Cloud Apps tarafından son 30 günde {a['users']} kullanıcı, "
+            f"{a['devices']} cihaz ve {a['ip_addresses']} farklı IP adresinden gelen trafikle keşfedildi "
+            f"({a['uploaded_bytes']:,} bayt yüklendi). Onay durumu: {state or 'bilinmiyor'}. "
+            + (f"MDCA risk skoru: {a['risk_score']}/10. " if a.get("risk_score") is not None else "")
             + f"Hassaslık durumu: {a.get('data_sensitivity') or 'bilinmiyor'} "
-              "— Purview korelasyonu olmadan kesinleşmez."
+              "— Purview korelasyonu olmadan kesinleşmez. Not: bu sayılar TOPLAM'dır; MDCA "
+              "aggregatedAppsDetails API'si bireysel kullanıcı/cihaz/IP kimliği vermez."
         )
-        facts = [("Risk", _RISK_LABEL[risk]), ("Onay Durumu", state or "—"), ("Kullanıcı (30g)", a["users"])]
-        items.append(_item(f"shadow-{idx}", name, risk, _SEV[risk], status, status_c,
-                          facts, result_line, what_checked, remediation))
+        remediation = []
+        if state == "unsanctioned":
+            remediation += ["Uygulamayı Defender for Cloud Apps'te sanctioned veya blocked olarak işaretleyin.",
+                          "Kullanıcıları onaylı bir alternatife yönlendirin."]
+        elif state == "unreviewed":
+            remediation.append("Uygulamayı gözden geçirip sanctioned/unsanctioned olarak sınıflandırın.")
+        else:
+            remediation.append("Ek aksiyon gerekmiyor; periyodik olarak trafiği izlemeye devam edin.")
+
+        facts = [("Kullanıcı (30g)", a["users"]), ("Cihaz (30g)", a["devices"]),
+                ("IP Adresi (30g)", a["ip_addresses"])]
+        items.append(_item(f"shadow-{idx}", name, score, reasons, status_label, status_c,
+                          facts, result_line, what_checked, remediation, bucket=state or "Bilinmiyor"))
     return items
 
 
@@ -527,15 +693,34 @@ def _exposure_items(rows):
         name = p["display_name"]
         dirs = ", ".join(f"{k}:{v}" for k, v in p["directions"].items() if v) or "yok"
 
+        reasons = []
+        score = 0
         if s["allowed"] > 0:
-            risk, status, status_c = "high", "Failed", _SEV["high"]
-            result_line = "DLP eşleşti ama izin verildi — inceleme gerekli."
+            score += 50
+            reasons.append((50, f"{s['allowed']} hassas etkileşim DLP'ye rağmen izin verildi"))
+        if s["blocked"] > 0:
+            score += 10
+            reasons.append((10, f"{s['blocked']} hassas etkileşim engellendi (pozitif kontrol)"))
+        sit_pts = min(len(s["sit_types"]) * 8, 24)
+        if sit_pts:
+            score += sit_pts
+            reasons.append((sit_pts, f"{len(s['sit_types'])} farklı hassas veri türü: {', '.join(s['sit_types'])}"))
+        user_pts = min(p["affected_user_count"] * 3, 15)
+        if user_pts:
+            score += user_pts
+            reasons.append((user_pts, f"{p['affected_user_count']} kullanıcı etkilendi"))
+        if p.get("sanctioned_state") == "unsanctioned":
+            score += 15
+            reasons.append((15, "Onaysız (unsanctioned) uygulama"))
+        if not reasons:
+            reasons.append((0, "Belirgin bir risk sinyali yok"))
+
+        if s["allowed"] > 0:
+            status_label, status_c, result_line = "Failed", _SEV["high"], "DLP eşleşti ama izin verildi — inceleme gerekli."
         elif s["blocked"] > 0:
-            risk, status, status_c = "low", "Passed", _SEV["low"]
-            result_line = "Tüm hassas etkileşimler engellendi."
+            status_label, status_c, result_line = "Passed", _SEV["low"], "Tüm hassas etkileşimler engellendi."
         else:
-            risk, status, status_c = "medium", "Investigate", _SEV["medium"]
-            result_line = "Erişim var ama DLP eşleşmesi/engeli yok."
+            status_label, status_c, result_line = "Investigate", _SEV["medium"], "Erişim var ama DLP eşleşmesi/engeli yok."
 
         what_checked = (
             f"{name} son 30 günde {s['window_30d']['sensitive']}/{s['window_30d']['interactions']} "
@@ -544,9 +729,10 @@ def _exposure_items(rows):
             f"{s['blocked']} engellendi, {s['allowed']} izin verildi."
         )
         remediation = [f["detail"] for f in p["findings"]] or ["Ek aksiyon gerekmiyor."]
-        facts = [("Risk", _RISK_LABEL[risk]), ("Etkilenen Kullanıcı", p["affected_user_count"]),
-                ("Hassas Etkileşim (30g)", s["window_30d"]["sensitive"])]
-        items.append(_item(f"exposure-{idx}", name, risk, _SEV[risk], status, status_c,
+        facts = [("Etkilenen Kullanıcı", p["affected_user_count"]),
+                ("Hassas Etkileşim (30g)", s["window_30d"]["sensitive"]),
+                ("Veri Türü Sayısı", len(s["sit_types"]))]
+        items.append(_item(f"exposure-{idx}", name, score, reasons, status_label, status_c,
                           facts, result_line, what_checked, remediation))
     return items
 
@@ -567,18 +753,22 @@ _FINDING_REMEDIATION = {
         "belirleyin; bağlanana kadar upload hacmini izlemeye devam edin.",
 }
 _DEFAULT_REMEDIATION = "Bulgu detayını inceleyip ilgili ekiple bir aksiyon planı oluşturun."
+_FINDING_SCORE = {"high": 80, "medium": 50, "low": 25, "info": 10}
 
 
 def _finding_items(findings):
     items = []
     for idx, f in enumerate(findings):
-        risk = f["severity"] if f["severity"] in _SEV else "info"
-        status, status_c = ("Passed", _SEV["low"]) if risk == "info" else ("Failed", _SEV[risk])
-        facts = [("Risk", _RISK_LABEL[risk]), ("Uygulama", f.get("app") or "—"),
-                ("Etkilenen Kullanıcı", f.get("affected_users", "—"))]
+        sev = f["severity"] if f["severity"] in _SEV else "info"
+        score = _FINDING_SCORE[sev]
+        reasons = [(score, f["detail"])]
+        status_label, status_c = ("Passed", _SEV["low"]) if sev == "info" else ("Failed", _SEV[sev])
+        facts = [("Uygulama", f.get("app") or "—"), ("Etkilenen Kullanıcı", f.get("affected_users", "—")),
+                ("Kaynak", "MDCA / Purview")]
         items.append(_item(
-            f"finding-{idx}", f["type"].replace("_", " ").title(), risk, _SEV[risk], status, status_c,
-            facts, f["detail"], f["detail"], [_FINDING_REMEDIATION.get(f["type"], _DEFAULT_REMEDIATION)]))
+            f"finding-{idx}", f["type"].replace("_", " ").title(), score, reasons,
+            status_label, status_c, facts, f["detail"], f["detail"],
+            [_FINDING_REMEDIATION.get(f["type"], _DEFAULT_REMEDIATION)]))
     return items
 
 
@@ -587,8 +777,8 @@ def _zt_section(section_id, title, subtitle, items, empty_msg):
         return (f'<div class="card" id="{section_id}"><h3>{_esc(title)}</h3>'
                f'<div class="empty">{_esc(empty_msg)}</div></div>')
 
-    risks = sorted({it["risk_label"] for it in items}, key=lambda r: list(_RISK_LABEL.values()).index(r)
-                  if r in _RISK_LABEL.values() else 9)
+    risk_order = list(_RISK_LABEL.values())
+    risks = sorted({it["risk_label"] for it in items}, key=lambda r: risk_order.index(r))
     statuses = sorted({it["status_label"] for it in items})
 
     risk_chips = "".join(
@@ -599,13 +789,14 @@ def _zt_section(section_id, title, subtitle, items, empty_msg):
         f'onclick="ztChip(this)">{_esc(s)}</button>' for s in statuses)
 
     rows = []
-    for it in items:
+    for it in sorted(items, key=lambda x: x["score"], reverse=True):
         detail_json = html.escape(json.dumps(it), quote=True)
         rows.append(
             f'<tr class="zt-row" data-scope="{section_id}" data-risk="{_esc(it["risk_label"])}" '
             f'data-status="{_esc(it["status_label"])}" data-name="{_esc(it["name"]).lower()}" '
             f"data-detail='{detail_json}' onclick=\"ztOpen(this)\">"
             f'<td class="c-name">{_esc(it["name"])}</td>'
+            f'<td class="c-num"><b>{it["score"]}</b>/100</td>'
             f'<td><span class="zt-pill" style="--pc:{it["risk_color"]}">{_esc(it["risk_label"])}</span></td>'
             f'<td><span class="zt-pill" style="--pc:{it["status_color"]}">{_esc(it["status_label"])}</span></td>'
             f'</tr>')
@@ -618,9 +809,23 @@ def _zt_section(section_id, title, subtitle, items, empty_msg):
   <div class="zt-chips"><span class="zt-chip-label">Risk</span>{risk_chips}</div>
   <div class="zt-chips"><span class="zt-chip-label">Status</span>{status_chips}</div>
 </div>
-<div class="zt-tbl-wrap"><table class="zt-table"><thead><tr><th>Ad</th><th>Risk</th><th>Status</th></tr></thead>
+<div class="zt-tbl-wrap"><table class="zt-table">
+<thead><tr><th>Ad</th><th>Skor</th><th>Risk</th><th>Status</th></tr></thead>
 <tbody>{"".join(rows)}</tbody></table></div>
 </div>"""
+
+
+def _top_risks_html(all_items, n=5):
+    top = sorted(all_items, key=lambda x: x["score"], reverse=True)[:n]
+    if not top:
+        return '<div class="empty">Madde yok.</div>'
+    rows = "".join(
+        f'<div class="zt-toprow" data-detail-ref="{it["id"]}">'
+        f'<span class="zt-pill" style="--pc:{it["risk_color"]}">{it["score"]}</span>'
+        f'<span class="c-name">{_esc(it["name"])}</span>'
+        f'<span style="color:var(--muted);font-size:12px">{_esc(it["result_line"])}</span>'
+        f'</div>' for it in top)
+    return rows
 
 
 _ZT_CSS = """
@@ -636,7 +841,9 @@ table.c-tbl tbody tr:last-child td{border-bottom:none}
 .c-num{font-variant-numeric:tabular-nums}
 .c-tag{display:inline-block;font-size:11px;background:var(--track);color:var(--ink);
  padding:1px 7px;border-radius:5px;margin:1px 3px 1px 0}
-header .navlink{text-decoration:none}
+header .navlink{cursor:pointer}
+.flow-label{font-size:11px;fill:var(--ink)}
+.flow-wrap{overflow-x:auto}
 .zt-toolbar{display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
 .zt-search{border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:8px;
  padding:7px 12px;font-size:13px;min-width:160px}
@@ -654,10 +861,13 @@ table.zt-table tbody tr{cursor:pointer;transition:background .12s}
 table.zt-table tbody tr:hover{background:var(--track)}
 .zt-pill{display:inline-block;background:var(--pc,#6b7280);color:#fff;font-size:11px;font-weight:700;
  padding:3px 10px;border-radius:999px}
+.zt-toprow{display:flex;align-items:center;gap:12px;padding:9px 4px;border-bottom:1px solid var(--line);
+ font-size:13px}
+.zt-toprow:last-child{border-bottom:none}
 .zt-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);opacity:0;pointer-events:none;
  transition:opacity .18s;z-index:20}
 .zt-overlay.open{opacity:1;pointer-events:auto}
-.zt-panel{position:fixed;top:0;right:0;bottom:0;width:min(480px,92vw);background:var(--panel);
+.zt-panel{position:fixed;top:0;right:0;bottom:0;width:min(500px,92vw);background:var(--panel);
  box-shadow:-8px 0 30px rgba(0,0,0,.18);transform:translateX(100%);transition:transform .22s ease;
  z-index:21;overflow-y:auto;padding:26px}
 .zt-panel.open{transform:translateX(0)}
@@ -666,11 +876,16 @@ table.zt-table tbody tr:hover{background:var(--track)}
  line-height:1}
 .zt-panel h2{font-size:19px;margin:0 34px 20px 0;text-wrap:balance}
 .zt-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:14px;
- border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:20px}
+ border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:18px}
 .zt-fact{display:flex;flex-direction:column;gap:3px}
 .zt-fact-l{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
 .zt-fact-v{font-size:14px;font-weight:600}
-.zt-result{display:flex;align-items:center;gap:10px;margin-bottom:20px;padding-bottom:20px;
+.zt-score{display:flex;align-items:center;gap:14px;margin-bottom:8px}
+.zt-score-num{font-size:30px;font-weight:700;font-family:"Cascadia Code",Consolas,ui-monospace,monospace;
+ min-width:60px}
+.zt-score-bar{flex:1;height:10px;border-radius:6px;background:var(--track);overflow:hidden}
+.zt-score-fill{height:100%;border-radius:6px;transition:width .2s}
+.zt-result{display:flex;align-items:center;gap:10px;margin:18px 0;padding-bottom:18px;
  border-bottom:1px solid var(--line)}
 .zt-result b{font-size:15px}
 .zt-panel h4{font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);
@@ -682,6 +897,16 @@ table.zt-table tbody tr:hover{background:var(--track)}
 """
 
 _ZT_SCRIPT = """
+(function(){
+function showTab(n){
+  document.querySelectorAll('.tab').forEach(function(t){t.classList.toggle('active',t.getAttribute('data-tab')===n);});
+  document.querySelectorAll('.navlink').forEach(function(x){x.classList.toggle('active',x.getAttribute('data-tab')===n);});
+  window.scrollTo(0,0);
+}
+document.querySelectorAll('.navlink').forEach(function(l){l.onclick=function(){showTab(l.getAttribute('data-tab'));};});
+document.querySelectorAll('[data-goto]').forEach(function(c){c.onclick=function(e){e.preventDefault();showTab(c.getAttribute('data-goto'));};});
+window.ztGoto = showTab;
+})();
 function ztRows(scope){return document.querySelectorAll('tr.zt-row[data-scope="'+scope+'"]');}
 function ztActiveChips(scope,key){
   var sel='.zt-chip.active[data-scope="'+scope+'"][data-key="'+key+'"]';
@@ -710,6 +935,11 @@ function ztOpen(row){
     var v=document.createElement('span');v.className='zt-fact-v';v.textContent=f[1];
     wrap.appendChild(l);wrap.appendChild(v);factsEl.appendChild(wrap);
   });
+  document.getElementById('zt-score-num').textContent=d.score+'/100';
+  var fill=document.getElementById('zt-score-fill');
+  fill.style.width=d.score+'%';fill.style.background=d.risk_color;
+  var reasonsEl=document.getElementById('zt-reasons');reasonsEl.innerHTML='';
+  d.reasons.forEach(function(r){var li=document.createElement('li');li.textContent=r;reasonsEl.appendChild(li);});
   var pill=document.getElementById('zt-result-pill');
   pill.textContent=d.status_label;pill.style.setProperty('--pc',d.status_color);
   document.getElementById('zt-result-line').textContent=d.result_line;
@@ -725,6 +955,58 @@ function ztClose(){
 }
 document.addEventListener('keydown',function(e){if(e.key==='Escape')ztClose();});
 """
+
+
+def _shadow_flow(shadow_items):
+    if not shadow_items:
+        return None
+    bucket_color = {"unsanctioned": "#c0392b", "sanctioned": "#2e8b57", "unreviewed": "#b8860b"}
+    buckets, risk_by_bucket = {}, {}
+    for it in shadow_items:
+        b = it["bucket"]
+        buckets[b] = buckets.get(b, 0) + 1
+        risk_by_bucket.setdefault(b, {})
+        risk_by_bucket[b][it["risk_key"]] = risk_by_bucket[b].get(it["risk_key"], 0) + 1
+
+    col1 = [("src", "Keşfedilen Uygulamalar", "#5f6b7a", len(shadow_items))]
+    col2 = [(f"b:{b}", b, bucket_color.get(b, "#5f6b7a"), c) for b, c in buckets.items()]
+    risk_totals = {}
+    for rc in risk_by_bucket.values():
+        for rk, c in rc.items():
+            risk_totals[rk] = risk_totals.get(rk, 0) + c
+    col3 = [(f"r:{rk}", _RISK_LABEL[rk], _SEV[rk], c) for rk, c in risk_totals.items()]
+
+    flows = [("src", f"b:{b}", c) for b, c in buckets.items()]
+    for b, rc in risk_by_bucket.items():
+        for rk, c in rc.items():
+            flows.append((f"b:{b}", f"r:{rk}", c))
+    return _flow_diagram([col1, col2, col3], flows)
+
+
+def _identity_flow(identity_items):
+    if not identity_items:
+        return None
+    bucket_color = {"Tam": "#2e8b57", "Kısmi": "#b8860b", "Yok": "#c0392b", "Disabled": "#6b7280"}
+    buckets, risk_by_bucket = {}, {}
+    for it in identity_items:
+        b = it["bucket"]
+        buckets[b] = buckets.get(b, 0) + 1
+        risk_by_bucket.setdefault(b, {})
+        risk_by_bucket[b][it["risk_key"]] = risk_by_bucket[b].get(it["risk_key"], 0) + 1
+
+    col1 = [("src", "Agent Identities", "#5f6b7a", len(identity_items))]
+    col2 = [(f"b:{b}", f"Owner/Sponsor: {b}", bucket_color.get(b, "#5f6b7a"), c) for b, c in buckets.items()]
+    risk_totals = {}
+    for rc in risk_by_bucket.values():
+        for rk, c in rc.items():
+            risk_totals[rk] = risk_totals.get(rk, 0) + c
+    col3 = [(f"r:{rk}", _RISK_LABEL[rk], _SEV[rk], c) for rk, c in risk_totals.items()]
+
+    flows = [("src", f"b:{b}", c) for b, c in buckets.items()]
+    for b, rc in risk_by_bucket.items():
+        for rk, c in rc.items():
+            flows.append((f"b:{b}", f"r:{rk}", c))
+    return _flow_diagram([col1, col2, col3], flows)
 
 
 def html_string(result: dict, tenant_id: str = "", now=None) -> str:
@@ -756,34 +1038,44 @@ def html_string(result: dict, tenant_id: str = "", now=None) -> str:
     ])
 
     nav = "".join(
-        f'<a class="navlink" href="#{href}">{label}</a>'
-        for href, label in (("coverage", "Coverage"), ("agents", "Agents"), ("traffic", "Traffic"),
-                            ("exposure", "Exposure"), ("findings", "Findings"), ("gaps", "Gaps")))
+        f'<a class="navlink{" active" if t == "overview" else ""}" data-tab="{t}">{label}</a>'
+        for t, label in (("overview", "Overview"), ("agents", "Agents"), ("shadow", "Shadow AI"),
+                        ("sensitive", "Sensitive Data"), ("findings", "Findings"), ("gaps", "Gaps")))
 
     agent365_items = _agent365_items(a["agent365_packages"]["packages"])
     identity_items = _identity_items(a["agent_identities"]["identities"])
     shadow_items = _shadow_items(a["shadow_ai_usage"]["applications"])
     exposure_items = _exposure_items(a["sensitive_exposure"])
     finding_items = _finding_items(a["findings"])
+    all_items = agent365_items + identity_items + shadow_items + exposure_items + finding_items
 
     quick = "".join([
-        f'<a class="card kpi" href="#coverage"><span class="n">{exec_["connectors_connected"]}/{exec_["connectors_total"]}</span>'
+        f'<a class="card kpi" data-goto="agents"><span class="n">{exec_["connectors_connected"]}/{exec_["connectors_total"]}</span>'
         f'<span class="l">Bağlı veri kaynağı</span></a>',
-        f'<a class="card kpi" href="#agents"><span class="n">{len(agent365_items) + len(identity_items)}</span>'
+        f'<a class="card kpi" data-goto="agents"><span class="n">{len(agent365_items) + len(identity_items)}</span>'
         f'<span class="l">Agent (365 + Identity)</span></a>',
-        f'<a class="card kpi" href="#traffic"><span class="n">{len(shadow_items)}</span>'
+        f'<a class="card kpi" data-goto="shadow"><span class="n">{len(shadow_items)}</span>'
         f'<span class="l">Shadow AI uygulaması</span></a>',
-        f'<a class="card kpi high" href="#exposure"><span class="n">{len(exposure_items)}</span>'
+        f'<a class="card kpi high" data-goto="sensitive"><span class="n">{len(exposure_items)}</span>'
         f'<span class="l">Hassas veri exposure</span></a>',
     ])
 
-    return f"""<!doctype html><html><head><meta charset="utf-8">
-<title>AI-SPM — Microsoft AI Data Sources Assessment</title>
-<style>{CSS}{_ZT_CSS}</style></head><body>
-<header>{_MS_LOGO_SVG}<h1>AI-SPM · Microsoft AI Data Sources</h1>
-<nav class="tabs">{nav}</nav>
-<div class="spacer"></div><div class="tenant">{_esc(tenant_id)}</div></header>
-<main>
+    shadow_flow = _shadow_flow(shadow_items)
+    identity_flow = _identity_flow(identity_items)
+    flow_cards = ""
+    if shadow_flow or identity_flow:
+        cells = []
+        if shadow_flow:
+            cells.append(f'<div class="card"><h3>Shadow AI: Onay Durumu → Risk Akışı</h3>'
+                        f'<div class="flow-wrap">{shadow_flow}</div></div>')
+        if identity_flow:
+            cells.append(f'<div class="card"><h3>Agent Identity: Owner/Sponsor → Risk Akışı</h3>'
+                        f'<div class="flow-wrap">{identity_flow}</div></div>')
+        flow_cards = f'<div class="grid cols-2" style="margin-top:16px">{"".join(cells)}</div>'
+
+    top_risks = _top_risks_html(all_items)
+
+    overview = f"""
 <div class="hero">
   <div class="card">
     <h3>Kaynak Durumu</h3>
@@ -801,22 +1093,53 @@ def html_string(result: dict, tenant_id: str = "", now=None) -> str:
   </div>
 </div>
 <div class="kpi-grid" style="margin-top:16px">{quick}</div>
+{flow_cards}
+<div class="card" style="margin-top:16px"><h3>En Yüksek Riskli 5 Madde (tüm kaynaklar)</h3>
+{top_risks}</div>
+<div class="card" style="margin-top:16px"><h3>Veri Kaynağı Coverage</h3>
+{_coverage_html(a["data_source_coverage"])}</div>"""
 
-<div class="card" style="margin-top:16px" id="coverage"><h3>1-2. Veri kaynağı coverage</h3>
-{_coverage_html(a["data_source_coverage"])}</div>
+    agents_tab = (
+        _zt_section("identities", "Entra Agent Identities",
+                   "Owner/sponsor/izin ataması — skor: eksik atama arttıkça yükselir",
+                   identity_items, "Entra Agent Identity keşfedilmedi.")
+        + _zt_section("agent365", "Agent 365 Paketleri",
+                     "Deployment kapsamı ve Entra korelasyonu — skor: geniş kapsam + korelasyon eksikliği",
+                     agent365_items, "Agent 365 paketi keşfedilmedi."))
 
-{_zt_section("agents", "4-5. Agent Envanteri — Entra Agent Identities", "Owner/sponsor/izin ataması assessment sonucu olarak değerlendirilir", identity_items, "Entra Agent Identity keşfedilmedi.")}
-{_zt_section("agent365", "5. Agent Envanteri — Agent 365 Paketleri", "Deployment kapsamı ve korelasyon durumu assessment sonucu olarak değerlendirilir", agent365_items, "Agent 365 paketi keşfedilmedi.")}
-{_zt_section("traffic", "6. Shadow AI Uygulama Keşfi &amp; Trafik", "Defender for Cloud Apps — onay durumu ve kullanım hacmi assessment sonucu olarak değerlendirilir", shadow_items, "Shadow AI uygulaması keşfedilmedi (veya kaynak bağlı değil).")}
+    shadow_tab = _zt_section(
+        "shadow", "Shadow AI Uygulama Keşfi",
+        "Defender for Cloud Apps — onay durumu, kullanım hacmi, MDCA risk skoru "
+        "(kullanıcı/cihaz/IP SAYILARI; bireysel kimlik listesi API'de yok — bkz. Gaps)",
+        shadow_items, "Shadow AI uygulaması keşfedilmedi (veya kaynak bağlı değil).")
 
-<div class="card" style="margin-top:16px" id="interactions"><h3>7. Purview — Son Hassas Etkileşimler / Trafik</h3>
-{_interactions_table(a["sensitive_interactions"]["sample"])}</div>
+    sensitive_tab = (
+        _zt_section("exposure", "Applications with Sensitive Data Exposure",
+                   "DLP sonucu (engellendi/izin verildi) ve veri türü çeşitliliği skoru belirler",
+                   exposure_items, "Hassas veri paylaşımı tespit edilmedi (veya kaynaklar bağlı değil).")
+        + f'<div class="card" style="margin-top:16px"><h3>Purview — Son Hassas Etkileşimler</h3>'
+          f'{_interactions_table(a["sensitive_interactions"]["sample"])}</div>')
 
-{_zt_section("exposure", "3. Applications with Sensitive Data Exposure", "Hassas veri paylaşımı olan uygulamalar — DLP sonucu assessment olarak değerlendirilir", exposure_items, "Hassas veri paylaşımı tespit edilmedi (veya kaynaklar bağlı değil).")}
-{_zt_section("findings", "8. Bulgular", "Her bulgu bir başarısız (failed) assessment kontrolü olarak listelenir", finding_items, "Bulgu yok.")}
+    findings_tab = _zt_section("findings", "Bulgular",
+                              "Her bulgu bir başarısız (failed) assessment kontrolü olarak listelenir",
+                              finding_items, "Bulgu yok.")
 
-<div class="card" style="margin-top:16px" id="gaps"><h3>15. Bilinen eksikler / API sınırları</h3>
-<ul class="na">{"".join(f"<li>{_esc(g)}</li>" for g in a["known_gaps"])}</ul></div>
+    gaps_tab = (f'<div class="card"><h3>Bilinen Eksikler / API Sınırları</h3>'
+              f'<ul class="na">{"".join(f"<li>{_esc(g)}</li>" for g in a["known_gaps"])}</ul></div>')
+
+    return f"""<!doctype html><html><head><meta charset="utf-8">
+<title>AI-SPM — Microsoft AI Data Sources Assessment</title>
+<style>{CSS}{_ZT_CSS}</style></head><body>
+<header>{_MS_LOGO_SVG}<h1>AI-SPM</h1>
+<nav class="tabs">{nav}</nav>
+<div class="spacer"></div><div class="tenant">{_esc(tenant_id)}</div></header>
+<main>
+<section class="tab active" data-tab="overview">{overview}</section>
+<section class="tab" data-tab="agents">{agents_tab}</section>
+<section class="tab" data-tab="shadow">{shadow_tab}</section>
+<section class="tab" data-tab="sensitive">{sensitive_tab}</section>
+<section class="tab" data-tab="findings">{findings_tab}</section>
+<section class="tab" data-tab="gaps">{gaps_tab}</section>
 <div class="foot">AI-SPM — Microsoft AI Data Sources · connectors_report.assessment()</div>
 </main>
 
@@ -825,6 +1148,11 @@ def html_string(result: dict, tenant_id: str = "", now=None) -> str:
   <button class="zt-panel-close" onclick="ztClose()" aria-label="Kapat">&times;</button>
   <h2 id="zt-title"></h2>
   <div class="zt-facts" id="zt-facts"></div>
+  <h4>Risk Skoru</h4>
+  <div class="zt-score"><span class="zt-score-num" id="zt-score-num"></span>
+  <div class="zt-score-bar"><div class="zt-score-fill" id="zt-score-fill"></div></div></div>
+  <h4>Neden bu skor?</h4>
+  <ul id="zt-reasons"></ul>
   <div class="zt-result">
     <span>Test result →</span>
     <span class="zt-pill" id="zt-result-pill"></span>
