@@ -313,6 +313,7 @@ def json_string(result: dict, now=None) -> str:
 # ---------- ortak HTML yardımcıları ----------
 _SEV = {"high": "#c0392b", "medium": "#b8860b", "low": "#2e8b57", "info": "#6b7280"}
 _RISK_LABEL = {"high": "Yüksek", "medium": "Orta", "low": "Düşük", "info": "Bilgi"}
+_RISK_RANK = {"high": 3, "medium": 2, "low": 1, "info": 0}  # tablo sıralaması için
 
 
 def _risk_tier(score):
@@ -633,7 +634,9 @@ def _identity_items(identities):
     return items
 
 
-def _shadow_items(apps):
+def _shadow_items(apps, tenant_id=""):
+    defender_url = (f"https://security.microsoft.com/cloudapps/discovery?tid={tenant_id}"
+                    if tenant_id else None)
     items = []
     for idx, a in enumerate(apps):
         name, state = a["display_name"], a.get("sanctioned_state")
@@ -668,9 +671,9 @@ def _shadow_items(apps):
         result_line = {"unsanctioned": "Onaysız uygulama.", "sanctioned": "Kurumsal onaylı.",
                       "unreviewed": "Henüz gözden geçirilmedi."}.get(state, "Onay durumu belirsiz.")
         status_label, status_c = {
-            "unsanctioned": ("Failed", _SEV["high"]), "unreviewed": ("Investigate", _SEV["medium"]),
-            "sanctioned": ("Passed", _SEV["low"]),
-        }.get(state, ("Investigate", _SEV["info"]))
+            "unsanctioned": ("Unsanctioned", _SEV["high"]), "unreviewed": ("Unreviewed", _SEV["medium"]),
+            "sanctioned": ("Sanctioned", _SEV["low"]),
+        }.get(state, ("Unreviewed", _SEV["info"]))
 
         what_checked = (
             f"{name}, Defender for Cloud Apps tarafından son 30 günde {a['users']} kullanıcı, "
@@ -704,6 +707,7 @@ def _shadow_items(apps):
             "transactions": a.get("transactions", 0),
             "uploaded_bytes": a["uploaded_bytes"], "downloaded_bytes": a.get("downloaded_bytes", 0),
             "last_seen": a.get("last_seen"),
+            "defender_url": defender_url,
         }
         items.append(it)
     return items
@@ -859,17 +863,24 @@ def _shadow_traffic_section(section_id, title, subtitle, items, empty_msg):
             f'<tr class="zt-row" data-scope="{section_id}" data-risk="{_esc(it["risk_label"])}" '
             f'data-status="{_esc(it["status_label"])}" data-name="{_esc(it["name"]).lower()}" '
             f"data-detail='{detail_json}' onclick=\"ztOpen(this)\">"
-            f'<td><div class="c-name">{_esc(it["name"])}</div>'
-            f'<div style="font-size:11px;color:var(--muted)">{_esc(t["category"] or t["vendor"] or "—")}</div></td>'
-            f'<td>{_mdca_risk_bar(t["risk_score"])}</td>'
-            f'<td>{_sanction_pill(t["sanctioned_state"])}</td>'
-            f'<td class="c-num">{_fmt_bytes(total)}</td>'
-            f'<td class="c-num">{_fmt_bytes(t["uploaded_bytes"])}</td>'
-            f'<td class="c-num">{t["transactions"]:,}</td>'
-            f'<td class="c-num">{t["users"]}</td>'
-            f'<td class="c-num">{t["ip_addresses"]}</td>'
-            f'<td class="c-num">{t["devices"]}</td>'
-            f'<td class="c-num" style="white-space:nowrap">{_esc(last_seen)}</td>'
+            f'<td data-sort="{_esc(it["name"]).lower()}"><div class="c-name">{_esc(it["name"])}</div>'
+            f'<div style="font-size:11px;color:var(--muted)">{_esc(t["category"] or t["vendor"] or "—")}'
+            + (f' &middot; <a href="{_esc(t["defender_url"])}" target="_blank" rel="noopener" '
+               f'onclick="event.stopPropagation()" style="color:var(--accent)">Defender\'da aç ↗</a>'
+               if t.get("defender_url") else "")
+            + '</div></td>'
+            f'<td data-sort="{t["risk_score"] if t["risk_score"] is not None else -1}">'
+            f'{_mdca_risk_bar(t["risk_score"])}</td>'
+            f'<td data-sort="{_esc(t["sanctioned_state"] or "").lower()}">'
+            f'{_sanction_pill(t["sanctioned_state"])}</td>'
+            f'<td class="c-num" data-sort="{total}">{_fmt_bytes(total)}</td>'
+            f'<td class="c-num" data-sort="{t["uploaded_bytes"]}">{_fmt_bytes(t["uploaded_bytes"])}</td>'
+            f'<td class="c-num" data-sort="{t["transactions"]}">{t["transactions"]:,}</td>'
+            f'<td class="c-num" data-sort="{t["users"]}">{t["users"]}</td>'
+            f'<td class="c-num" data-sort="{t["ip_addresses"]}">{t["ip_addresses"]}</td>'
+            f'<td class="c-num" data-sort="{t["devices"]}">{t["devices"]}</td>'
+            f'<td class="c-num" data-sort="{_esc(t["last_seen"] or "")}" style="white-space:nowrap">'
+            f'{_esc(last_seen)}</td>'
             f"</tr>")
 
     headers = ["Uygulama", "Risk Score", "Tag", "Traffic", "Upload", "Transactions",
@@ -896,10 +907,12 @@ def _zt_section(section_id, title, subtitle, items, empty_msg):
             f'<tr class="zt-row" data-scope="{section_id}" data-risk="{_esc(it["risk_label"])}" '
             f'data-status="{_esc(it["status_label"])}" data-name="{_esc(it["name"]).lower()}" '
             f"data-detail='{detail_json}' onclick=\"ztOpen(this)\">"
-            f'<td class="c-name">{_esc(it["name"])}</td>'
-            f'<td class="c-num"><b>{it["score"]}</b>/100</td>'
-            f'<td><span class="zt-pill" style="--pc:{it["risk_color"]}">{_esc(it["risk_label"])}</span></td>'
-            f'<td><span class="zt-pill" style="--pc:{it["status_color"]}">{_esc(it["status_label"])}</span></td>'
+            f'<td class="c-name" data-sort="{_esc(it["name"]).lower()}">{_esc(it["name"])}</td>'
+            f'<td class="c-num" data-sort="{it["score"]}"><b>{it["score"]}</b>/100</td>'
+            f'<td data-sort="{_RISK_RANK[it["risk_key"]]}">'
+            f'<span class="zt-pill" style="--pc:{it["risk_color"]}">{_esc(it["risk_label"])}</span></td>'
+            f'<td data-sort="{_esc(it["status_label"]).lower()}">'
+            f'<span class="zt-pill" style="--pc:{it["status_color"]}">{_esc(it["status_label"])}</span></td>'
             f'</tr>')
 
     return f"""
@@ -952,6 +965,12 @@ header .navlink{cursor:pointer}
 table.zt-table{width:100%;border-collapse:collapse;font-size:13px;min-width:420px}
 table.zt-table thead th{text-align:left;font-size:11px;text-transform:uppercase;color:var(--muted);
  letter-spacing:.03em;padding:9px 12px;border-bottom:1px solid var(--line)}
+table.c-tbl thead th.zt-sortable,table.zt-table thead th.zt-sortable{cursor:pointer;user-select:none;
+ white-space:nowrap}
+table.c-tbl thead th.zt-sortable:hover,table.zt-table thead th.zt-sortable:hover{color:var(--ink)}
+th.zt-sortable::after{content:"";margin-left:4px;opacity:.35}
+th.sorted-asc::after{content:"▲";opacity:1}
+th.sorted-desc::after{content:"▼";opacity:1}
 table.zt-table tbody td{padding:10px 12px;border-bottom:1px solid var(--line)}
 table.zt-table tbody tr:last-child td{border-bottom:none}
 table.zt-table tbody tr{cursor:pointer;transition:background .12s}
@@ -1059,6 +1078,31 @@ function ztClose(){
   document.getElementById('zt-panel').classList.remove('open');
 }
 document.addEventListener('keydown',function(e){if(e.key==='Escape')ztClose();});
+function ztSortTable(th){
+  var table=th.closest('table');
+  if(!table)return;
+  var tbody=table.querySelector('tbody');
+  if(!tbody)return;
+  var ths=Array.prototype.slice.call(th.parentNode.children);
+  var idx=ths.indexOf(th);
+  var dir=th.classList.contains('sorted-asc')?'desc':'asc';
+  ths.forEach(function(h){h.classList.remove('sorted-asc','sorted-desc');});
+  th.classList.add(dir==='asc'?'sorted-asc':'sorted-desc');
+  var rows=Array.prototype.slice.call(tbody.rows);
+  rows.sort(function(a,b){
+    var ac=a.cells[idx],bc=b.cells[idx];
+    var av=ac?(ac.dataset.sort!==undefined?ac.dataset.sort:ac.textContent.trim().toLowerCase()):'';
+    var bv=bc?(bc.dataset.sort!==undefined?bc.dataset.sort:bc.textContent.trim().toLowerCase()):'';
+    var an=parseFloat(av),bn=parseFloat(bv);
+    var cmp=(!isNaN(an)&&!isNaN(bn)&&av!==''&&bv!=='')?(an-bn):String(av).localeCompare(String(bv));
+    return dir==='asc'?cmp:-cmp;
+  });
+  rows.forEach(function(r){tbody.appendChild(r);});
+}
+document.querySelectorAll('table.zt-table thead th, table.c-tbl thead th').forEach(function(th){
+  th.classList.add('zt-sortable');
+  th.onclick=function(){ztSortTable(th);};
+});
 """
 
 
@@ -1149,7 +1193,7 @@ def html_string(result: dict, tenant_id: str = "", now=None) -> str:
 
     agent365_items = _agent365_items(a["agent365_packages"]["packages"])
     identity_items = _identity_items(a["agent_identities"]["identities"])
-    shadow_items = _shadow_items(a["shadow_ai_usage"]["applications"])
+    shadow_items = _shadow_items(a["shadow_ai_usage"]["applications"], tenant_id)
     exposure_items = _exposure_items(a["sensitive_exposure"])
     finding_items = _finding_items(a["findings"])
     all_items = agent365_items + identity_items + shadow_items + exposure_items + finding_items
