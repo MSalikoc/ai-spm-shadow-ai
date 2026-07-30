@@ -11,6 +11,8 @@ Rapor: Blob Storage'a (AzureWebJobsStorage + REPORT_CONTAINER).
 import json
 import logging
 import os
+import traceback
+from datetime import datetime, timezone
 
 import azure.functions as func
 
@@ -33,42 +35,65 @@ EMAIL_SCHEDULE = os.environ.get("EMAIL_SCHEDULE", "0 0 8 * * 1")   # Pazartesi 0
 
 
 def _run_scan(source: str):
-    tenant_id = os.environ.get("AISPM_TENANT_ID", "")
-    if not tenant_id:
-        raise RuntimeError("AISPM_TENANT_ID env-var tanımlı değil.")
+    """
+    NOT: Tüm gövde try/except ile sarılı — bir istisna (özellikle `pipeline.run()`'ın
+    kendisinden) queue-trigger/timer-trigger içinde sessizce kaybolup rapor hiç
+    yazılmadan bitebiliyordu; kullanıcı Portal'da log aramak zorunda kalıyordu. Artık
+    her başarısız denemenin sebebi `last_error.json`'a yazılıyor ve /api/report,
+    /api/connectors bunu "henüz rapor yok" mesajının içinde gösteriyor.
+    """
+    try:
+        tenant_id = os.environ.get("AISPM_TENANT_ID", "")
+        if not tenant_id:
+            raise RuntimeError("AISPM_TENANT_ID env-var tanımlı değil.")
 
-    token = auth.get_token_managed_identity()
-    graph = GraphClient(token)
+        token = auth.get_token_managed_identity()
+        graph = GraphClient(token)
 
-    scored = pipeline.run(graph, tenant_id)
-    try:  # drift: önceki snapshot ile diff + kaydet (ilk scan baseline → boş)
-        this_scan_changes = drift.process(scored)
-        changes = drift.recent(14)
-    except Exception:
-        logging.exception("drift hata")
-        this_scan_changes, changes = [], []
-    try:  # yönetilebilir finding kayıtları (üret + uzlaştır + kalıcılaştır)
-        finding_records = findingsvc.process(scored)
-    except Exception:
-        logging.exception("findings hata")
-        finding_records = []
-    try:  # connector drift (Adım 8) + AI Data Sources dashboard cache (Adım 7) — flag
-          # kapalıysa run_connectors None döner, ikisi de no-op
-        connectors_result = pipeline.run_connectors(graph)
-        connectors_drift.process(connectors_result)
-        if connectors_result is not None:
-            storage.publish_connectors(
-                connectors_report.html_string(connectors_result, tenant_id),
-                connectors_report.json_string(connectors_result))
-    except Exception:
-        logging.exception("connector drift/dashboard hata")
-    published = storage.publish(scored, tenant_id, changes, finding_records)
-    summ = pipeline.summary(scored)
+        scored = pipeline.run(graph, tenant_id)
+        try:  # drift: önceki snapshot ile diff + kaydet (ilk scan baseline → boş)
+            this_scan_changes = drift.process(scored)
+            changes = drift.recent(14)
+        except Exception:
+            logging.exception("drift hata")
+            this_scan_changes, changes = [], []
+        try:  # yönetilebilir finding kayıtları (üret + uzlaştır + kalıcılaştır)
+            finding_records = findingsvc.process(scored)
+        except Exception:
+            logging.exception("findings hata")
+            finding_records = []
+        try:  # connector drift (Adım 8) + AI Data Sources dashboard cache (Adım 7) — flag
+              # kapalıysa run_connectors None döner, ikisi de no-op
+            connectors_result = pipeline.run_connectors(graph)
+            connectors_drift.process(connectors_result)
+            if connectors_result is not None:
+                storage.publish_connectors(
+                    connectors_report.html_string(connectors_result, tenant_id),
+                    connectors_report.json_string(connectors_result))
+        except Exception:
+            logging.exception("connector drift/dashboard hata")
+        published = storage.publish(scored, tenant_id, changes, finding_records)
+        summ = pipeline.summary(scored)
 
-    logging.info("AI-SPM scan (%s): %s bulgu, %s kritik, %s yüksek, %s değişiklik → %s",
-                 source, summ["total"], summ["critical"], summ["high"],
-                 len(this_scan_changes), published)
-    return {"summary": summ, "published": published, "tenant": tenant_id}, scored, tenant_id
+        logging.info("AI-SPM scan (%s): %s bulgu, %s kritik, %s yüksek, %s değişiklik → %s",
+                     source, summ["total"], summ["critical"], summ["high"],
+                     len(this_scan_changes), published)
+        try:
+            storage.write_json("last_error.json", {})   # başarılı → önceki hatayı temizle
+        except Exception:
+            pass
+        return {"summary": summ, "published": published, "tenant": tenant_id}, scored, tenant_id
+    except Exception as e:
+        logging.exception("AI-SPM scan (%s) BAŞARISIZ", source)
+        try:
+            storage.write_json("last_error.json", {
+                "source": source, "error": str(e)[:500],
+                "traceback": traceback.format_exc()[-3000:],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            })
+        except Exception:
+            pass
+        raise
 
 
 @app.timer_trigger(schedule=SCAN_SCHEDULE, arg_name="timer",
@@ -134,13 +159,24 @@ def digest_now(req: func.HttpRequest) -> func.HttpResponse:
                                  mimetype="application/json", status_code=500)
 
 
+def _last_scan_error_note() -> str:
+    """Son `_run_scan` denemesi başarısız olduysa okunabilir bir not döner (yoksa "").
+    Portal'a girmeden, doğrudan /api/report ve /api/connectors'ta neden başarısız
+    olduğunu görebilmek için — bkz. `_run_scan`'in `last_error.json` kaydı."""
+    err = storage.read_json("last_error.json")
+    if not err or not err.get("error"):
+        return ""
+    return (f"\n\nSon tarama denemesi başarısız oldu — kaynak: {err.get('source')}, "
+           f"zaman: {err.get('timestamp')}\nHata: {err.get('error')}")
+
+
 @app.route(route="report", auth_level=func.AuthLevel.FUNCTION)
 def report_view(req: func.HttpRequest) -> func.HttpResponse:
     """En son dashboard'u canlı HTML olarak sunar (tarayıcıda aç)."""
     doc = storage.read_latest("latest.html")
     if doc is None:
         return func.HttpResponse(
-            "Henüz rapor yok. Önce /api/scan çalıştırın.",
+            "Henüz rapor yok. Önce /api/scan çalıştırın." + _last_scan_error_note(),
             status_code=404, mimetype="text/plain")
     return func.HttpResponse(doc, mimetype="text/html", status_code=200)
 
@@ -171,7 +207,8 @@ def connectors_now(req: func.HttpRequest) -> func.HttpResponse:
     html_fmt = (req.params.get("format") or "").lower() == "html"
     doc = storage.read_latest("connectors_latest.html" if html_fmt else "connectors_latest.json")
     if doc is None:
-        msg = "Henüz AI Data Sources raporu yok. Önce /api/scan çalıştırın (birkaç dakika sürebilir)."
+        msg = ("Henüz AI Data Sources raporu yok. Önce /api/scan çalıştırın (birkaç dakika sürebilir)."
+              + _last_scan_error_note())
         if html_fmt:
             return func.HttpResponse(msg, status_code=404, mimetype="text/plain")
         return func.HttpResponse(json.dumps({"status": "NO_DATA", "message": msg}, ensure_ascii=False),
