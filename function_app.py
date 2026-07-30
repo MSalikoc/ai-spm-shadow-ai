@@ -82,9 +82,28 @@ def weekly_digest(timer: func.TimerRequest) -> None:
     logging.info("AI-SPM haftalık digest: %s (%s değişiklik)", outcome, len(weekly_changes))
 
 
+@app.queue_trigger(arg_name="msg", queue_name=storage.SCAN_QUEUE, connection="AzureWebJobsStorage")
+def scan_worker(msg: func.QueueMessage) -> None:
+    source = msg.get_body().decode("utf-8") or "queue"
+    _run_scan(source)
+
+
 @app.route(route="scan", auth_level=func.AuthLevel.FUNCTION)
 def scan_now(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Taramayı kuyruğa koyar ve hemen döner (büyük tenant'larda çekirdek + 4 connector
+    taraması, Consumption planının HTTP için sabit ~230s front-end limitini aşabiliyor —
+    bkz. storage.enqueue_scan). Sonuç birkaç dakika içinde /api/report ve
+    /api/connectors'ta görünür. Kuyruk yapılandırılmamışsa (lokal/test) eski senkron
+    davranışa düşer.
+    """
     try:
+        if storage.enqueue_scan("http"):
+            return func.HttpResponse(json.dumps({
+                "status": "queued",
+                "message": "Tarama kuyruğa alındı, arka planda çalışıyor. Birkaç dakika "
+                           "sonra /api/report ve /api/connectors sayfalarını kontrol edin.",
+            }, ensure_ascii=False), mimetype="application/json", status_code=202)
         result, _, _ = _run_scan("http")
         return func.HttpResponse(json.dumps(result, ensure_ascii=False),
                                  mimetype="application/json", status_code=200)

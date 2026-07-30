@@ -83,3 +83,12 @@ def test_pipeline_summary_shape():
     apps = [{"risk_level": "Kritik", "display_name": "A", "vendor": "v", "risk_score": 80}]
     s = summary(apps)
     assert s["total"] == 1 and s["critical"] == 1 and "top" in s
+
+
+def test_enqueue_scan_falls_back_without_storage_connection(monkeypatch):
+    """Storage connection yoksa (lokal/test) enqueue_scan False döner — çağıran
+    (function_app.scan_now) eski senkron _run_scan davranışına düşer."""
+    import storage
+    monkeypatch.delenv("AzureWebJobsStorage", raising=False)
+    monkeypatch.delenv("REPORT_STORAGE_CONNECTION", raising=False)
+    assert storage.enqueue_scan("http") is False

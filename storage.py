@@ -44,6 +44,34 @@ def write_json(name: str, obj) -> None:
                    content_settings=ContentSettings(content_type="application/json"))
 
 
+SCAN_QUEUE = "aispm-scan-queue"
+
+
+def enqueue_scan(source: str) -> bool:
+    """
+    `SCAN_QUEUE`'ya bir tarama isteği koyar; `scan_worker` (queue-trigger) bunu arka
+    planda işler. Consumption planında HTTP-tetikleyicili fonksiyonlar Azure'un kendi
+    front-end load balancer'ında sabit ~230s'de kesiliyor (host.json'daki
+    functionTimeout bunu etkilemez) — büyük tenant'larda çekirdek + 4 connector taraması
+    bunu aşabiliyor. Gerçek işi HTTP isteğinin dışına, queue-trigger'a taşıyarak bu
+    limitten kaçıyoruz (queue-trigger'lar bu LB kısıtına tabi değil).
+
+    Connection yoksa (lokal/test ortamı) False döner — çağıran eski senkron davranışa
+    düşer (`_run_scan` doğrudan çağrılır), böylece lokal geliştirme/testler etkilenmez.
+    """
+    conn = os.environ.get("AzureWebJobsStorage") or os.environ.get("REPORT_STORAGE_CONNECTION")
+    if not conn or conn.lower().startswith("usedevelopmentstorage"):
+        return False
+    from azure.storage.queue import QueueClient
+    qc = QueueClient.from_connection_string(conn, queue_name=SCAN_QUEUE)
+    try:
+        qc.create_queue()
+    except Exception:
+        pass  # zaten var
+    qc.send_message(source)
+    return True
+
+
 def read_metadata() -> dict:
     """Kalıcı business/lifecycle metadata deposunu (metadata.json) okur. Yoksa {}."""
     return read_json("metadata.json") or {}
