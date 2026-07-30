@@ -52,10 +52,16 @@ def _run_scan(source: str):
     except Exception:
         logging.exception("findings hata")
         finding_records = []
-    try:  # connector drift (Adım 8) — flag kapalıysa run_connectors None döner, process no-op
-        connectors_drift.process(pipeline.run_connectors(graph))
+    try:  # connector drift (Adım 8) + AI Data Sources dashboard cache (Adım 7) — flag
+          # kapalıysa run_connectors None döner, ikisi de no-op
+        connectors_result = pipeline.run_connectors(graph)
+        connectors_drift.process(connectors_result)
+        if connectors_result is not None:
+            storage.publish_connectors(
+                connectors_report.html_string(connectors_result, tenant_id),
+                connectors_report.json_string(connectors_result))
     except Exception:
-        logging.exception("connector drift hata")
+        logging.exception("connector drift/dashboard hata")
     published = storage.publish(scored, tenant_id, changes, finding_records)
     summ = pipeline.summary(scored)
 
@@ -142,12 +148,17 @@ def report_view(req: func.HttpRequest) -> func.HttpResponse:
 @app.route(route="connectors", auth_level=func.AuthLevel.FUNCTION)
 def connectors_now(req: func.HttpRequest) -> func.HttpResponse:
     """
-    Microsoft AI Data Sources connector'larını (Agent 365, Entra Agent ID, Defender for
-    Cloud Apps, Purview) on-demand çalıştırır ve 15-bölümlü assessment döner. Read-only —
-    mevcut scan/drift/finding/e-posta akışına DOKUNMAZ. `_run_scan`'dan bağımsızdır.
+    Microsoft AI Data Sources dashboard'unu sunar (en son tarama sırasında `_run_scan`
+    tarafından önceden hesaplanıp Blob'a yazılan kopyayı okur). Read-only.
+
+    Eskiden 4 connector'ı (Agent 365, Entra Agent ID, Defender for Cloud Apps, Purview)
+    her istekte CANLI çalıştırıyordu — büyük/E7 tenant'larda bu, Consumption planının
+    HTTP için sabit ~230s front-end limitini aşıp 504/sonsuz yüklenmeye yol açtı (gerçek
+    tenant'ta gözlemlendi). `/api/report` ile aynı "önceden hesapla + oku" desenine
+    geçirildi — bkz. `storage.publish_connectors`.
 
     Hiçbir ENABLE_* flag'i açık değilse (varsayılan) NOT_CONFIGURED JSON'u döner —
-    Graph çağrısı yapılmaz. ?format=html ile standalone HTML sayfası döner.
+    Blob okuması bile yapılmaz. ?format=html ile standalone HTML sayfası döner.
     """
     if not pipeline.connectors_enabled():
         return func.HttpResponse(
@@ -157,19 +168,16 @@ def connectors_now(req: func.HttpRequest) -> func.HttpResponse:
                                   "PURVIEW_DSPM_IMPORT_PATH flag'i açık değil."},
                       ensure_ascii=False),
             mimetype="application/json", status_code=200)
-    try:
-        tenant_id = os.environ.get("AISPM_TENANT_ID", "")
-        graph = GraphClient(auth.get_token_managed_identity()) if tenant_id else None
-        result = pipeline.run_connectors(graph)
-        if (req.params.get("format") or "").lower() == "html":
-            return func.HttpResponse(connectors_report.html_string(result, tenant_id),
-                                     mimetype="text/html", status_code=200)
-        return func.HttpResponse(connectors_report.json_string(result),
-                                 mimetype="application/json", status_code=200)
-    except Exception as e:
-        logging.exception("connectors_now hata")
-        return func.HttpResponse(json.dumps({"error": str(e)}, ensure_ascii=False),
-                                 mimetype="application/json", status_code=500)
+    html_fmt = (req.params.get("format") or "").lower() == "html"
+    doc = storage.read_latest("connectors_latest.html" if html_fmt else "connectors_latest.json")
+    if doc is None:
+        msg = "Henüz AI Data Sources raporu yok. Önce /api/scan çalıştırın (birkaç dakika sürebilir)."
+        if html_fmt:
+            return func.HttpResponse(msg, status_code=404, mimetype="text/plain")
+        return func.HttpResponse(json.dumps({"status": "NO_DATA", "message": msg}, ensure_ascii=False),
+                                 mimetype="application/json", status_code=404)
+    return func.HttpResponse(doc, mimetype="text/html" if html_fmt else "application/json",
+                             status_code=200)
 
 
 @app.route(route="metadata", methods=["POST"], auth_level=func.AuthLevel.FUNCTION)

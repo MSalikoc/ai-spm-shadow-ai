@@ -16,6 +16,7 @@ kullanım/gözlem olarak işaretlenir; gerçek hassaslık Purview (Adım 5) ile 
 belirlenir (`data_sensitivity = UNDETERMINED_REQUIRES_PURVIEW`).
 """
 import json
+import logging
 import os
 
 from .base import (ApiUnavailable, BaseCollector, ConnectorStatus, EntityType,
@@ -114,6 +115,12 @@ class DefenderCloudAppsCollector(BaseCollector):
 
     # --- normalize ---
     def normalize(self, raw_records: list) -> list:
+        # GEÇİCİ TEŞHİS (AISPM_DEBUG_MDCA_RAW=true ile açılır): traffic/upload bayt
+        # alanlarının gerçek Graph beta şemasındaki adını doğrulamak için — bug tespit
+        # edilip düzeltildikten sonra bu blok kaldırılacak.
+        if raw_records and os.environ.get("AISPM_DEBUG_MDCA_RAW", "").lower() == "true":
+            logging.info("AISPM_DEBUG_MDCA_RAW ilk kayit: %s",
+                        json.dumps(raw_records[0].get("app"), default=str)[:2000])
         apps = {}          # app_key → aggregate
         observations = []
         for r in raw_records:

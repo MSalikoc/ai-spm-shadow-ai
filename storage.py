@@ -72,6 +72,43 @@ def enqueue_scan(source: str) -> bool:
     return True
 
 
+def publish_connectors(html: str, js: str) -> dict:
+    """
+    AI Data Sources dashboard'unu (connectors_report) `connectors_latest.html/json`
+    olarak yazar — `publish()`'in çekirdek dashboard için yaptığının aynısı.
+
+    `/api/connectors` eskiden bunu her istekte CANLI hesaplıyordu (4 connector'ı Graph'tan
+    senkron çekip render ediyordu); büyük/E7 tenant'larda bu, Consumption planının
+    HTTP için sabit ~230s front-end limitini aşıp 504/sonsuz yüklenmeye yol açtı (gerçek
+    tenant'ta gözlemlendi — bkz. `_run_scan`). Artık `_run_scan` (queue/timer, HTTP
+    limitine tabi değil) bu fonksiyonla önceden hesaplayıp burada kaydediyor;
+    `/api/connectors` sadece okuyor.
+    """
+    conn = os.environ.get("AzureWebJobsStorage") or os.environ.get("REPORT_STORAGE_CONNECTION")
+    if conn and not conn.lower().startswith("usedevelopmentstorage"):
+        try:
+            from azure.storage.blob import BlobServiceClient, ContentSettings
+            container = os.environ.get("REPORT_CONTAINER", "aispm-reports")
+            cc = BlobServiceClient.from_connection_string(conn).get_container_client(container)
+            try:
+                cc.create_container()
+            except Exception:
+                pass
+            cc.upload_blob("connectors_latest.html", html.encode("utf-8"), overwrite=True,
+                           content_settings=ContentSettings(content_type="text/html"))
+            cc.upload_blob("connectors_latest.json", js.encode("utf-8"), overwrite=True,
+                           content_settings=ContentSettings(content_type="application/json"))
+            return {"target": "blob", "container": container}
+        except Exception as e:
+            print(f"[!] connectors Blob'a yazılamadı ({e}); lokale yazılıyor.")
+    os.makedirs("out", exist_ok=True)
+    with open(os.path.join("out", "connectors_latest.html"), "w", encoding="utf-8") as f:
+        f.write(html)
+    with open(os.path.join("out", "connectors_latest.json"), "w", encoding="utf-8") as f:
+        f.write(js)
+    return {"target": "local", "dir": "out"}
+
+
 def read_metadata() -> dict:
     """Kalıcı business/lifecycle metadata deposunu (metadata.json) okur. Yoksa {}."""
     return read_json("metadata.json") or {}

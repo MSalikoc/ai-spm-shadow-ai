@@ -31,7 +31,9 @@ az functionapp config appsettings set -g "$RG" -n "$FUNC" --settings \
   -o none
 
 echo "[✓] Açıldı. Function App birkaç dakika içinde yeniden başlayıp yeni ayarları alır."
-echo "    Doğrulamak için (KEY'i az functionapp keys list ile alın):"
+echo "    Görmek için önce bir tarama tetikleyin (KEY'i az functionapp keys list ile alın):"
+echo "      curl \"https://$FUNC.azurewebsites.net/api/scan?code=\$KEY\""
+echo "    Birkaç dakika sonra (tarama kuyrukta arka planda çalışır):"
 echo "      curl \"https://$FUNC.azurewebsites.net/api/connectors?code=\$KEY\""
 echo "    Görsel (HTML) için sonuna &format=html ekleyin."
 echo
