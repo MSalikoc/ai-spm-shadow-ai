@@ -116,7 +116,13 @@ def weekly_digest(timer: func.TimerRequest) -> None:
 @app.queue_trigger(arg_name="msg", queue_name=storage.SCAN_QUEUE, connection="AzureWebJobsStorage")
 def scan_worker(msg: func.QueueMessage) -> None:
     source = msg.get_body().decode("utf-8") or "queue"
-    _run_scan(source)
+    result = _run_scan(source)
+    if source == "digest":  # digest_now'dan kuyruklanan istek: tarama bitince e-posta gönder
+        _, scored, tenant_id = result
+        weekly_changes = drift.recent(7)
+        outcome = notify.send_email_digest(scored, tenant_id, weekly_changes)
+        logging.info("AI-SPM on-demand digest (queue): %s (%s değişiklik)",
+                     outcome, len(weekly_changes))
 
 
 @app.route(route="scan", auth_level=func.AuthLevel.FUNCTION)
@@ -146,8 +152,18 @@ def scan_now(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.route(route="digest", auth_level=func.AuthLevel.FUNCTION)
 def digest_now(req: func.HttpRequest) -> func.HttpResponse:
-    """On-demand: tara + haftalık özet e-postasını hemen gönder (test için)."""
+    """
+    On-demand: taramayı kuyruğa koyar, `scan_worker` tarama bitince e-postayı gönderir
+    (test için). `/api/scan` ile aynı gerekçeyle senkrondan kuyruğa taşındı — tam tarama
+    Consumption planının HTTP için sabit ~230s limitini aşabiliyordu.
+    """
     try:
+        if storage.enqueue_scan("digest"):
+            return func.HttpResponse(json.dumps({
+                "status": "queued",
+                "message": "Tarama kuyruğa alındı; bitince e-posta otomatik gönderilecek "
+                           "(birkaç dakika sürebilir).",
+            }, ensure_ascii=False), mimetype="application/json", status_code=202)
         result, scored, tenant_id = _run_scan("digest")
         outcome = notify.send_email_digest(scored, tenant_id, drift.recent(7))
         return func.HttpResponse(
