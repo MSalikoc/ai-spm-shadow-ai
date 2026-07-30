@@ -45,21 +45,44 @@ Fill in the target tenant, scan schedule, and report container name, then **Crea
 
 ### Step 2 — Run the setup script
 
-In **Azure Cloud Shell** (Portal → terminal icon, top right):
+In **Azure Cloud Shell** (Portal → terminal icon, top right). Run each block **one at a
+time** — click the copy icon on a single block, paste it, press Enter, wait for it to
+finish, then move to the next. (Pasting several commands together can break if your
+clipboard swaps straight quotes `"` for curly ones — one block at a time avoids that.)
+
+Clone the repo:
 
 ```bash
 git clone https://github.com/MSalikoc/ai-spm-shadow-ai.git
+```
+
+Enter it:
+
+```bash
 cd ai-spm-shadow-ai
+```
 
-RESOURCE_GROUP="aispm-rg"          # your resource group from Step 1
-FUNCTION_APP="aispm-xxxxxxxxxx"    # your Function App name from Step 1
+Set your resource group name — only edit the text **inside the quotes**, keep the quotes:
 
+```bash
+RESOURCE_GROUP="aispm-rg"
+```
+
+Set your Function App name — both names are from Step 1:
+
+```bash
+FUNCTION_APP="aispm-xxxxxxxxxx"
+```
+
+Run the setup script:
+
+```bash
 ./scripts/postdeploy.sh "$RESOURCE_GROUP" "$FUNCTION_APP"
 ```
 
-> Only edit the text **inside the quotes**. Everything below reuses `$RESOURCE_GROUP` /
-> `$FUNCTION_APP` — set them once per Cloud Shell session (Cloud Shell resets after
-> ~20 min idle; if a later command errors with a usage message, set these two lines again).
+> `$RESOURCE_GROUP` / `$FUNCTION_APP` only last for this Cloud Shell session (it resets
+> after ~20 min idle). If a later command errors with a usage message, just redo the two
+> `RESOURCE_GROUP=`/`FUNCTION_APP=` lines above and re-run.
 
 This one script does everything: deploys the code, grants every Graph permission needed
 (core scan + all four AI Data Sources connectors), and turns the connectors on. Requires
@@ -68,12 +91,30 @@ or Global Administrator) — if you don't have it, have someone who does run thi
 
 ### Step 3 — View your dashboards
 
+Same Cloud Shell, one block at a time.
+
+Get your function key:
+
 ```bash
 KEY=$(az functionapp keys list -g "$RESOURCE_GROUP" -n "$FUNCTION_APP" --query functionKeys.default -o tsv)
-curl -s "https://$FUNCTION_APP.azurewebsites.net/api/scan?code=$KEY" ; echo   # trigger the first scan
+```
 
-echo "https://$FUNCTION_APP.azurewebsites.net/api/report?code=$KEY"                       # core dashboard
-echo "https://$FUNCTION_APP.azurewebsites.net/api/connectors?code=$KEY&format=html"       # AI Data Sources
+Trigger the first scan:
+
+```bash
+curl -s "https://$FUNCTION_APP.azurewebsites.net/api/scan?code=$KEY" ; echo
+```
+
+Print your core dashboard link:
+
+```bash
+echo "https://$FUNCTION_APP.azurewebsites.net/api/report?code=$KEY"
+```
+
+Print your AI Data Sources dashboard link:
+
+```bash
+echo "https://$FUNCTION_APP.azurewebsites.net/api/connectors?code=$KEY&format=html"
 ```
 
 Give it a few minutes after Step 2 — role propagation and the Function App restart both
@@ -105,7 +146,11 @@ New-ApplicationAccessPolicy -AppId $AppId -PolicyScopeGroupId $MailGroup `
   -AccessRight RestrictAccess -Description "AI-SPM digest sender only"
 ```
 
-Test: `curl "https://$FUNCTION_APP.azurewebsites.net/api/digest?code=$KEY"`
+Test:
+
+```bash
+curl "https://$FUNCTION_APP.azurewebsites.net/api/digest?code=$KEY"
+```
 
 ---
 
@@ -152,8 +197,17 @@ scripts/                     postdeploy.sh and what it calls
 
 ```bash
 pip install -r requirements.txt pytest
+```
+
+```bash
 python -m compileall -q .
+```
+
+```bash
 python -c "import function_app"
+```
+
+```bash
 pytest
 ```
 
