@@ -10,6 +10,7 @@ Package'ı birleşik AI_AGENT asset'ine normalize eder; entra appId varsa korela
 hazırdır. elementDetails parse edilir; parse edilemeyen tanımlar raw_reference ile saklanır.
 """
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 from .base import (ApiUnavailable, BaseCollector, EntityType, LicenseMissing,
@@ -36,12 +37,19 @@ class Agent365Collector(BaseCollector):
             packages = self._graph.get_all("/copilot/admin/catalog/packages", {"$top": "999"})
         except RuntimeError as e:
             raise self._classify(e)
-        out = []
-        for p in packages:
+
+        def _fetch(p):
             pid = p.get("id")
             detail = self._graph.get(f"/copilot/admin/catalog/packages/{pid}") if pid else {}
-            out.append({**p, **(detail or {})})
-        return out
+            return {**p, **(detail or {})}
+
+        # Her paket için ayrı bir detay GET'i gerekiyor — sıralı yapıldığında büyük
+        # tenant'larda (100+ paket) yüzlerce sıralı Graph çağrısı Consumption planının
+        # ~10dk functionTimeout'unu aşırıp taramayı sessizce (except bile çalışamadan)
+        # kesebiliyor (gerçek tenant'ta gözlemlendi). GraphClient.get() thread-safe
+        # (paylaşılan mutable state yok) — paralel çalıştırıyoruz.
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            return list(ex.map(_fetch, packages))
 
     @staticmethod
     def _classify(err):
