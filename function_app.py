@@ -200,17 +200,17 @@ def report_view(req: func.HttpRequest) -> func.HttpResponse:
 @app.route(route="connectors", auth_level=func.AuthLevel.FUNCTION)
 def connectors_now(req: func.HttpRequest) -> func.HttpResponse:
     """
-    Microsoft AI Data Sources dashboard'unu sunar (en son tarama sırasında `_run_scan`
-    tarafından önceden hesaplanıp Blob'a yazılan kopyayı okur). Read-only.
-
-    Eskiden 4 connector'ı (Agent 365, Entra Agent ID, Defender for Cloud Apps, Purview)
-    her istekte CANLI çalıştırıyordu — büyük/E7 tenant'larda bu, Consumption planının
-    HTTP için sabit ~230s front-end limitini aşıp 504/sonsuz yüklenmeye yol açtı (gerçek
-    tenant'ta gözlemlendi). `/api/report` ile aynı "önceden hesapla + oku" desenine
-    geçirildi — bkz. `storage.publish_connectors`.
+    Microsoft AI Data Sources dashboard'unu sunar. Önce `_run_scan` tarafından önceden
+    hesaplanıp Blob'a yazılan kopyayı dener (hızlı yol — bkz. `storage.publish_connectors`);
+    bulamazsa (henüz hiç scan_worker çalışmadıysa/hâlâ kuyrukta bekliyorsa) ESKİ CANLI
+    HESAPLAMA davranışına düşer — bu, scan_worker'ın kuyruk mesajlarını işleyip işlemediğine
+    bakılmaksızın AI Data Sources verisinin görülebilir kalmasını sağlar (büyük tenant'larda
+    Consumption planının ~230s HTTP limitini aşma riski hâlâ var, ama hiç veri göstermemekten
+    iyidir — canlı testte connectors_now'ı scan_worker'a bağımlı hale getirmek bir
+    regresyon oldu, bu geri dönüş onu düzeltiyor).
 
     Hiçbir ENABLE_* flag'i açık değilse (varsayılan) NOT_CONFIGURED JSON'u döner —
-    Blob okuması bile yapılmaz. ?format=html ile standalone HTML sayfası döner.
+    Graph çağrısı bile yapılmaz. ?format=html ile standalone HTML sayfası döner.
     """
     if not pipeline.connectors_enabled():
         return func.HttpResponse(
@@ -222,15 +222,22 @@ def connectors_now(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json", status_code=200)
     html_fmt = (req.params.get("format") or "").lower() == "html"
     doc = storage.read_latest("connectors_latest.html" if html_fmt else "connectors_latest.json")
-    if doc is None:
-        msg = ("Henüz AI Data Sources raporu yok. Önce /api/scan çalıştırın (birkaç dakika sürebilir)."
-              + _last_scan_error_note())
+    if doc is not None:
+        return func.HttpResponse(doc, mimetype="text/html" if html_fmt else "application/json",
+                                 status_code=200)
+    try:
+        tenant_id = os.environ.get("AISPM_TENANT_ID", "")
+        graph = GraphClient(auth.get_token_managed_identity()) if tenant_id else None
+        result = pipeline.run_connectors(graph)
         if html_fmt:
-            return func.HttpResponse(msg, status_code=404, mimetype="text/plain")
-        return func.HttpResponse(json.dumps({"status": "NO_DATA", "message": msg}, ensure_ascii=False),
-                                 mimetype="application/json", status_code=404)
-    return func.HttpResponse(doc, mimetype="text/html" if html_fmt else "application/json",
-                             status_code=200)
+            return func.HttpResponse(connectors_report.html_string(result, tenant_id),
+                                     mimetype="text/html", status_code=200)
+        return func.HttpResponse(connectors_report.json_string(result),
+                                 mimetype="application/json", status_code=200)
+    except Exception as e:
+        logging.exception("connectors_now (canlı fallback) hata")
+        return func.HttpResponse(json.dumps({"error": str(e)}, ensure_ascii=False),
+                                 mimetype="application/json", status_code=500)
 
 
 @app.route(route="metadata", methods=["POST"], auth_level=func.AuthLevel.FUNCTION)
