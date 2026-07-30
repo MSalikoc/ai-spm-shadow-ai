@@ -65,6 +65,25 @@ _CONNECTOR_INFO = {
     # kalıyor, sadece coverage/gaps listesinde satır olarak görünmüyor.
 }
 
+_SOURCE_LABEL = {
+    "AGENT_365": "Agent 365", "ENTRA_AGENT_ID": "Entra Agent ID",
+    "DEFENDER_CLOUD_APPS": "Defender for Cloud Apps", "PURVIEW_AUDIT": "Purview Audit",
+    "PURVIEW_DSPM_EXPORT": "Purview DSPM", "ENTRA_APPS": "Entra OAuth (klasik)",
+}
+
+
+def _sources_label(sources) -> str:
+    return ", ".join(_SOURCE_LABEL.get(s, s) for s in (sources or [])) or "—"
+
+
+def _fmt_names(names, limit=6) -> str:
+    names = [n for n in (names or []) if n]
+    if not names:
+        return "—"
+    shown = names[:limit]
+    rest = len(names) - len(shown)
+    return ", ".join(shown) + (f" (+{rest} daha)" if rest > 0 else "")
+
 
 def assessment(result: dict, now=None) -> dict:
     """
@@ -146,9 +165,15 @@ def _agent_identities(identities, m):
                      for s in (a.get("agent_identity") or {}).get("sponsors", [])],
         "app_only_perms": len((a.get("agent_identity") or {}).get("application_permissions", [])),
         "delegated_perms": len((a.get("agent_identity") or {}).get("delegated_permissions", [])),
+        "app_only_perm_names": [p.get("resource_display_name") or p.get("resource_id") or "—"
+                                for p in (a.get("agent_identity") or {}).get("application_permissions", [])],
+        "delegated_perm_names": [s for g in (a.get("agent_identity") or {}).get("delegated_permissions", [])
+                                 for s in (g.get("scopes") or [])],
         "blueprint_id": (a.get("related") or {}).get("blueprint_id")
                         or (a.get("agent_identity") or {}).get("blueprint_id"),
         "entra_app_id": (a.get("external_ids") or {}).get("entra_app_id"),
+        "sources": a.get("sources") or [],
+        "correlation_confidence": a.get("correlation_confidence"),
     } for a in identities]
     return {"metrics": m, "identities": rows}
 
@@ -161,6 +186,8 @@ def _agent365_section(agents, m):
         "available_to": (a.get("agent365") or {}).get("available_to"),
         "deployed_to": (a.get("agent365") or {}).get("deployed_to"),
         "entra_app_id": (a.get("external_ids") or {}).get("entra_app_id"),
+        "sources": a.get("sources") or [],
+        "correlation_confidence": a.get("correlation_confidence"),
     } for a in agents]
     return {"metrics": m, "packages": rows}
 
@@ -566,7 +593,10 @@ def _agent365_items(packages):
             remediation.append("Ek aksiyon gerekmiyor; periyodik olarak gözden geçirin.")
 
         facts = [("Build Type", build_type), ("Deployment", deployed_to),
-                ("Entra Korelasyonu", "Var" if correlated else "Yok")]
+                ("Entra Korelasyonu", "Var" if correlated else "Yok"),
+                ("Kaynaklar", _sources_label(p.get("sources"))),
+                ("Korelasyon Güveni",
+                 f"{p['correlation_confidence']}/100" if p.get("correlation_confidence") is not None else "—")]
         items.append(_item(f"agent365-{idx}", name, score, reasons, status_label, status_c,
                           facts, result_line, what_checked, remediation,
                           bucket="Blocked" if p["blocked"] else ("Everyone" if available_all else "Sınırlı")))
@@ -612,12 +642,16 @@ def _identity_items(identities):
                 status_label, status_c, result_line = "Failed", _SEV["high"], "Owner ve sponsor atanmamış."
             bucket = "Tam" if (has_owner and has_sponsor) else ("Kısmi" if (has_owner or has_sponsor) else "Yok")
 
+        app_only_names = _fmt_names(i.get("app_only_perm_names"))
+        delegated_names = _fmt_names(i.get("delegated_perm_names"))
         what_checked = (
             f"{name} " + ("etkin (enabled) durumda. " if i["enabled"] else "devre dışı (disabled) durumda. ")
             + f"Owner: {', '.join(i['owners']) if has_owner else 'atanmamış'}. "
             + f"Sponsor: {', '.join(i['sponsors']) if has_sponsor else 'atanmamış'}. "
-            + f"{i['app_only_perms']} app-only ve {i['delegated_perms']} delegated izne sahip ({perm_type}). "
+            + f"{i['app_only_perms']} app-only ({app_only_names}) ve {i['delegated_perms']} delegated "
+              f"({delegated_names}) izne sahip ({perm_type}). "
             + (f"Blueprint: {i['blueprint_id']}." if i.get("blueprint_id") else "Herhangi bir blueprint'e bağlı değil.")
+            + f" Kaynaklar: {_sources_label(i.get('sources'))}."
         )
         remediation = []
         if i["enabled"] and not has_owner:
@@ -628,7 +662,10 @@ def _identity_items(identities):
             remediation.append("Ek aksiyon gerekmiyor.")
 
         facts = [("Owner", ", ".join(i["owners"]) or "—"), ("Sponsor", ", ".join(i["sponsors"]) or "—"),
-                ("Permission Type", perm_type)]
+                ("App-only İzinler", app_only_names), ("Delegated İzinler", delegated_names),
+                ("Kaynaklar", _sources_label(i.get("sources"))),
+                ("Korelasyon Güveni",
+                 f"{i['correlation_confidence']}/100" if i.get("correlation_confidence") is not None else "—")]
         items.append(_item(f"identity-{idx}", name, score, reasons, status_label, status_c,
                           facts, result_line, what_checked, remediation, bucket=bucket))
     return items
