@@ -8,9 +8,12 @@ Ana fikir:
   4) Her SP için verilmiş delegated OAuth consent'lerini (scope'lar) eşle.
   5) Application (app-only) permission'ları ve gerçek sign-in aktivitesini ekle.
 """
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 from config import AI_VENDORS, GENERIC_AI_HINTS, MICROSOFT_OWNER_TENANTS
+
+_MAX_WORKERS = 10  # her app için ayrı Graph çağrısı yapan enrichment döngülerinde kullanılır
 
 
 def _text_blob(sp: dict) -> str:
@@ -162,7 +165,8 @@ def enrich_with_app_role_assignments(graph, discovered: list[dict]) -> None:
     dışındaki custom enterprise API'ler de desteklenir (resource SP'den çözümlenir).
     """
     resolver = _ResourceResolver(graph)
-    for app in discovered:
+
+    def _enrich(app):
         try:
             assigns = graph.get_all(
                 f"/servicePrincipals/{app['sp_id']}/appRoleAssignments", {"$top": "999"})
@@ -181,6 +185,12 @@ def enrich_with_app_role_assignments(graph, discovered: list[dict]) -> None:
             })
         app["application_permissions"] = perms
         app["has_app_only_access"] = bool(perms)
+
+    # Her app için ayrı bir appRoleAssignments çağrısı — büyük tenant'larda (onlarca app)
+    # sıralı yapıldığında ciddi gecikme yaratıyor (bkz. connectors/agent365.py'deki aynı
+    # düzeltme). GraphClient thread-safe; paralel çalıştırıyoruz.
+    with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as ex:
+        list(ex.map(_enrich, discovered))
 
 
 # --- Gerçek kullanım / sign-in aktivitesi -----------------------------------
@@ -292,7 +302,7 @@ def enrich_with_ownership(graph, discovered) -> None:
     Application owner (yerel application objesi) çoğu 3. parti multi-tenant app'te
     yoktur; bu yüzden application_owners boş kalır.
     """
-    for app in discovered:
+    def _enrich(app):
         obj = graph.get(
             f"/servicePrincipals/{app['sp_id']}",
             {"$select": "accountEnabled,publisherName,homepage,tags,notes,description,"
@@ -320,6 +330,11 @@ def enrich_with_ownership(graph, discovered) -> None:
             "credential_next_expiry": expiries[0] if expiries else None,
         }
 
+    # App başına 2 sıralı çağrı (obje + owners) — bkz. enrich_with_app_role_assignments'taki
+    # aynı gerekçe. Paralel çalıştırıyoruz.
+    with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as ex:
+        list(ex.map(_enrich, discovered))
+
 
 def enrich_with_signin_activity(graph, discovered, now=None):
     """
@@ -335,8 +350,14 @@ def enrich_with_signin_activity(graph, discovered, now=None):
         for app in discovered:
             app["usage"] = None
         return
-    for app in discovered:
+    def _enrich(app):
         try:
             app["usage"] = _app_usage(graph, app, now, iso90)
         except Exception:
             app["usage"] = None
+
+    # App başına 2 sign-in log sorgusu (delegated + service principal) — bunlar
+    # /auditLogs/signIns üzerinde filtreli analitik sorgular, tek tek en yavaş
+    # enrichment adımı. Bkz. enrich_with_app_role_assignments'taki aynı gerekçe.
+    with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as ex:
+        list(ex.map(_enrich, discovered))

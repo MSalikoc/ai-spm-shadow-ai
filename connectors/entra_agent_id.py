@@ -18,6 +18,7 @@ blueprint'iyle korele olur. Alt-kaynak (owner/sponsor/perm) hataları tek başı
 toplamayı düşürmez → connector PARTIALLY_CONNECTED olur.
 """
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 from .base import (ApiUnavailable, BaseCollector, ConnectorStatus, EntityType,
                    LicenseMissing, PermissionMissing, Source)
@@ -54,11 +55,10 @@ class EntraAgentIdCollector(BaseCollector):
             self._status = ConnectorStatus.PARTIALLY_CONNECTED
             self._error = self._error or f"blueprints: {str(e)[:160]}"
 
-        out = []
-        for sp in identities:
+        def _fetch_identity(sp):
             oid = sp.get("id")
             base = f"/servicePrincipals/{oid}/microsoft.graph.agentIdentity"
-            out.append({
+            return {
                 "_kind": "identity",
                 "sp": sp,
                 "owners": self._sub(f"{base}/owners"),
@@ -66,9 +66,13 @@ class EntraAgentIdCollector(BaseCollector):
                 "app_roles": self._sub(f"/servicePrincipals/{oid}/appRoleAssignments"),
                 "oauth_grants": self._sub(f"/servicePrincipals/{oid}/oauth2PermissionGrants"),
                 "groups": self._sub(f"/servicePrincipals/{oid}/memberOf"),
-            })
-        for app in blueprints:
-            out.append({"_kind": "blueprint", "app": app})
+            }
+
+        # Her identity için 5 ayrı alt-kaynak çağrısı — büyük tenant'larda sıralı yapıldığında
+        # aynı gecikme riski (bkz. connectors/agent365.py, collectors.py'deki eş düzeltmeler).
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            out = list(ex.map(_fetch_identity, identities))
+        out.extend({"_kind": "blueprint", "app": app} for app in blueprints)
         return out
 
     def _sub(self, path):
