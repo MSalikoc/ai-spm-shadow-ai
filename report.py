@@ -554,8 +554,7 @@ body{margin:0;background:var(--bg);color:var(--ink);
  font:14px/1.5 'Segoe UI',-apple-system,Roboto,sans-serif}
 header{display:flex;align-items:center;gap:14px;padding:12px 22px;background:var(--panel);
  border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
-.logo{width:22px;height:22px;border-radius:5px;
- background:linear-gradient(135deg,#0f6cbd,#2e8b57 55%,#c0392b)}
+.logo{flex-shrink:0}
 header h1{font-size:15px;margin:0;font-weight:600}
 header .spacer{flex:1}
 header .tenant{font-size:12px;color:var(--muted)}
@@ -909,7 +908,12 @@ def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None) -
 
     body = f"""
 <header>
-  <span class="logo"></span>
+  <svg class="logo" width="22" height="22" viewBox="0 0 21 21" xmlns="http://www.w3.org/2000/svg">
+    <rect x="1" y="1" width="9" height="9" fill="#F25022"/>
+    <rect x="11" y="1" width="9" height="9" fill="#7FBA00"/>
+    <rect x="1" y="11" width="9" height="9" fill="#00A4EF"/>
+    <rect x="11" y="11" width="9" height="9" fill="#FFB900"/>
+  </svg>
   <h1>AI-SPM</h1>
   <nav class="tabs">
     <a class="navlink active" data-tab="overview">Overview</a>
