@@ -671,8 +671,8 @@ THEME_JS = """
 var aiLink=document.getElementById('aiDataSourcesLink');
 if(aiLink){
   if(location.pathname.indexOf('/api/')===0){
-    var aiQs=location.search?location.search+'&format=html':'?format=html';
-    aiLink.href='/api/connectors'+aiQs;
+    var aiCode=new URLSearchParams(location.search).get('code');
+    aiLink.href='/api/connectors?format=html'+(aiCode?'&code='+encodeURIComponent(aiCode):'');
   }else{
     aiLink.remove();
   }

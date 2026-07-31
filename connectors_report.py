@@ -1062,7 +1062,8 @@ window.ztGoto = showTab;
 var coreLink=document.getElementById('coreDashboardLink');
 if(coreLink){
   if(location.pathname.indexOf('/api/')===0){
-    coreLink.href='/api/report'+(location.search||'');
+    var coreCode=new URLSearchParams(location.search).get('code');
+    coreLink.href='/api/report'+(coreCode?('?code='+encodeURIComponent(coreCode)):'');
   }else{
     coreLink.remove();
   }
