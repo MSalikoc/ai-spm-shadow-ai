@@ -1,21 +1,21 @@
 """
 Microsoft Entra Agent ID collector — agent identity / blueprint / owner / sponsor /
-permission envanteri (Adım 3).
+permission inventory (Step 3).
 
-Endpoint : GET /v1.0/servicePrincipals/microsoft.graph.agentIdentity          (identity listesi)
-           GET /v1.0/applications/microsoft.graph.agentIdentityBlueprint       (blueprint listesi)
-           GET /servicePrincipals/{id}/microsoft.graph.agentIdentity/owners     (sahipler)
-           GET /servicePrincipals/{id}/microsoft.graph.agentIdentity/sponsors   (sponsorlar)
-           GET /servicePrincipals/{id}/appRoleAssignments                       (app-only izin)
-           GET /servicePrincipals/{id}/oauth2PermissionGrants                   (delege izin)
-           GET /servicePrincipals/{id}/memberOf                                 (grup üyeliği)
-Permission: Application.Read.All + Directory.Read.All (owner/sponsor/grant için).
-Lisans/erişim yoksa: PERMISSION_MISSING / API_UNAVAILABLE / LICENSE_MISSING.
+Endpoints: GET /v1.0/servicePrincipals/microsoft.graph.agentIdentity          (identity list)
+           GET /v1.0/applications/microsoft.graph.agentIdentityBlueprint       (blueprint list)
+           GET /servicePrincipals/{id}/microsoft.graph.agentIdentity/owners     (owners)
+           GET /servicePrincipals/{id}/microsoft.graph.agentIdentity/sponsors   (sponsors)
+           GET /servicePrincipals/{id}/appRoleAssignments                       (app-only permissions)
+           GET /servicePrincipals/{id}/oauth2PermissionGrants                   (delegated permissions)
+           GET /servicePrincipals/{id}/memberOf                                 (group membership)
+Permission: Application.Read.All + Directory.Read.All (for owner/sponsor/grant).
+No license/access: PERMISSION_MISSING / API_UNAVAILABLE / LICENSE_MISSING.
 
-Her agent identity birleşik AGENT_IDENTITY asset'ine, her blueprint AGENT_BLUEPRINT
-asset'ine normalize edilir. entra_app_id → Agent365 package'ıyla; agent_blueprint_id →
-blueprint'iyle korele olur. Alt-kaynak (owner/sponsor/perm) hataları tek başına tüm
-toplamayı düşürmez → connector PARTIALLY_CONNECTED olur.
+Each agent identity is normalized to a merged AGENT_IDENTITY asset, each blueprint to an
+AGENT_BLUEPRINT asset. entra_app_id correlates with the Agent365 package; agent_blueprint_id
+correlates with the blueprint. A sub-resource (owner/sponsor/perm) failure alone doesn't
+drop the whole collection → the connector becomes PARTIALLY_CONNECTED.
 """
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -36,17 +36,17 @@ class EntraAgentIdCollector(BaseCollector):
     def is_configured(self) -> bool:
         return os.environ.get("ENABLE_ENTRA_AGENT_ID", "").lower() == "true"
 
-    # --- toplama ---
+    # --- collection ---
     def collect(self, since=None) -> list:
         if self._graph is None:
-            raise ApiUnavailable("Graph istemcisi yok")
+            raise ApiUnavailable("No Graph client")
         try:
             identities = self._graph.get_all(
                 "/servicePrincipals/microsoft.graph.agentIdentity", {"$top": "999"})
         except RuntimeError as e:
             raise self._classify(e)
 
-        # Blueprint listesi ayrı bir izin/önizleme kapısı olabilir → düşerse identity'ler yine gelir.
+        # The blueprint list may sit behind a separate permission/preview gate → identities still come through if it fails.
         try:
             blueprints = self._graph.get_all(
                 "/applications/microsoft.graph.agentIdentityBlueprint", {"$top": "999"})
@@ -68,15 +68,16 @@ class EntraAgentIdCollector(BaseCollector):
                 "groups": self._sub(f"/servicePrincipals/{oid}/memberOf"),
             }
 
-        # Her identity için 5 ayrı alt-kaynak çağrısı — büyük tenant'larda sıralı yapıldığında
-        # aynı gecikme riski (bkz. connectors/agent365.py, collectors.py'deki eş düzeltmeler).
+        # 5 separate sub-resource calls per identity — same delay risk when done
+        # sequentially on large tenants (see the matching fixes in
+        # connectors/agent365.py, collectors.py).
         with ThreadPoolExecutor(max_workers=10) as ex:
             out = list(ex.map(_fetch_identity, identities))
         out.extend({"_kind": "blueprint", "app": app} for app in blueprints)
         return out
 
     def _sub(self, path):
-        """Alt-kaynak GET — tekil hata tüm collect'i düşürmez, connector'ı PARTIAL yapar."""
+        """Sub-resource GET — a single failure doesn't drop the whole collect, just marks the connector PARTIAL."""
         if self._graph is None:
             return []
         try:
@@ -95,7 +96,7 @@ class EntraAgentIdCollector(BaseCollector):
             return LicenseMissing(str(err)[:200])
         if "404" in s or "not found" in s or "notfound" in s or "400" in s:
             return ApiUnavailable(str(err)[:200])
-        return err   # generic → safe_run ERROR yapar
+        return err   # generic → safe_run makes it ERROR
 
     # --- normalize ---
     def normalize(self, raw_records: list) -> list:
@@ -111,7 +112,7 @@ class EntraAgentIdCollector(BaseCollector):
         sp = r.get("sp") or {}
         oid = sp.get("id")
         app_id = sp.get("appId")
-        # Blueprint bağı henüz kesin şema değil → birkaç olası anahtarı dene, kaybetme.
+        # The blueprint link isn't a fixed schema yet → try a few possible keys, don't lose it.
         ai = sp.get("agentIdentity") or {}
         blueprint_id = (sp.get("blueprintId") or sp.get("agentIdentityBlueprintId")
                         or ai.get("blueprintId") or ai.get("agentIdentityBlueprintId"))
@@ -128,7 +129,7 @@ class EntraAgentIdCollector(BaseCollector):
             self.source,
             external_ids={
                 "entra_app_id": app_id,
-                "agent_identity_id": oid,      # object id — korelasyonun güçlü anahtarı
+                "agent_identity_id": oid,      # object id — the strong correlation key
                 "entra_object_id": oid,
                 "agent_blueprint_id": blueprint_id,
             },
@@ -147,7 +148,7 @@ class EntraAgentIdCollector(BaseCollector):
             "owners": owners,
             "sponsors": sponsors,
             "application_permissions": app_perms,     # app-only (appRoleAssignments)
-            "delegated_permissions": delegated,       # delege (oauth2PermissionGrants)
+            "delegated_permissions": delegated,       # delegated (oauth2PermissionGrants)
             "group_memberships": groups,
             "raw_reference": raw_reference(self.source, object_id=oid),
         }
@@ -218,7 +219,7 @@ class EntraAgentIdCollector(BaseCollector):
 
 
 def metrics(assets, now=None):
-    """Entra Agent ID dashboard metrikleri (bu connector'ın normalize asset listesinden)."""
+    """Entra Agent ID dashboard metrics (from this connector's normalized asset list)."""
     ids = [x for x in assets if x.get("agent_identity")]
     bps = [x for x in assets if x.get("agent_blueprint")]
 
@@ -234,7 +235,7 @@ def metrics(assets, now=None):
         "without_blueprint": sum(1 for x in ids if not g(x).get("blueprint_id")),
         "with_app_only_permissions": sum(1 for x in ids if g(x).get("application_permissions")),
         "with_delegated_permissions": sum(1 for x in ids if g(x).get("delegated_permissions")),
-        # Agent365 package'ına bağlanacak güçlü anahtarı (appId) olmayan identity'ler:
+        # identities lacking the strong key (appId) to link to an Agent365 package:
         "uncorrelated": sum(1 for x in ids if not x["external_ids"].get("entra_app_id")),
         "total_blueprints": len(bps),
     }

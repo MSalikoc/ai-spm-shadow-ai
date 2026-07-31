@@ -1,20 +1,20 @@
 """
-Uygulama bazlı hassas veri korelasyonu (Adım 6).
+Per-application sensitive data correlation (Step 6).
 
-Dört kaynağı (Agent 365 / Entra Agent ID / Defender-MDCA / Purview audit+DSPM) uygulama
-(veya agent) bazında birleştirir ve ürünün ana sorusunu cevaplar:
-  "Hangi AI uygulaması üzerinden HANGİ hassas veri, kaç kullanıcı, ne zaman, hangi yönde,
-   ve uygulamanın kurumsal onay durumu nedir?"
+Merges the four sources (Agent 365 / Entra Agent ID / Defender-MDCA / Purview audit+DSPM)
+per application (or agent) and answers the product's core question:
+  "Through WHICH AI application, WHAT sensitive data, how many users, when, in which
+   direction, and what is the application's sanction status?"
 
-Girdi: registry.run()'ın döndürdüğü korele asset listesi (app/agent asset'leri + event
-entity'leri: SENSITIVE_INTERACTION, USAGE_OBSERVATION birlikte).
+Input: the correlated asset list returned by registry.run() (app/agent assets + event
+entities: SENSITIVE_INTERACTION, USAGE_OBSERVATION together).
 
-Çıktı: her uygulama için `AppProfile` — usage (MDCA) + hassaslık (Purview) birleşik;
-7g/30g özet; yön dağılımı; etkilenen kullanıcı/agent; SIT/label/workload dağılımı; findings.
+Output: an `AppProfile` per application — usage (MDCA) + sensitivity (Purview) merged;
+7d/30d summary; direction breakdown; affected users/agents; SIT/label/workload breakdown; findings.
 
-KRİTİK ayrım: **erişim ≠ paylaşım**. Yön taksonomisi ACCESSED/SHARED/UPLOADED/GENERATED/
-BLOCKED/ALLOWED/UNKNOWN_DIRECTION ayrı tutulur; MDCA upload hacmi tek başına "hassas paylaşım"
-sayılmaz (Purview korelasyonu olmadan `sensitivity=UNDETERMINED`).
+CRITICAL distinction: **access ≠ sharing**. The direction taxonomy ACCESSED/SHARED/UPLOADED/
+GENERATED/BLOCKED/ALLOWED/UNKNOWN_DIRECTION is kept separate; MDCA upload volume alone does
+not count as "sensitive sharing" (without Purview correlation, `sensitivity=UNDETERMINED`).
 """
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -23,11 +23,11 @@ from .base import EntityType
 
 DIRECTIONS = ["ACCESSED", "SHARED", "UPLOADED", "GENERATED",
               "BLOCKED", "ALLOWED", "UNKNOWN_DIRECTION"]
-_SHARING_DIRECTIONS = {"SHARED", "UPLOADED", "GENERATED", "ALLOWED"}   # veri dışarı/işlendi
+_SHARING_DIRECTIONS = {"SHARED", "UPLOADED", "GENERATED", "ALLOWED"}   # data left/was processed
 _APP_ASSET_TYPES = {EntityType.AI_APPLICATION, EntityType.AI_AGENT, EntityType.AGENT_IDENTITY}
 
 
-# ---------- yardımcılar ----------
+# ---------- helpers ----------
 def _parse_iso(s):
     if not s:
         return None
@@ -43,7 +43,7 @@ def _norm(s):
 
 
 def _event_view(e):
-    """Bir event entity'sini (interaction/observation) ortak görünüme indirger."""
+    """Reduces an event entity (interaction/observation) to a common view."""
     if e.get("interaction"):
         i = e["interaction"]
         return {
@@ -96,7 +96,7 @@ def _index_apps(app_assets):
 
 
 def _resolve(view, idx):
-    """Event → app asset eşleştir (güçlü→zayıf). Eşleşmezse None (sentetik app)."""
+    """Matches event → app asset (strong→weak). None if no match (synthetic app)."""
     if view.get("app_id") and view["app_id"] in idx["app_id"]:
         return idx["app_id"][view["app_id"]]
     if view.get("mdca_app_id") and view["mdca_app_id"] in idx["mdca"]:
@@ -134,9 +134,9 @@ def _blank_profile(key, name, asset=None):
     }
 
 
-# ---------- ana API ----------
+# ---------- main API ----------
 def build_app_profiles(all_assets, now=None):
-    """Korele asset+event listesinden uygulama-bazlı hassas veri profilleri üretir."""
+    """Produces per-application sensitive data profiles from the correlated asset+event list."""
     app_assets = [a for a in all_assets if a.get("asset_type") in _APP_ASSET_TYPES]
     events = [v for v in (_event_view(e) for e in all_assets) if v]
     if now is None:
@@ -145,11 +145,11 @@ def build_app_profiles(all_assets, now=None):
     idx = _index_apps(app_assets)
 
     profiles = {}
-    # 1) envanterdeki her app-benzeri asset için profil (event'siz de görünsün → dürüst coverage)
+    # 1) a profile for every app-like asset in inventory (show even without events → honest coverage)
     for a in app_assets:
         profiles[a["asset_id"]] = _blank_profile(a["asset_id"], a.get("display_name"), a)
 
-    # 2) event'leri app'lere bağla
+    # 2) link events to apps
     for v in events:
         asset = _resolve(v, idx)
         if asset is not None:
@@ -167,7 +167,7 @@ def build_app_profiles(all_assets, now=None):
         _finalize(p, now)
         p["findings"] = evaluate_findings(p)
         out.append(p)
-    # en riskli/aktif önce
+    # riskiest/most active first
     out.sort(key=lambda x: (len(x["findings"]), x["sensitive_30d"], x["_interaction_count"]),
              reverse=True)
     for p in out:
@@ -179,7 +179,7 @@ def _apply_event(p, v, now):
     d = v["direction"] if v["direction"] in p["directions"] else "UNKNOWN_DIRECTION"
     p["directions"][d] += 1
     if v["kind"] == "observation":
-        # gözlem: usage sinyali; hassaslık DEĞİL (Purview korele edecek)
+        # observation: a usage signal; NOT sensitivity (Purview will correlate)
         p["usage"]["observed_users"] = max(p["usage"]["observed_users"], v.get("observed_users", 0))
         p["usage"]["uploaded_bytes"] = max(p["usage"]["uploaded_bytes"], v.get("uploaded_bytes", 0))
         p["usage"]["transactions"] = max(p["usage"]["transactions"], v.get("transactions", 0))
@@ -229,7 +229,7 @@ def _finalize(p, now):
 
 
 def evaluate_findings(p):
-    """Uygulama profilinden bulgular üretir (erişim≠paylaşım ayrımıyla)."""
+    """Produces findings from an application profile (with the access≠sharing distinction)."""
     findings = []
     name = p["display_name"]
     sanctioned = p.get("sanctioned_state")
@@ -241,8 +241,8 @@ def evaluate_findings(p):
             "type": "SENSITIVE_DATA_SHARED_WITH_UNSANCTIONED_AI",
             "severity": "high",
             "app": name,
-            "detail": f"{name} onaysız (unsanctioned) ve hassas veri paylaşım/işlem yönünde "
-                      f"({shared_sensitive} etkileşim). SIT: {list(p['sit_distribution'])[:5]}.",
+            "detail": f"{name} is unsanctioned and has sensitive data in a sharing/processing "
+                      f"direction ({shared_sensitive} interactions). SIT: {list(p['sit_distribution'])[:5]}.",
             "affected_users": p["affected_user_count"],
         })
     if p["blocked"] > 0:
@@ -250,7 +250,7 @@ def evaluate_findings(p):
             "type": "SENSITIVE_DATA_BLOCKED_TO_AI",
             "severity": "info",
             "app": name,
-            "detail": f"{name} için {p['blocked']} hassas etkileşim DLP ile engellendi (pozitif kontrol).",
+            "detail": f"{p['blocked']} sensitive interactions were blocked by DLP for {name} (positive control).",
         })
     if (p["usage"].get("uploaded_bytes", 0) > 0
             and p["usage"].get("data_sensitivity") == "UNDETERMINED_REQUIRES_PURVIEW"
@@ -259,21 +259,21 @@ def evaluate_findings(p):
             "type": "UNSANCTIONED_AI_UPLOAD_UNDETERMINED",
             "severity": "medium" if sanctioned == "unsanctioned" else "low",
             "app": name,
-            "detail": f"{name} yüksek upload hacmi var ({p['usage']['uploaded_bytes']} bayt) "
-                      f"ama Purview korelasyonu yok → hassaslık BELİRSİZ (hacim tek başına paylaşım değil).",
+            "detail": f"{name} has a high upload volume ({p['usage']['uploaded_bytes']} bytes) "
+                      f"but no Purview correlation → sensitivity is UNDETERMINED (volume alone isn't sharing).",
         })
     if p["label_distribution"] and p["directions"]["ACCESSED"] > 0:
         findings.append({
             "type": "AI_APP_ACCESSING_LABELED_DATA",
             "severity": "medium",
             "app": name,
-            "detail": f"{name} etiketli (labeled) kurumsal veriye erişiyor: {list(p['label_distribution'])}.",
+            "detail": f"{name} is accessing labeled corporate data: {list(p['label_distribution'])}.",
         })
     return findings
 
 
 def portfolio_summary(profiles):
-    """Adım 7 dashboard için üst-düzey özet."""
+    """High-level summary for the Step 7 dashboard."""
     apps_with_sensitive = [p for p in profiles
                            if p["sensitive_data_summary"]["window_30d"]["sensitive"] > 0]
     findings = [f for p in profiles for f in p["findings"]]

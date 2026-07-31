@@ -1,4 +1,4 @@
-"""Adım 8 — connector kaynaklı change-tracking (connectors_drift.py) testleri."""
+"""Step 8 — connector-sourced change-tracking (connectors_drift.py) tests."""
 from datetime import datetime, timezone
 
 import connectors_drift as cd
@@ -91,7 +91,7 @@ def test_new_unsanctioned_app_and_transition():
                               _mdca_app("EvilAI", "m2", "unsanctioned")]))
     events = cd.diff(prev, cur, NOW)
     types_by_asset = {(e["change_type"], e["asset_id"]) for e in events}
-    assert ("NEW_UNSANCTIONED_AI_APP", "mdca_app_id:m2") in types_by_asset  # yeni + doğrudan unsanctioned
+    assert ("NEW_UNSANCTIONED_AI_APP", "mdca_app_id:m2") in types_by_asset  # new + directly unsanctioned
     assert ("NEW_UNSANCTIONED_AI_APP", "mdca_app_id:m1") in types_by_asset  # unreviewed -> unsanctioned
 
 
@@ -102,14 +102,14 @@ def test_app_sanctioned_transition():
     assert any(e["change_type"] == "AI_APP_SANCTIONED" for e in events)
 
 
-# ---------- Purview hassas etkileşimler ----------
+# ---------- Purview sensitive interactions ----------
 def test_sensitive_interaction_blocked_allowed_and_generic():
     prev = cd.snapshot(_result([]))
     cur = cd.snapshot(_result([
         _interaction("i1", "ChatGPT", "alice@x.com", "BLOCKED", sits=["Credit Card Number"]),
         _interaction("i2", "ChatGPT", "bob@x.com", "ALLOWED", sits=["SSN"]),
         _interaction("i3", "Teams", "carol@x.com", "ACCESSED", label="Confidential"),
-        _interaction("i4", "Teams", "dave@x.com", "ACCESSED"),   # hassas içerik yok -> event YOK
+        _interaction("i4", "Teams", "dave@x.com", "ACCESSED"),   # no sensitive content -> NO event
     ]))
     events = cd.diff(prev, cur, NOW)
     types_by_asset = {(e["change_type"], e["asset_id"]) for e in events}
@@ -120,12 +120,12 @@ def test_sensitive_interaction_blocked_allowed_and_generic():
 
 
 def test_interaction_not_renotified_once_seen():
-    """Aynı interaction ikinci taramada tekrar 'yeni' sayılmamalı (30g pencere overlap)."""
+    """The same interaction shouldn't be counted 'new' again on the second scan (30d window overlap)."""
     a = _interaction("i1", "ChatGPT", "alice@x.com", "BLOCKED", sits=["Credit Card Number"])
     snap1 = cd.snapshot(_result([a]))
     events1 = cd.diff({}, snap1, NOW)
     assert any(e["asset_id"] == "i1" for e in events1)
-    snap2 = cd.snapshot(_result([a]))       # ikinci taramada hâlâ pencere içinde
+    snap2 = cd.snapshot(_result([a]))       # still within the window on the second scan
     events2 = cd.diff(snap1, snap2, NOW)
     assert not any(e["asset_id"] == "i1" for e in events2)
 
@@ -133,13 +133,13 @@ def test_interaction_not_renotified_once_seen():
 def test_raw_content_never_persisted_in_snapshot():
     a = _interaction("i1", "ChatGPT", "alice@x.com", "SHARED", sits=["SSN"])
     a["interaction"]["raw_content_stored"] = True
-    a["interaction"]["raw_content"] = {"prompt": "gizli müşteri verisi", "response": "..."}
+    a["interaction"]["raw_content"] = {"prompt": "confidential customer data", "response": "..."}
     snap = cd.snapshot(_result([a]))
     assert "raw_content" not in snap["_interactions"]["i1"]
     assert "prompt" not in str(snap["_interactions"]["i1"])
 
 
-# ---------- kaynak bağlantı durumu ----------
+# ---------- data source connection status ----------
 def test_purview_coverage_changed_and_generic_data_source_disconnected():
     prev = cd.snapshot(_result([], health={
         "purview_audit": {"status": ConnectorStatus.NOT_CONFIGURED},
@@ -155,13 +155,13 @@ def test_purview_coverage_changed_and_generic_data_source_disconnected():
     assert ("DATA_SOURCE_DISCONNECTED", "agent365") in types_by_asset
 
 
-# ---------- process() / storage kalıcılığı ----------
+# ---------- process() / storage persistence ----------
 def test_process_none_result_is_noop(monkeypatch):
     calls = []
     monkeypatch.setattr("storage.read_json", lambda name: calls.append(("read", name)))
     monkeypatch.setattr("storage.write_json", lambda name, obj: calls.append(("write", name)))
     assert cd.process(None) == []
-    assert calls == []                      # storage'a hiç dokunulmadı
+    assert calls == []                      # storage was never touched
 
 
 def test_process_first_scan_is_baseline(monkeypatch):
@@ -169,7 +169,7 @@ def test_process_first_scan_is_baseline(monkeypatch):
     written = {}
     monkeypatch.setattr("storage.write_json", lambda name, obj: written.setdefault(name, obj))
     events = cd.process(_result([_pkg("Finance Assistant", "pkg-1")]))
-    assert events == []                     # baseline: değişiklik üretmez
+    assert events == []                     # baseline: produces no changes
     assert "connectors_snapshot.json" in written
     assert "connectors_changes.json" not in written
 
@@ -201,5 +201,5 @@ def test_executive_summary_lines():
         cd._ev(NOW, "SENSITIVE_INTERACTION_ALLOWED", "i1", "ChatGPT", None, "ALLOWED", "x"),
     ]
     lines = cd.executive_summary(events)
-    assert any("onaysız" in l for l in lines)
-    assert any("engellenmedi" in l for l in lines)
+    assert any("unsanctioned" in l for l in lines)
+    assert any("not blocked" in l for l in lines)

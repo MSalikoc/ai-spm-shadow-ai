@@ -1,4 +1,4 @@
-"""Adım 5 — Purview Audit collector + DSPM import adapter testleri (offline mock)."""
+"""Step 5 — Purview Audit collector + DSPM import adapter tests (offline mock)."""
 import csv
 import json
 import os
@@ -57,7 +57,7 @@ def test_query_poll_records_and_normalize(monkeypatch):
     assets = c.safe_run()
     assert c.get_health()["status"] == ConnectorStatus.CONNECTED
     assert len(assets) == 3
-    # audit query gövdesi doğru operations ile POST edildi
+    # the audit query body was POSTed with the correct operations
     assert set(fg.posted["operationFilters"]) == {
         "CopilotInteraction", "ConnectedAIAppInteraction", "AIAppInteraction"}
 
@@ -68,9 +68,9 @@ def test_query_poll_records_and_normalize(monkeypatch):
     assert r1["interaction"]["sensitive_info_types"][0]["name"] == "Credit Card Number"
     assert r1["interaction"]["sensitivity_label_id"] == "label-confidential"
     assert r1["interaction"]["referenced_resources"][0]["name"] == "Q3.xlsx"
-    # her interaction benzersiz id → external_ids.purview_record_id (merge token DEĞİL)
+    # each interaction has a unique id → external_ids.purview_record_id (NOT a merge token)
     assert r1["external_ids"]["purview_record_id"] == "rec-1"
-    # API'de olmayan alan dürüstçe işaretli
+    # a field not in the API is honestly marked
     assert r1["interaction"]["sensitivity_label_name"]["status"] == "NOT_EXPOSED_BY_API"
 
 
@@ -79,8 +79,8 @@ def test_direction_variants(monkeypatch):
     assets = PurviewAuditCollector(FakeGraph(_records()), sleep=NOSLEEP).safe_run()
     d = {a["interaction"]["interaction_id"]: a["interaction"]["direction"] for a in assets}
     assert d["rec-1"] == "BLOCKED"
-    assert d["rec-2"] == "ALLOWED"       # DLP Audit (engellenmedi)
-    assert d["rec-3"] == "ACCESSED"      # kaynağa erişti, DLP yok
+    assert d["rec-2"] == "ALLOWED"       # DLP Audit (not blocked)
+    assert d["rec-3"] == "ACCESSED"      # accessed a resource, no DLP
 
 
 def test_raw_content_not_stored_by_default(monkeypatch):
@@ -89,7 +89,7 @@ def test_raw_content_not_stored_by_default(monkeypatch):
     assets = PurviewAuditCollector(FakeGraph(_records()), sleep=NOSLEEP).safe_run()
     i = assets[0]["interaction"]
     assert i["raw_content_stored"] is False
-    assert "raw_content" not in i           # içerik ASLA saklanmadı
+    assert "raw_content" not in i           # content was NEVER stored
 
 
 def test_raw_content_stored_when_opted_in(monkeypatch):
@@ -144,7 +144,7 @@ def test_dspm_import_json():
     assert len(assets) == 2
     for a in assets:
         assert a["asset_type"] == EntityType.SENSITIVE_INTERACTION
-        assert a["sources"] == [Source.PURVIEW_DSPM_EXPORT]     # audit'ten AYRI kaynak
+        assert a["sources"] == [Source.PURVIEW_DSPM_EXPORT]     # a source SEPARATE from audit
     d1 = next(a for a in assets if a["interaction"]["user"] == "carol@contoso.com")
     assert d1["interaction"]["direction"] == "SHARED"
     assert {s["name"] for s in d1["interaction"]["sensitive_info_types"]} == {
@@ -174,7 +174,7 @@ def test_dspm_schema_mismatch(tmp_path):
                  encoding="utf-8")
     c = PurviewDspmImportCollector(import_path=str(p))
     assert c.safe_run() == []
-    assert c.get_health()["status"] == ConnectorStatus.API_UNAVAILABLE   # dürüst uyumsuzluk
+    assert c.get_health()["status"] == ConnectorStatus.API_UNAVAILABLE   # honest incompatibility
 
 
 def test_dspm_missing_file():

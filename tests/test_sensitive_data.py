@@ -1,4 +1,4 @@
-"""Adım 6 — uygulama bazlı hassas veri korelasyonu + blueprint relate-not-merge testleri."""
+"""Step 6 — per-application sensitive data correlation + blueprint relate-not-merge tests."""
 from datetime import datetime, timezone
 
 from connectors import correlation, model, sensitive_data
@@ -52,14 +52,14 @@ def test_merges_usage_and_sensitivity_per_app():
     ]
     profiles = build_app_profiles(assets, now=NOW)
     chatgpt = next(p for p in profiles if p["display_name"] == "ChatGPT")
-    # MDCA usage + Purview hassaslık aynı app altında birleşti
+    # MDCA usage + Purview sensitivity merged under the same app
     assert chatgpt["matched_to_inventory"] is True
     assert chatgpt["sanctioned_state"] == "unsanctioned"
     assert chatgpt["affected_user_count"] == 2
     assert chatgpt["usage"]["uploaded_bytes"] == 3000000
     assert chatgpt["sensitive_data_summary"]["window_30d"]["sensitive"] == 2
     assert set(chatgpt["sit_distribution"]) == {"Credit Card Number", "U.S. Social Security Number"}
-    assert {"AGENT_365"} != set(chatgpt["sources"])  # DEFENDER + PURVIEW kaynakları
+    assert {"AGENT_365"} != set(chatgpt["sources"])  # DEFENDER + PURVIEW sources
 
 
 def test_finding_shared_with_unsanctioned_ai():
@@ -77,7 +77,7 @@ def test_finding_shared_with_unsanctioned_ai():
 
 
 def test_access_is_not_sharing():
-    # sadece ACCESSED (kurumsal veriye erişim) → paylaşım bulgusu ÜRETİLMEZ
+    # only ACCESSED (corporate data access) → NO sharing finding is produced
     assets = [
         _mdca_app("SanctionedCopilot", "mdca-copilot", "sanctioned"),
         _interaction("i1", "alice@x.com", "SanctionedCopilot", "ACCESSED", "2026-07-25T00:00:00Z",
@@ -87,11 +87,11 @@ def test_access_is_not_sharing():
     p = next(pp for pp in profiles if pp["display_name"] == "SanctionedCopilot")
     types = {f["type"] for f in p["findings"]}
     assert "SENSITIVE_DATA_SHARED_WITH_UNSANCTIONED_AI" not in types
-    assert "AI_APP_ACCESSING_LABELED_DATA" in types      # erişim ayrı finding
+    assert "AI_APP_ACCESSING_LABELED_DATA" in types      # access is a separate finding
 
 
 def test_upload_volume_alone_is_undetermined():
-    # MDCA upload var, Purview yok → BELİRSİZ (tek başına hassas paylaşım değil)
+    # MDCA upload exists, no Purview → UNDETERMINED (volume alone isn't sensitive sharing)
     assets = [_mdca_app("MysteryAI", "mdca-x", "unsanctioned", uploaded=5000000)]
     profiles = build_app_profiles(assets, now=NOW)
     p = profiles[0]
@@ -110,12 +110,12 @@ def test_blocked_is_positive_control():
     p = next(pp for pp in profiles if pp["display_name"] == "ChatGPT")
     assert p["blocked"] == 1
     assert "SENSITIVE_DATA_BLOCKED_TO_AI" in {f["type"] for f in p["findings"]}
-    # engellenen paylaşım "shared" sayılmaz → high finding yok
+    # a blocked share doesn't count as "shared" → no high finding
     assert "SENSITIVE_DATA_SHARED_WITH_UNSANCTIONED_AI" not in {f["type"] for f in p["findings"]}
 
 
 def test_unmatched_event_becomes_synthetic_app():
-    # envanterde olmayan bir app (Copilot host) → sentetik profil, ayrı gösterilir
+    # an app not in inventory (Copilot host) → synthetic profile, shown separately
     assets = [_interaction("i1", "alice@x.com", "Microsoft Teams", "ACCESSED",
                            "2026-07-25T00:00:00Z", label="Confidential")]
     profiles = build_app_profiles(assets, now=NOW)
@@ -139,10 +139,10 @@ def test_portfolio_summary():
     assert s["high_severity_findings"] >= 1
 
 
-# ---------- blueprint relate-not-merge (Adım 3 açığının Adım 6 düzeltmesi) ----------
+# ---------- blueprint relate-not-merge (Step 6 fix for the Step 3 gap) ----------
 
 def test_blueprint_relates_not_merges():
-    # Aynı blueprint'ten TÜREYEN iki identity + blueprint asset'i → COLLAPSE OLMAMALI
+    # Two identities DERIVED from the same blueprint + the blueprint asset → must NOT COLLAPSE
     id1 = model.make_asset(EntityType.AGENT_IDENTITY, "Agent Instance 1", Source.ENTRA_AGENT_ID,
                            external_ids={"agent_identity_id": "OID-1", "agent_blueprint_id": "BP-1"})
     id2 = model.make_asset(EntityType.AGENT_IDENTITY, "Agent Instance 2", Source.ENTRA_AGENT_ID,
@@ -152,9 +152,9 @@ def test_blueprint_relates_not_merges():
     merged = correlation.correlate([id1, id2, bp])
     identities = [a for a in merged if a["asset_type"] == EntityType.AGENT_IDENTITY]
     blueprints = [a for a in merged if a["asset_type"] == EntityType.AGENT_BLUEPRINT]
-    assert len(identities) == 2          # iki identity AYRI kaldı (collapse yok)
+    assert len(identities) == 2          # the two identities stayed SEPARATE (no collapse)
     assert len(blueprints) == 1
-    # relate ile bağlandılar (merge değil)
+    # linked via relate (not merge)
     for ident in identities:
         assert ident["related"]["blueprint_id"] == "BP-1"
         assert ident["related"]["blueprint_asset_id"] == blueprints[0]["asset_id"]

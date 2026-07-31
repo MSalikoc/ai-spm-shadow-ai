@@ -1,4 +1,4 @@
-"""Adım 7 — connectors_report.py: 15-bölümlü assessment + standalone HTML/JSON."""
+"""Step 7 — connectors_report.py: 15-section assessment + standalone HTML/JSON."""
 import html
 import json
 import os
@@ -13,7 +13,7 @@ FXDIR = os.path.join(os.path.dirname(connectors.__file__), "fixtures")
 
 
 class MegaFakeGraph:
-    """Dört connector'ın hepsini tek sahte Graph istemcisiyle besler (fixture dosyalarından)."""
+    """Feeds all four connectors with a single fake Graph client (from fixture files)."""
 
     def __init__(self):
         with open(os.path.join(FXDIR, "agent365_packages.json"), encoding="utf-8") as f:
@@ -94,18 +94,18 @@ def test_full_pipeline_to_assessment(monkeypatch):
     assert len(a["agent_identities"]["identities"]) == 2
     assert len(a["agent365_packages"]["packages"]) == 2
     assert len(a["shadow_ai_usage"]["applications"]) >= 1
-    # Purview audit'teki hassas etkileşim -> ChatGPT / Finance Assistant gibi app'lerle korele
+    # The sensitive interaction in Purview audit -> correlates with apps like ChatGPT / Finance Assistant
     assert isinstance(a["sensitive_interactions"]["sample"], list)
-    assert a["known_gaps"]                                  # dürüst boşluklar her zaman var
+    assert a["known_gaps"]                                  # honest gaps are always present
 
 
 def test_agent_detail_shows_blueprint_relation(monkeypatch):
     _enable_all(monkeypatch)
     result = pipeline.run_connectors(MegaFakeGraph())
     a = connectors_report.assessment(result)
-    # Bu identity Agent365 paketiyle entra_app_id üzerinden korele olduğu için
+    # Since this identity is correlated with the Agent365 package via entra_app_id,
     # display_name Agent365'ten gelir ("Finance Assistant") — owner/blueprint verisi
-    # yine de agent_identity alt-dict'inden taşınır (korelasyon veri kaybetmez).
+    # it's still carried in the agent_identity sub-dict (correlation never loses data).
     fin = next(x for x in a["agent_detail"] if x["owners"])
     assert fin["owners"][0]["display_name"] == "Alice Admin"
     assert fin["blueprint"]["display_name"] == "Finance Agent Blueprint"
@@ -131,29 +131,29 @@ def test_json_and_html_render_without_error(monkeypatch):
     assert "<html>" in doc and "AI Data Sources" in doc
     assert "contoso.onmicrosoft.com" in doc
     assert "Applications with Sensitive Data Exposure" in doc
-    # Adım 7 HTML'i keşif/trafik/inceleme bölümlerini de basıyor (yalnızca 4 bölümle
-    # sınırlı kalmasın diye) — agent envanteri, shadow AI trafiği, Purview etkileşim
-    # log'u ve "assessment results" tablosu + tıklanınca açılan slide-over detay paneli
-    # (Microsoft Zero Trust Assessment deseni: Risk/Status rozetleri, facts, Result,
-    # What was checked, Remediation action).
-    assert "Finance Assistant" in doc                    # Agent 365 paket tablosu
-    assert "Orphan Agent Identity" in doc                # Entra Agent Identity tablosu
-    assert "ChatGPT" in doc                              # Shadow AI trafik tablosu
-    assert 'class="zt-row"' in doc                       # tıklanabilir assessment satırları
+    # The Step 7 HTML also renders discovery/traffic/review sections (so it isn't
+    # limited to just the 4 sections) — agent inventory, Shadow AI traffic, Purview
+    # interaction log, and the "assessment results" table + a slide-over detail panel
+    # that opens on click (Microsoft Zero Trust Assessment pattern: Risk/Status badges,
+    # facts, Result, What was checked, Remediation action).
+    assert "Finance Assistant" in doc                    # Agent 365 package table
+    assert "Orphan Agent Identity" in doc                # Entra Agent Identity table
+    assert "ChatGPT" in doc                              # Shadow AI traffic table
+    assert 'class="zt-row"' in doc                       # clickable assessment rows
     assert 'id="zt-panel"' in doc and "What was checked" in doc and "Remediation action" in doc
-    assert "data-detail=" in doc                         # her satırın detay verisi gömülü
-    assert "alice@contoso.com" in doc                    # agent detail owner (JSON içinde) görünür
-    # Çok sayfalı yapı (Overview + Agents + Shadow AI + Sensitive Data + Findings + Gaps)
+    assert "data-detail=" in doc                         # each row's detail data is embedded
+    assert "alice@contoso.com" in doc                    # agent detail owner (in the JSON) is visible
+    # Multi-page structure (Overview + Agents + Shadow AI + Sensitive Data + Findings + Gaps)
     for tab in ("overview", "agents", "shadow", "sensitive", "findings", "gaps"):
         assert f'data-tab="{tab}"' in doc
-    assert 'class="tab active" data-tab="overview"' in doc   # yalnızca Overview başlangıçta aktif
-    # Akış (Sankey-tarzı) diyagramlar Overview'da
+    assert 'class="tab active" data-tab="overview"' in doc   # only Overview is active initially
+    # Flow (Sankey-style) diagrams on Overview
     assert 'class="flow"' in doc
-    # En yüksek riskli 5 madde
-    assert "En Yüksek Riskli 5 Madde" in doc
-    # Shadow AI sekmesi Defender for Cloud Apps'in kendi "Discovered apps" grid'iyle aynı
-    # sütunları göstermeli (Risk Score/Tag/Traffic/Upload/Transactions/Users/IP Addresses/
-    # Devices/Last Seen) — düz facts değil, gerçek trafik tablosu.
+    # Top 5 highest-risk items
+    assert "Top 5 Highest-Risk Items" in doc
+    # The Shadow AI tab should show the same columns as Defender for Cloud Apps' own
+    # "Discovered apps" grid (Risk Score/Tag/Traffic/Upload/Transactions/Users/IP Addresses/
+    # Devices/Last Seen) — a real traffic table, not plain facts.
     for col in ("Risk Score", "Tag", "Traffic", "Upload", "Transactions",
                "Users", "IP Addresses", "Devices", "Last Seen"):
         assert f"<th>{col}</th>" in doc
@@ -166,22 +166,22 @@ def test_shadow_traffic_table_shows_mdca_style_columns(monkeypatch):
     items = connectors_report._shadow_items(a["shadow_ai_usage"]["applications"])
     chatgpt = next(i for i in items if i["name"] == "ChatGPT")
     # Aggregate: stream-fw-1 (users40/devices35/ips12/up2M) + stream-proxy-2 (users25/devices20/
-    # ips8/up1M) -> conservative max için users/devices/ips, additive için upload/transactions.
+    # ips8/up1M) -> conservative max for users/devices/ips, additive for upload/transactions.
     t = chatgpt["traffic"]
     assert t["users"] == 40 and t["devices"] == 35 and t["ip_addresses"] == 12
     assert t["uploaded_bytes"] == 3_000_000
 
     table = connectors_report._shadow_traffic_section("shadow", "t", "s", items, "empty")
-    # Görünür hücrelerde (data-detail JSON'u DEĞİL) insan-okunur bayt formatı ve sayılar olmalı.
+    # Visible cells (NOT the data-detail JSON) should have human-readable byte format and counts.
     visible = re.sub(r"data-detail='.*?' onclick", "", table, flags=re.S)
     chatgpt_row = re.search(r'<tr class="zt-row"[^>]*data-name="chatgpt"[^>]*>.*?</tr>', visible, re.S)
-    assert chatgpt_row, "ChatGPT satırı bulunamadı"
+    assert chatgpt_row, "ChatGPT row not found"
     row = chatgpt_row.group(0)
-    assert "2.9 MB" in row          # upload bayt insan-okunur formatta (3,000,000 B, 1024 tabanlı)
+    assert "2.9 MB" in row          # upload bytes in human-readable format (3,000,000 B, base 1024)
     assert ">40<" in row            # users
     assert ">35<" in row            # devices
     assert ">12<" in row            # ip addresses
-    assert 'style="--pc:' in row    # risk score bar / sanction pill rengi
+    assert 'style="--pc:' in row    # risk score bar / sanction pill color
 
 
 def test_fmt_bytes():
@@ -192,7 +192,7 @@ def test_fmt_bytes():
 
 
 def test_item_scores_are_transparent_0_to_100_with_reasons(monkeypatch):
-    """'45 diyorsa neye göre 45?' — her maddenin reasons listesi puan gerekçesini taşımalı."""
+    """'It says 45, based on what?' — every item's reasons list must carry the score rationale."""
     _enable_all(monkeypatch)
     result = pipeline.run_connectors(MegaFakeGraph())
     doc = connectors_report.html_string(result)
@@ -202,13 +202,13 @@ def test_item_scores_are_transparent_0_to_100_with_reasons(monkeypatch):
         assert 0 <= d["score"] <= 100
         assert isinstance(d["reasons"], list) and len(d["reasons"]) >= 1
         assert d["risk_label"] == connectors_report._RISK_LABEL[connectors_report._risk_tier(d["score"])]
-        # her reason ya "+N — sebep" formatında (pozitif katkı) ya da 0-puanlık düz açıklama
+        # each reason is either in "+N — reason" format (positive contribution) or a plain 0-point explanation
         for r in d["reasons"]:
             assert isinstance(r, str) and r
 
 
 def test_shadow_item_exposes_user_device_ip_counts(monkeypatch):
-    """Defender for Cloud Apps gibi kullanıcı/cihaz/IP SAYISI facts'te görünmeli (bireysel kimlik değil)."""
+    """User/device/IP COUNTS (like Defender for Cloud Apps) must show in facts (not individual identity)."""
     _enable_all(monkeypatch)
     result = pipeline.run_connectors(MegaFakeGraph())
     a = connectors_report.assessment(result)
@@ -216,8 +216,8 @@ def test_shadow_item_exposes_user_device_ip_counts(monkeypatch):
     assert items
     chatgpt = next(i for i in items if i["name"] == "ChatGPT")
     fact_labels = {f[0] for f in chatgpt["facts"]}
-    assert {"Kullanıcı (30g)", "Cihaz (30g)", "IP Adresi (30g)"} <= fact_labels
-    assert "bireysel kullanıcı/cihaz/IP kimliği vermez" in chatgpt["what_checked"]
+    assert {"Users (30d)", "Devices (30d)", "IP Addresses (30d)"} <= fact_labels
+    assert "individual user/device/IP identity" in chatgpt["what_checked"]
 
 
 def test_risk_tier_derives_from_score():
@@ -228,7 +228,7 @@ def test_risk_tier_derives_from_score():
 
 
 def test_html_tables_render_even_with_only_partial_data(monkeypatch):
-    """Bazı connector'lar boşken (ör. entra_agent_id) sayfa çökmemeli, dürüst 'yok' mesajı basmalı."""
+    """The page shouldn't crash when some connectors are empty (e.g. entra_agent_id) — it should print an honest 'none' message."""
     monkeypatch.setenv("ENABLE_AGENT365", "true")
     for f in ("ENABLE_ENTRA_AGENT_ID", "ENABLE_DEFENDER_CLOUD_APPS", "ENABLE_PURVIEW_AUDIT"):
         monkeypatch.delenv(f, raising=False)
@@ -246,8 +246,8 @@ def test_html_tables_render_even_with_only_partial_data(monkeypatch):
     result = pipeline.run_connectors(_FG())
     doc = connectors_report.html_string(result)
     assert "Solo Agent" in doc
-    assert "Entra Agent Identity keşfedilmedi" in doc
-    assert "Shadow AI uygulaması keşfedilmedi" in doc
+    assert "No Entra Agent Identity discovered" in doc
+    assert "No Shadow AI application discovered" in doc
 
 
 def test_coverage_section_reports_not_configured_when_all_off():

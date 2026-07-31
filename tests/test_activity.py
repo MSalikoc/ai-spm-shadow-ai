@@ -1,4 +1,4 @@
-"""Gerçek kullanım / sign-in aktivitesi testleri."""
+"""Real usage / sign-in activity tests."""
 from datetime import datetime, timedelta, timezone
 
 import collectors
@@ -62,12 +62,12 @@ def test_usage_windows_and_last_used():
     assert u["failed_signins_30d"] == 1       # u3
     assert u["never_used"] is False
     assert u["inactive_30d"] is False
-    assert u["last_delegated_signin"].startswith("2026-07-23")  # 2 gün önce
+    assert u["last_delegated_signin"].startswith("2026-07-23")  # 2 days ago
     assert len(u["daily_active_30d"]) == 30
 
 
 def test_never_used_and_inactive():
-    graph = ActivityGraph(user_signins=[])   # hiç sign-in yok
+    graph = ActivityGraph(user_signins=[])   # no sign-ins at all
     apps = [{"app_id": "a1", "user_count": 5}]
     collectors.enrich_with_signin_activity(graph, apps, now=NOW)
     u = apps[0]["usage"]
@@ -83,7 +83,7 @@ def test_app_only_service_principal_signin():
     apps = [{"app_id": "a1", "user_count": 0, "has_app_only_access": True}]
     collectors.enrich_with_signin_activity(graph, apps, now=NOW)
     u = apps[0]["usage"]
-    assert u["last_service_principal_signin"].startswith("2026-07-22")  # 3 gün önce
+    assert u["last_service_principal_signin"].startswith("2026-07-22")  # 3 days ago
     assert u["last_used_date"] is not None
 
 
@@ -99,7 +99,7 @@ def test_dashboard_shows_usage_cards_and_trend():
     apps = [{"display_name": "ActiveBot", "vendor": "X", "first_party_microsoft": False,
              "third_party": True, "verified_publisher": True, "scopes": ["user.read"],
              "consent_type": "Principal", "user_count": 10, "risk_score": 20,
-             "risk_level": "Düşük", "reasons": ["r"], "remediation": ["m"],
+             "risk_level": "Low", "reasons": ["r"], "remediation": ["m"],
              "delegated_permissions": [], "application_permissions": [], "has_app_only_access": False,
              "usage": {"available": True, "consent_user_count": 10, "active_users_7d": 3,
                        "active_users_30d": 8, "active_users_90d": 9, "successful_signins_30d": 40,
@@ -110,19 +110,19 @@ def test_dashboard_shows_usage_cards_and_trend():
                        "inactive_30d": False, "inactive_90d": False, "growth_7d": 1,
                        "daily_active_30d": [1, 2, 0, 3, 2, 1, 4, 2] + [0] * 22}}]
     doc = report.html_string(apps, "t")
-    assert "Kullanım & Aktivite" in doc
-    assert "Aktif kullanıcı trendi" in doc
-    assert 'data-group="usage"' in doc          # kullanım filtresi
-    assert 'data-usage="active"' in doc         # satır etiketi
-    assert "<polyline" in doc                    # trend grafiği çizildi
+    assert "Usage & Activity" in doc
+    assert "Active user trend" in doc
+    assert 'data-group="usage"' in doc          # usage filter
+    assert 'data-usage="active"' in doc         # row tag
+    assert "<polyline" in doc                    # trend chart rendered
 
 
 def test_dashboard_graceful_when_no_activity():
     apps = [{"display_name": "X", "vendor": "Y", "first_party_microsoft": False,
              "third_party": True, "verified_publisher": True, "scopes": ["user.read"],
              "consent_type": "Principal", "user_count": 1, "risk_score": 10,
-             "risk_level": "Düşük", "reasons": ["r"], "remediation": ["m"],
+             "risk_level": "Low", "reasons": ["r"], "remediation": ["m"],
              "delegated_permissions": [], "application_permissions": [],
              "has_app_only_access": False, "usage": None}]
     doc = report.html_string(apps, "t")
-    assert "Entra ID P1" in doc                  # graceful mesajı
+    assert "Entra ID P1" in doc                  # graceful message

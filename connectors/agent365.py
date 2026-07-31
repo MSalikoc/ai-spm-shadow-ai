@@ -1,13 +1,14 @@
 """
-Microsoft Agent 365 collector — agent registry & package envanteri (Adım 2).
+Microsoft Agent 365 collector — agent registry & package inventory (Step 2).
 
-Endpoint : GET /v1.0/copilot/admin/catalog/packages           (liste)
-           GET /v1.0/copilot/admin/catalog/packages/{id}       (detay)
+Endpoints: GET /v1.0/copilot/admin/catalog/packages           (list)
+           GET /v1.0/copilot/admin/catalog/packages/{id}       (detail)
 Permission: CopilotPackages.Read.All
-Lisans/erişim yoksa: LICENSE_MISSING / API_UNAVAILABLE / PERMISSION_MISSING.
+No license/access: LICENSE_MISSING / API_UNAVAILABLE / PERMISSION_MISSING.
 
-Package'ı birleşik AI_AGENT asset'ine normalize eder; entra appId varsa korelasyona
-hazırdır. elementDetails parse edilir; parse edilemeyen tanımlar raw_reference ile saklanır.
+Normalizes a package into a merged AI_AGENT asset; ready for correlation if an entra
+appId is present. elementDetails is parsed; definitions that can't be parsed are kept
+via raw_reference.
 """
 import os
 from concurrent.futures import ThreadPoolExecutor
@@ -29,10 +30,10 @@ class Agent365Collector(BaseCollector):
     def is_configured(self) -> bool:
         return os.environ.get("ENABLE_AGENT365", "").lower() == "true"
 
-    # --- toplama ---
+    # --- collection ---
     def collect(self, since=None) -> list:
         if self._graph is None:
-            raise ApiUnavailable("Graph istemcisi yok")
+            raise ApiUnavailable("No Graph client")
         try:
             packages = self._graph.get_all("/copilot/admin/catalog/packages", {"$top": "999"})
         except RuntimeError as e:
@@ -43,11 +44,11 @@ class Agent365Collector(BaseCollector):
             detail = self._graph.get(f"/copilot/admin/catalog/packages/{pid}") if pid else {}
             return {**p, **(detail or {})}
 
-        # Her paket için ayrı bir detay GET'i gerekiyor — sıralı yapıldığında büyük
-        # tenant'larda (100+ paket) yüzlerce sıralı Graph çağrısı Consumption planının
-        # ~10dk functionTimeout'unu aşırıp taramayı sessizce (except bile çalışamadan)
-        # kesebiliyor (gerçek tenant'ta gözlemlendi). GraphClient.get() thread-safe
-        # (paylaşılan mutable state yok) — paralel çalıştırıyoruz.
+        # A separate detail GET is needed per package — done sequentially, on large
+        # tenants (100+ packages) hundreds of sequential Graph calls can exceed the
+        # Consumption plan's ~10min functionTimeout and silently kill the scan (before
+        # even an except can run) — observed on a real tenant. GraphClient.get() is
+        # thread-safe (no shared mutable state) — run in parallel.
         with ThreadPoolExecutor(max_workers=10) as ex:
             return list(ex.map(_fetch, packages))
 
@@ -60,7 +61,7 @@ class Agent365Collector(BaseCollector):
             return LicenseMissing(str(err)[:200])
         if "404" in s or "not found" in s or "notfound" in s or "400" in s:
             return ApiUnavailable(str(err)[:200])
-        return err   # generic → safe_run ERROR yapar
+        return err   # generic → safe_run makes it ERROR
 
     # --- normalize ---
     def normalize(self, raw_records: list) -> list:
@@ -83,7 +84,7 @@ class Agent365Collector(BaseCollector):
                 },
                 last_seen=p.get("lastModifiedDateTime"),
             )
-            agent["publisher"] = publisher            # korelasyon (pub+domain) için
+            agent["publisher"] = publisher            # for correlation (pub+domain)
             agent["agent365"] = {
                 "package_id": pid,
                 "package_type": p.get("packageType") or p.get("type"),
@@ -129,7 +130,7 @@ class Agent365Collector(BaseCollector):
                 "supported_scopes": d.get("scopes") or d.get("supportedScopes"),
                 "file_support": d.get("fileSupport") if d.get("fileSupport") is not None else d.get("supportsFiles"),
                 "host": d.get("host") or d.get("hostType"),
-                # parse edilemeyen tanımı kaybetme:
+                # don't lose a definition that couldn't be parsed:
                 "raw_reference": raw_reference(self.source, package_id=pid, element_type=typ),
                 "raw_definition": d or None,
             })
@@ -152,7 +153,7 @@ def _within_30d(iso, now):
 
 
 def metrics(assets, now=None):
-    """Agent 365 dashboard metrikleri (normalize edilmiş asset listesinden)."""
+    """Agent 365 dashboard metrics (from the normalized asset list)."""
     now = now or datetime.now(timezone.utc)
     a = [x for x in assets if x.get("agent365")]
 

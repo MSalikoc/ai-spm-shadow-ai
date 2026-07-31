@@ -1,9 +1,9 @@
 """
-Connector registry / dayanıklı çalıştırıcı.
+Connector registry / resilient runner.
 
-Tüm connector'ları sırayla çalıştırır; biri başarısız olsa bile (safe_run asla
-fırlatmaz) diğerleri devam eder. Sonuçta ham entity'ler korele edilip birleşik
-asset listesi + kaynak bazlı coverage/health döner.
+Runs all connectors in sequence; if one fails (safe_run never raises) the others
+still proceed. The raw entities are then correlated and returned as a unified asset
+list + per-source coverage/health.
 """
 from . import correlation
 
@@ -12,7 +12,7 @@ def run(collectors, since=None) -> dict:
     all_entities = []
     coverage, health = {}, {}
     for c in collectors:
-        entities = c.safe_run(since)          # dayanıklı: exception yutulur
+        entities = c.safe_run(since)          # resilient: exceptions are swallowed
         all_entities.extend(entities)
         coverage[c.name] = c.get_coverage()
         health[c.name] = c.get_health()

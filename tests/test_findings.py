@@ -34,9 +34,9 @@ def test_deterministic_id_no_duplicate():
     r2 = F.process([app], now=NOW)   # tekrar tara
     ids1 = sorted(f["finding_id"] for f in r1)
     ids2 = sorted(f["finding_id"] for f in r2)
-    assert ids1 == ids2                                # aynı ID, duplicate yok
+    assert ids1 == ids2                                # same ID, no duplicate
     assert "finding-app123-owner-missing" in ids1
-    # tek kayıt (duplicate üretilmedi)
+    # single record (no duplicate produced)
     om = [f for f in r2 if f["finding_id"] == "finding-app123-owner-missing"]
     assert len(om) == 1
 
@@ -53,23 +53,23 @@ def test_last_seen_updates_first_seen_stable():
 
 
 def test_resolved_then_reappears_reopens():
-    """Kriter 4: çözülen bulgu tekrar bulunursa Reopened."""
+    """Criterion 4: a resolved finding found again becomes Reopened."""
     _clean()
     app = _app("app1", ownership={"business_owner": ""})
     F.process([app], now=NOW)
-    # owner atandı → bulgu kaybolur → otomatik Resolved
+    # owner assigned → finding disappears → auto-Resolved
     fixed = _app("app1", ownership={"business_owner": "Someone"})
     recs = F.process([fixed], now=NOW)
     rec = next(f for f in recs if f["rule_key"] == "owner-missing")
     assert rec["status"] == "Resolved"
-    # owner tekrar kaldırıldı → bulgu geri gelir → Reopened
+    # owner removed again → finding comes back → Reopened
     recs = F.process([app], now=NOW)
     rec = next(f for f in recs if f["rule_key"] == "owner-missing")
     assert rec["status"] == "Reopened"
 
 
 def test_set_finding_owner_due_status():
-    """Kriter: owner ve due date atanabiliyor, status değiştirilebiliyor."""
+    """Criterion: owner and due date can be assigned, status can be changed."""
     store = {"f1": F._default({"finding_id": "f1", "rule_key": "x", "title": "t",
                                "description": "d", "category": "Governance", "severity": "Medium",
                                "priority": "P2", "asset_id": "a", "asset_name": "A",
@@ -84,9 +84,9 @@ def test_set_finding_owner_due_status():
 def test_overdue_detection():
     """Kriter 10: overdue finding'ler listelenebiliyor."""
     recs = [
-        {"finding_id": "f1", "due_date": "2026-07-01", "status": "Open"},      # geçmiş
+        {"finding_id": "f1", "due_date": "2026-07-01", "status": "Open"},      # past
         {"finding_id": "f2", "due_date": "2026-12-01", "status": "Open"},      # gelecek
-        {"finding_id": "f3", "due_date": "2026-07-01", "status": "Resolved"},  # kapalı
+        {"finding_id": "f3", "due_date": "2026-07-01", "status": "Resolved"},  # closed
         {"finding_id": "f4", "due_date": None, "status": "Open"},
     ]
     od = F.overdue(recs, now=NOW)
@@ -98,26 +98,26 @@ def test_ticket_adapter_is_interface_only():
     import ticketing
     a = ticketing.get_adapter()
     assert isinstance(a, ticketing.NoopAdapter)
-    assert a.create_ticket({}) is None      # entegrasyon yok
+    assert a.create_ticket({}) is None      # no integration
     assert a.get_status("X") is None
 
 
 def test_dashboard_findings_section_and_overdue():
     recs = [
         {"finding_id": "finding-a-owner-missing", "rule_key": "owner-missing",
-         "title": "Business owner atanmamış", "description": "d", "category": "Governance",
+         "title": "No business owner assigned", "description": "d", "category": "Governance",
          "severity": "Medium", "priority": "P2", "asset_id": "a", "asset_name": "InvoiceAI",
-         "business_impact": "i", "recommended_action": "Bir business owner ata.",
+         "business_impact": "i", "recommended_action": "Assign a business owner.",
          "status": "Open", "owner": "Gov Team", "responsible_team": "", "due_date": "2026-07-01",
          "first_seen": "2026-07-01", "last_seen": "2026-07-25", "resolution_note": "",
          "ticket_reference": "", "closed_date": None, "history": []},
     ]
     doc = report.html_string([], "t", None, recs)
-    assert "Findings — yönetilebilir kayıtlar" in doc
-    assert "Business owner atanmamış" in doc
-    assert "Gecikmiş finding" in doc and "InvoiceAI" in doc
-    assert 'data-finding="finding-a-owner-missing"' in doc   # editör
-    assert "finding-a-owner-missing" in doc                  # finding ID gösteriliyor
+    assert "Findings — manageable records" in doc
+    assert "No business owner assigned" in doc
+    assert "Overdue findings" in doc and "InvoiceAI" in doc
+    assert 'data-finding="finding-a-owner-missing"' in doc   # editor
+    assert "finding-a-owner-missing" in doc                  # finding ID is shown
 
 
 def test_rules_generate_expected_findings():

@@ -1,13 +1,13 @@
 """
-Şeffaf risk skorlama. Her app 0-100 arası skor ve gerekçe alır.
+Transparent risk scoring. Every app gets a 0-100 score and a reason chain.
 
-Skorun bileşenleri (toplanır, 100'de kırpılır):
-  - scope hassasiyeti  : verilen izinlerin toplam ağırlığı (en büyük ağırlık)
-  - blast radius        : admin (AllPrincipals) onayı + etkilenen kullanıcı sayısı
-  - güven/verifikasyon  : doğrulanmamış publisher cezası
-  - kalıcılık           : offline_access (refresh token) cezası
+Score components (additive, clipped at 100):
+  - scope sensitivity   : total weight of the granted permissions (top few)
+  - blast radius        : admin (AllPrincipals) consent + affected user count
+  - trust/verification  : unverified publisher penalty
+  - persistence         : offline_access (refresh token) penalty
 
-Amaç: skoru "kutu" değil, savunulabilir bir gerekçe zinciriyle vermek.
+Goal: give a defensible reason chain for the score, not a black box.
 """
 from config import SENSITIVE_SCOPES, SCOPE_HEURISTICS
 
@@ -25,7 +25,7 @@ def score_app(app: dict) -> dict:
     reasons: list[str] = []
     score = 0
 
-    # 1) Scope hassasiyeti — en riskli birkaç iznin ağırlığı
+    # 1) Scope sensitivity — weight of the riskiest few permissions
     weighted = sorted(((_scope_weight(s), s) for s in app["scopes"]), reverse=True)
     top = weighted[:4]
     scope_points = sum(w for w, _ in top) * 3  # 0..~120
@@ -33,32 +33,32 @@ def score_app(app: dict) -> dict:
         score += min(scope_points, 55)
         hot = ", ".join(s for _, s in top if _ >= 6)
         if hot:
-            reasons.append(f"Hassas veri izinleri: {hot}")
+            reasons.append(f"Sensitive data permissions: {hot}")
 
     # 2) Blast radius
     if app["consent_type"] == "AllPrincipals":
         score += 20
-        reasons.append("Admin onayı (AllPrincipals): izin TÜM organizasyon için geçerli")
+        reasons.append("Admin consent (AllPrincipals): permission applies to the ENTIRE organization")
     if app["user_count"] >= 10:
         score += 10
-        reasons.append(f"{app['user_count']} kullanıcı bu uygulamaya erişim vermiş")
+        reasons.append(f"{app['user_count']} users have granted this app access")
     elif app["user_count"] > 0:
         score += 4
 
-    # 3) Güven
+    # 3) Trust
     if not app["verified_publisher"]:
         score += 10
-        reasons.append("Publisher doğrulanmamış (verified publisher yok)")
+        reasons.append("Publisher not verified (no verified publisher)")
     if app["third_party"]:
-        reasons.append("Dış tenant'a ait 3. parti uygulama (veri org dışına çıkabilir)")
+        reasons.append("Third-party app owned by an external tenant (data may leave the org)")
 
-    # 4) Kalıcılık
+    # 4) Persistence
     if "offline_access" in app["scopes"]:
         score += 6
-        reasons.append("offline_access: kalıcı erişim (refresh token) — iptal edilmedikçe sürer")
+        reasons.append("offline_access: persistent access (refresh token) — lasts until revoked")
 
-    # 5) Application (app-only) permission'lar — kullanıcı gerektirmez, 7/24, tenant-geneli.
-    #    Delegated'dan daha tehlikeli olabilir; bu yüzden ağırlığı yüksek.
+    # 5) Application (app-only) permissions — no user required, 24/7, tenant-wide.
+    #    Can be more dangerous than delegated; weighted higher.
     app_perms = app.get("application_permissions", [])
     if app_perms:
         ap_weighted = sorted((_scope_weight(p["permission"].lower()) for p in app_perms),
@@ -67,17 +67,17 @@ def score_app(app: dict) -> dict:
         hot_ap = [p["permission"] for p in app_perms
                   if _scope_weight(p["permission"].lower()) >= 6][:3]
         note = f": {', '.join(hot_ap)}" if hot_ap else ""
-        reasons.append(f"App-only erişim (kullanıcı gerekmez, tüm tenant){note}")
+        reasons.append(f"App-only access (no user required, entire tenant){note}")
 
-    # 6) Düşük güvenli tespit için not
+    # 6) Note for low-confidence detection
     if app["confidence"] == "low":
-        reasons.append("AI olduğu jenerik eşleşmeyle tahmin edildi — manuel doğrula")
+        reasons.append("Identified as AI via a generic match — verify manually")
 
     score = max(0, min(100, score))
     app["risk_score"] = score
-    app["risk_level"] = ("Kritik" if score >= 75 else "Yüksek" if score >= 50
-                         else "Orta" if score >= 25 else "Düşük")
-    app["reasons"] = reasons or ["Belirgin hassas izin bulunmadı"]
+    app["risk_level"] = ("Critical" if score >= 75 else "High" if score >= 50
+                         else "Medium" if score >= 25 else "Low")
+    app["reasons"] = reasons or ["No notable sensitive permissions found"]
     app["remediation"] = _remediation(app)
     return app
 
@@ -85,15 +85,15 @@ def score_app(app: dict) -> dict:
 def _remediation(app: dict) -> list[str]:
     steps = []
     if app["consent_type"] == "AllPrincipals":
-        steps.append("Entra > Enterprise apps > bu app > Permissions: admin consent'i gözden geçir/kaldır")
+        steps.append("Entra > Enterprise apps > this app > Permissions: review/remove admin consent")
     if not app["verified_publisher"]:
-        steps.append("Doğrulanmamış publisher: kullanımı onayla veya engelle (app consent policy)")
+        steps.append("Unverified publisher: approve or block usage (app consent policy)")
     if any(_scope_weight(s) >= 9 for s in app["scopes"]):
-        steps.append("Yüksek izinli scope'ları revoke et; least-privilege alternatifini değerlendir")
+        steps.append("Revoke high-privilege scopes; evaluate a least-privilege alternative")
     if any(_scope_weight(p["permission"].lower()) >= 8 for p in app.get("application_permissions", [])):
-        steps.append("App-only application permission'ları gözden geçir — kullanıcısız, tenant-geneli erişim")
-    steps.append("Gerekmiyorsa: Enterprise app'i sil veya kullanıcı atamalarını kaldır")
-    steps.append("User consent'i kısıtla: yalnızca doğrulanmış publisher + düşük riskli izinler")
+        steps.append("Review app-only application permissions — unattended, tenant-wide access")
+    steps.append("If not needed: delete the Enterprise app or remove user assignments")
+    steps.append("Restrict user consent: verified publishers and low-risk permissions only")
     return steps
 
 

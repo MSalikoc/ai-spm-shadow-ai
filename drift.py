@@ -1,12 +1,12 @@
 """
-Drift / değişiklik motoru — "önceki taramadan beri ne değişti?".
+Drift / change engine — "what changed since the previous scan?".
 
-Her başarılı tarama normalize bir snapshot üretir (snapshot.json). Yeni tarama,
-önceki snapshot ile diff'lenir → change event'leri (changes.json'a birikir).
-İlk başarılı scan baseline olur ve DEĞİŞİKLİK ÜRETMEZ (kriter 1, 2).
+Every successful scan produces a normalized snapshot (snapshot.json). A new scan is
+diffed against the previous snapshot → change events (accumulated in changes.json).
+The first successful scan becomes the baseline and PRODUCES NO CHANGES (criteria 1, 2).
 
-Deterministic ID: app için app_id (yoksa sp_id), permission için
-`resource|permission`. Change ID = (tip|asset|old|new|ts) hash'i.
+Deterministic ID: app_id for an app (or sp_id), `resource|permission` for a permission.
+Change ID = hash of (type|asset|old|new|ts).
 """
 import hashlib
 from datetime import datetime, timedelta, timezone
@@ -38,7 +38,7 @@ def _max_weight(f):
 
 
 def snapshot(findings) -> dict:
-    """Diff için normalize edilmiş, JSON-serileştirilebilir snapshot (app_id anahtarlı)."""
+    """Normalized, JSON-serializable snapshot for diffing (keyed by app_id)."""
     snap = {}
     for f in findings:
         aid = f.get("app_id") or f.get("sp_id")
@@ -84,82 +84,82 @@ def diff(prev: dict, cur: dict, now=None) -> list:
     for aid in cur_ids - prev_ids:
         c = cur[aid]
         events.append(_ev(now, "NEW_APPLICATION", aid, c["name"], None, c["vendor"],
-                          f"Yeni AI uygulaması keşfedildi: {c['name']}"))
+                          f"New AI application discovered: {c['name']}"))
     for aid in prev_ids - cur_ids:
         p = prev[aid]
         events.append(_ev(now, "REMOVED_APPLICATION", aid, p["name"], p["vendor"], None,
-                          f"Uygulama kaldırıldı: {p['name']}"))
+                          f"Application removed: {p['name']}"))
 
     for aid in cur_ids & prev_ids:
         p, c = prev[aid], cur[aid]
         nm = c["name"]
         for perm in sorted(set(c["delegated"]) - set(p["delegated"])):
             events.append(_ev(now, "NEW_PERMISSION", aid, nm, None, perm,
-                              f"Yeni delegated izin: {perm}"))
+                              f"New delegated permission: {perm}"))
         for perm in sorted(set(p["delegated"]) - set(c["delegated"])):
             events.append(_ev(now, "REMOVED_PERMISSION", aid, nm, perm, None,
-                              f"Delegated izin kaldırıldı: {perm}"))
+                              f"Delegated permission removed: {perm}"))
         for perm in sorted(set(c["application"]) - set(p["application"])):
             events.append(_ev(now, "NEW_PERMISSION", aid, nm, None, perm,
-                              f"Yeni application izin: {perm}"))
+                              f"New application permission: {perm}"))
         for perm in sorted(set(p["application"]) - set(c["application"])):
             events.append(_ev(now, "REMOVED_PERMISSION", aid, nm, perm, None,
-                              f"Application izin kaldırıldı: {perm}"))
+                              f"Application permission removed: {perm}"))
         if c["has_app_only"] and not p["has_app_only"]:
             events.append(_ev(now, "NEW_APP_ONLY_ACCESS", aid, nm, False, True,
-                              f"App-only (kullanıcısız) erişim eklendi: {nm}"))
+                              f"App-only (unattended) access added: {nm}"))
         if (c["max_weight"] or 0) > (p["max_weight"] or 0):
             events.append(_ev(now, "PERMISSION_ESCALATED", aid, nm, p["max_weight"], c["max_weight"],
-                              f"İzin ayrıcalığı yükseldi ({p['max_weight']}→{c['max_weight']}/10)"))
+                              f"Permission privilege increased ({p['max_weight']}→{c['max_weight']}/10)"))
         if c["admin_consent"] and not p["admin_consent"]:
             events.append(_ev(now, "ADMIN_CONSENT_ADDED", aid, nm, False, True,
-                              "Admin (tüm org) consent eklendi"))
+                              "Admin (org-wide) consent added"))
         if p["admin_consent"] and not c["admin_consent"]:
             events.append(_ev(now, "ADMIN_CONSENT_REMOVED", aid, nm, True, False,
-                              "Admin consent kaldırıldı"))
+                              "Admin consent removed"))
         oadd = set(c["owners"]) - set(p["owners"])
         orem = set(p["owners"]) - set(c["owners"])
         if oadd and orem:
-            events.append(_ev(now, "OWNER_CHANGED", aid, nm, p["owners"], c["owners"], "Owner değişti"))
+            events.append(_ev(now, "OWNER_CHANGED", aid, nm, p["owners"], c["owners"], "Owner changed"))
         elif oadd:
-            events.append(_ev(now, "OWNER_ADDED", aid, nm, None, sorted(oadd), "Owner eklendi"))
+            events.append(_ev(now, "OWNER_ADDED", aid, nm, None, sorted(oadd), "Owner added"))
         elif orem:
-            events.append(_ev(now, "OWNER_REMOVED", aid, nm, sorted(orem), None, "Owner kaldırıldı"))
+            events.append(_ev(now, "OWNER_REMOVED", aid, nm, sorted(orem), None, "Owner removed"))
         if c["business_owner"] != p["business_owner"]:
             events.append(_ev(now, "BUSINESS_OWNER_CHANGED", aid, nm,
                               p["business_owner"] or None, c["business_owner"] or None,
                               f"Business owner: {p['business_owner'] or '—'} → {c['business_owner'] or '—'}"))
         if c["classification"] != p["classification"]:
             events.append(_ev(now, "CLASSIFICATION_CHANGED", aid, nm, p["classification"], c["classification"],
-                              f"Sınıflandırma: {p['classification']} → {c['classification']}"))
+                              f"Classification: {p['classification']} → {c['classification']}"))
         if c["lifecycle"] != p["lifecycle"]:
             events.append(_ev(now, "LIFECYCLE_CHANGED", aid, nm, p["lifecycle"], c["lifecycle"],
                               f"Lifecycle: {p['lifecycle']} → {c['lifecycle']}"))
         if not p["last_signin"] and c["last_signin"]:
             events.append(_ev(now, "FIRST_SIGNIN", aid, nm, None, c["last_signin"],
-                              f"İlk sign-in görüldü: {nm}"))
+                              f"First sign-in observed: {nm}"))
         pa, ca = p["active_30d"], c["active_30d"]
         if pa is not None and ca is not None and pa != ca:
             pct = round((ca - pa) / max(pa, 1) * 100)
             if ca > pa:
                 events.append(_ev(now, "ACTIVITY_INCREASED", aid, nm, pa, ca,
-                                  f"{nm} kullanımı %{pct} arttı ({pa}→{ca})"))
+                                  f"{nm} usage increased {pct}% ({pa}→{ca})"))
             else:
                 events.append(_ev(now, "ACTIVITY_DECREASED", aid, nm, pa, ca,
-                                  f"{nm} kullanımı %{abs(pct)} azaldı ({pa}→{ca})"))
+                                  f"{nm} usage decreased {abs(pct)}% ({pa}→{ca})"))
         if p["enabled"] is True and c["enabled"] is False:
-            events.append(_ev(now, "APP_DISABLED", aid, nm, True, False, f"Uygulama devre dışı: {nm}"))
+            events.append(_ev(now, "APP_DISABLED", aid, nm, True, False, f"Application disabled: {nm}"))
         if p["enabled"] is False and c["enabled"] is True:
-            events.append(_ev(now, "APP_REENABLED", aid, nm, False, True, f"Uygulama tekrar etkin: {nm}"))
+            events.append(_ev(now, "APP_REENABLED", aid, nm, False, True, f"Application re-enabled: {nm}"))
     return events
 
 
 def process(findings, now=None) -> list:
-    """Diff hesaplar, snapshot ve changes.json'u günceller, bu taramanın event'lerini döner."""
+    """Computes the diff, updates snapshot and changes.json, returns this scan's events."""
     now = now or datetime.now(timezone.utc)
     prev = storage.read_json("snapshot.json")
     cur = snapshot(findings)
-    events = [] if prev is None else diff(prev, cur, now)   # baseline: değişiklik yok
+    events = [] if prev is None else diff(prev, cur, now)   # baseline: no changes
     storage.write_json("snapshot.json", cur)
     if events:
         log = storage.read_json("changes.json") or {"events": []}
@@ -184,28 +184,28 @@ def recent(days=14, now=None) -> list:
 
 
 def executive_summary(events) -> list:
-    """Yönetici özeti satırları ('Bu hafta: ...' formatında)."""
+    """Executive summary lines (in the format 'This week: ...')."""
     lines = []
 
     def cnt(t):
         return sum(1 for e in events if e["change_type"] == t)
 
     if cnt("NEW_APPLICATION"):
-        lines.append(f"{cnt('NEW_APPLICATION')} yeni AI uygulaması keşfedildi.")
+        lines.append(f"{cnt('NEW_APPLICATION')} new AI applications discovered.")
     if cnt("NEW_APP_ONLY_ACCESS"):
-        lines.append(f"{cnt('NEW_APP_ONLY_ACCESS')} uygulamaya app-only permission eklendi.")
+        lines.append(f"{cnt('NEW_APP_ONLY_ACCESS')} applications had app-only permissions added.")
     if cnt("PERMISSION_ESCALATED"):
-        lines.append(f"{cnt('PERMISSION_ESCALATED')} uygulamada izin ayrıcalığı yükseldi.")
+        lines.append(f"{cnt('PERMISSION_ESCALATED')} applications had permission privilege escalated.")
     if cnt("ADMIN_CONSENT_ADDED"):
-        lines.append(f"{cnt('ADMIN_CONSENT_ADDED')} uygulamaya admin (tüm org) consent verildi.")
+        lines.append(f"{cnt('ADMIN_CONSENT_ADDED')} applications were granted admin (org-wide) consent.")
     acts = [e for e in events if e["change_type"] == "ACTIVITY_INCREASED"]
     for e in sorted(acts, key=lambda x: (x["new_value"] or 0) - (x["old_value"] or 0), reverse=True)[:2]:
         pct = round(((e["new_value"] or 0) - (e["old_value"] or 0)) / max(e["old_value"] or 1, 1) * 100)
-        lines.append(f"{e['asset_name']} kullanımı %{pct} arttı.")
+        lines.append(f"{e['asset_name']} usage increased {pct}%.")
     bo = sum(1 for e in events if e["change_type"] == "BUSINESS_OWNER_CHANGED" and e["new_value"])
     if bo:
-        lines.append(f"{bo} uygulamaya business owner atandı.")
+        lines.append(f"{bo} applications were assigned a business owner.")
     for e in events:
         if e["change_type"] == "LIFECYCLE_CHANGED" and e["new_value"] == "Approved":
-            lines.append(f"{e['asset_name']} {e['old_value']} durumundan Approved durumuna geçti.")
+            lines.append(f"{e['asset_name']} moved from {e['old_value']} to Approved.")
     return lines

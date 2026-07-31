@@ -1,11 +1,11 @@
 """
-Entra ID kimlik doğrulama. İki mod:
+Entra ID authentication. Two modes:
 
-  delegated : cihaz kodu (device code) akışı — analistin kendi izinleriyle,
-              app registration'a client secret gerekmez. Demo/hackathon için ideal.
-  app       : client credentials — otomasyon/CI için. Client secret gerekir.
+  delegated : device code flow — under the analyst's own permissions, no client
+              secret needed on the app registration. Ideal for demos/hackathons.
+  app       : client credentials — for automation/CI. Requires a client secret.
 
-Gerekli Graph izinleri (en az):
+Required Graph permissions (at minimum):
   Directory.Read.All, Application.Read.All, AuditLog.Read.All
 """
 import sys
@@ -16,30 +16,30 @@ GRAPH_SCOPE_APP = ["https://graph.microsoft.com/.default"]
 
 
 def get_token_device_code(tenant_id: str, client_id: str) -> str:
-    """Cihaz kodu akışı: kullanıcı tarayıcıda kod girerek onaylar."""
+    """Device code flow: the user confirms by entering the code in a browser."""
     app = msal.PublicClientApplication(
         client_id, authority=f"https://login.microsoftonline.com/{tenant_id}"
     )
     flow = app.initiate_device_flow(scopes=["https://graph.microsoft.com/.default"])
     if "user_code" not in flow:
-        raise RuntimeError(f"Device flow başlatılamadı: {flow.get('error_description')}")
+        raise RuntimeError(f"Could not start device flow: {flow.get('error_description')}")
     print("\n" + "=" * 60)
     print(flow["message"])  # "Go to https://microsoft.com/devicelogin and enter CODE"
     print("=" * 60 + "\n", flush=True)
     result = app.acquire_token_by_device_flow(flow)
     if "access_token" not in result:
-        raise RuntimeError(f"Token alınamadı: {result.get('error_description')}")
+        raise RuntimeError(f"Could not obtain token: {result.get('error_description')}")
     return result["access_token"]
 
 
 def get_token_managed_identity() -> str:
     """
-    Azure içinde çalışırken (Function/VM/Container) Managed Identity ile token alır.
-    Secret yok. Lokal geliştirmede `az login` veya env-var'lara da düşer
-    (DefaultAzureCredential zinciri).
+    Gets a token via Managed Identity when running inside Azure (Function/VM/Container).
+    No secret. Falls back to `az login` or env-vars in local development
+    (DefaultAzureCredential chain).
 
-    Ön koşul: MI'ın service principal'ına Graph app role'leri atanmış olmalı
-    (Directory.Read.All, Application.Read.All, AuditLog.Read.All). README'ye bak.
+    Prerequisite: the MI's service principal must have the Graph app roles granted
+    (Directory.Read.All, Application.Read.All, AuditLog.Read.All). See README.
     """
     from azure.identity import DefaultAzureCredential
     cred = DefaultAzureCredential(exclude_interactive_browser_credential=True)
@@ -48,7 +48,7 @@ def get_token_managed_identity() -> str:
 
 
 def get_token_client_credentials(tenant_id: str, client_id: str, client_secret: str) -> str:
-    """Client credentials akışı: uygulama kimliğiyle (kullanıcısız)."""
+    """Client credentials flow: as the application identity (no user)."""
     app = msal.ConfidentialClientApplication(
         client_id,
         authority=f"https://login.microsoftonline.com/{tenant_id}",
@@ -56,5 +56,5 @@ def get_token_client_credentials(tenant_id: str, client_id: str, client_secret: 
     )
     result = app.acquire_token_for_client(scopes=GRAPH_SCOPE_APP)
     if "access_token" not in result:
-        raise RuntimeError(f"Token alınamadı: {result.get('error_description')}")
+        raise RuntimeError(f"Could not obtain token: {result.get('error_description')}")
     return result["access_token"]

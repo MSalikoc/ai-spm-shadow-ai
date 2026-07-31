@@ -1,19 +1,19 @@
 """
-Microsoft Defender for Cloud Apps collector — web-tabanlı Shadow AI kullanımı (Adım 4).
+Microsoft Defender for Cloud Apps collector — web-based Shadow AI usage (Step 4).
 
-Endpoint : GET /beta/security/dataDiscovery/cloudAppDiscovery/uploadedStreams          (stream listesi)
-           GET .../uploadedStreams/{id}/aggregatedAppsDetails(period=duration'P30D')    (keşfedilen app'ler)
+Endpoints: GET /beta/security/dataDiscovery/cloudAppDiscovery/uploadedStreams          (stream list)
+           GET .../uploadedStreams/{id}/aggregatedAppsDetails(period=duration'P30D')    (discovered apps)
 Permission: CloudApp-Discovery.Read.All
 PREVIEW (beta) API — ENABLE_DEFENDER_CLOUD_APPS=true + ENABLE_PREVIEW_CONNECTORS=true.
 
-MDCA log-analizi ile keşfedilen web uygulamalarından AI olanları filtreler
-(MDCA kategorisi + kod-dışı `catalogs/ai_applications.json`). Her AI app → birleşik
-**AI_APPLICATION** asset'i (users/devices/IP/traffic özeti); her (stream, app) gözlemi
-→ **USAGE_OBSERVATION** kaydı.
+Filters web apps discovered via MDCA log analysis down to the AI ones (MDCA category +
+the out-of-code `catalogs/ai_applications.json`). Each AI app → a merged
+**AI_APPLICATION** asset (users/devices/IP/traffic summary); each (stream, app)
+observation → a **USAGE_OBSERVATION** record.
 
-ÖNEMLİ: Upload hacmi TEK BAŞINA "hassas veri paylaşımı" DEĞİLDİR — burada yalnızca
-kullanım/gözlem olarak işaretlenir; gerçek hassaslık Purview (Adım 5) ile korele edilince
-belirlenir (`data_sensitivity = UNDETERMINED_REQUIRES_PURVIEW`).
+IMPORTANT: Upload volume ALONE is NOT "sensitive data sharing" — here it's only flagged
+as usage/observation; real sensitivity is determined once correlated with Purview
+(Step 5) (`data_sensitivity = UNDETERMINED_REQUIRES_PURVIEW`).
 """
 import json
 import logging
@@ -44,7 +44,7 @@ class DefenderCloudAppsCollector(BaseCollector):
         return (os.environ.get("ENABLE_DEFENDER_CLOUD_APPS", "").lower() == "true"
                 and os.environ.get("ENABLE_PREVIEW_CONNECTORS", "").lower() == "true")
 
-    # --- katalog (kod-dışı AI app listesi) ---
+    # --- catalog (out-of-code AI app list) ---
     def _load_catalog(self) -> dict:
         if self._catalog is not None:
             return self._catalog
@@ -75,10 +75,10 @@ class DefenderCloudAppsCollector(BaseCollector):
                     return True
         return False
 
-    # --- toplama ---
+    # --- collection ---
     def collect(self, since=None) -> list:
         if self._graph is None:
-            raise ApiUnavailable("Graph istemcisi yok")
+            raise ApiUnavailable("No Graph client")
         try:
             streams = self._graph.get_all(_STREAMS, {"$top": "999"})
         except RuntimeError as e:
@@ -94,7 +94,7 @@ class DefenderCloudAppsCollector(BaseCollector):
             try:
                 apps = self._graph.get_all(url)
             except RuntimeError as e:
-                # Tek stream düşerse diğerleri devam etsin → connector PARTIAL.
+                # If one stream fails, let the others continue → connector PARTIAL.
                 self._status = ConnectorStatus.PARTIALLY_CONNECTED
                 self._error = self._error or str(e)[:160]
                 continue
@@ -115,11 +115,11 @@ class DefenderCloudAppsCollector(BaseCollector):
 
     # --- normalize ---
     def normalize(self, raw_records: list) -> list:
-        # GEÇİCİ TEŞHİS (AISPM_DEBUG_MDCA_RAW=true ile açılır): traffic/upload bayt
-        # alanlarının gerçek Graph beta şemasındaki adını doğrulamak için — bug tespit
-        # edilip düzeltildikten sonra bu blok kaldırılacak.
+        # TEMPORARY DIAGNOSTIC (enabled via AISPM_DEBUG_MDCA_RAW=true): to confirm the
+        # real field names for traffic/upload bytes in the Graph beta schema — this
+        # block will be removed once the bug is found and fixed.
         if raw_records and os.environ.get("AISPM_DEBUG_MDCA_RAW", "").lower() == "true":
-            logging.info("AISPM_DEBUG_MDCA_RAW ilk kayit: %s",
+            logging.info("AISPM_DEBUG_MDCA_RAW first record: %s",
                         json.dumps(raw_records[0].get("app"), default=str)[:2000])
         apps = {}          # app_key → aggregate
         observations = []
@@ -145,8 +145,8 @@ class DefenderCloudAppsCollector(BaseCollector):
                     "uploaded_bytes": 0, "downloaded_bytes": 0, "streams": set(),
                     "first_seen": m["first_seen"], "last_seen": m["last_seen"],
                 }
-            # kullanıcı/IP/cihaz farklı stream'lerde dedupe edilemez → conservative max;
-            # trafik/işlem additive → topla. (bkz. bilinen korelasyon eksikleri)
+            # users/IPs/devices can't be deduped across different streams → conservative
+            # max; traffic/transactions are additive → sum. (see known correlation gaps)
             agg["users"] = max(agg["users"], m["users"])
             agg["devices"] = max(agg["devices"], m["devices"])
             agg["ips"] = max(agg["ips"], m["ips"])
@@ -172,7 +172,7 @@ class DefenderCloudAppsCollector(BaseCollector):
             first_seen=a["first_seen"],
             last_seen=a["last_seen"],
         )
-        asset["domain"] = a["domain"]                 # korelasyon (pub+domain) için
+        asset["domain"] = a["domain"]                 # for correlation (pub+domain)
         asset["publisher"] = a.get("vendor") or ""
         asset["mdca"] = {
             "mdca_app_id": a["mdca_id"],
@@ -188,7 +188,7 @@ class DefenderCloudAppsCollector(BaseCollector):
             "downloaded_bytes": a["downloaded_bytes"],
             "stream_count": len(a["streams"]),
             "period": self._period,
-            # Hacim tek başına hassaslık DEĞİL — Purview ile korele edilecek (Adım 5/6):
+            # Volume alone is NOT sensitivity — will be correlated with Purview (Step 5/6):
             "data_sensitivity": "UNDETERMINED_REQUIRES_PURVIEW",
             "sensitive_data_types": field(NOT_EXPOSED_BY_API),
             "raw_reference": raw_reference(self.source, mdca_app_id=a["mdca_id"], name=a["name"]),
@@ -196,8 +196,9 @@ class DefenderCloudAppsCollector(BaseCollector):
         return asset
 
     def _observation(self, r, name, domain, mdca_id, m) -> dict:
-        # USAGE_OBSERVATION: mdca_app_id'yi external_ids'e KOYMA (app asset'iyle id çakışmasın);
-        # app'e `mdca_app_id` alanıyla bağlanır. İsim-hash id → benzersiz, merge etmez.
+        # USAGE_OBSERVATION: don't put mdca_app_id in external_ids (avoid ID collision
+        # with the app asset); it links to the app via the `mdca_app_id` field. A
+        # name-hash id → unique, doesn't merge.
         obs = make_asset(
             EntityType.USAGE_OBSERVATION,
             f"{name} @ {r.get('stream_name') or r.get('stream_id')}",
@@ -218,14 +219,14 @@ class DefenderCloudAppsCollector(BaseCollector):
             "uploaded_bytes": m["uploaded_bytes"],
             "downloaded_bytes": m["downloaded_bytes"],
             "period": self._period,
-            # erişim/yükleme gözlemi ≠ hassas paylaşım (Adım 6 yön ayrımı yapacak):
+            # access/upload observation ≠ sensitive sharing (Step 6 will apply the direction split):
             "direction": "UPLOADED" if m["uploaded_bytes"] else "OBSERVED",
             "data_sensitivity": "UNDETERMINED_REQUIRES_PURVIEW",
             "raw_reference": raw_reference(self.source, stream_id=r.get("stream_id"), name=name),
         }
         return obs
 
-    # --- defansif alan parse (PREVIEW şeması kesin değil) ---
+    # --- defensive field parsing (PREVIEW schema is not fixed) ---
     @staticmethod
     def _domain(app):
         d = (app.get("domain") or app.get("url") or app.get("appUrl")
@@ -287,7 +288,7 @@ def _max_iso(a, b):
 
 
 def metrics(assets):
-    """Defender/Shadow-AI dashboard metrikleri (bu connector'ın normalize asset listesinden)."""
+    """Defender/Shadow-AI dashboard metrics (from this connector's normalized asset list)."""
     apps = [x for x in assets if x.get("mdca")]
     obs = [x for x in assets if x.get("usage_observation")]
 
@@ -299,11 +300,11 @@ def metrics(assets):
         "sanctioned": sum(1 for x in apps if g(x).get("sanctioned_state") == "sanctioned"),
         "unsanctioned": sum(1 for x in apps if g(x).get("sanctioned_state") == "unsanctioned"),
         "unreviewed": sum(1 for x in apps if g(x).get("sanctioned_state") in (None, "unreviewed", "monitored")),
-        "total_users_observed": sum(g(x).get("users", 0) for x in apps),   # app'ler arası dedupe YOK
+        "total_users_observed": sum(g(x).get("users", 0) for x in apps),   # NO cross-app dedupe
         "total_uploaded_bytes": sum(g(x).get("uploaded_bytes", 0) for x in apps),
         "high_risk_apps": sum(1 for x in apps if isinstance(g(x).get("risk_score"), int)
-                              and g(x)["risk_score"] <= 3),                # MDCA: düşük skor = yüksek risk
+                              and g(x)["risk_score"] <= 3),                # MDCA: lower score = higher risk
         "usage_observations": len(obs),
-        # MDCA app'leri appId taşımaz → cross-source korelasyon zayıf (isim-only merge etmez):
+        # MDCA apps don't carry an appId → weak cross-source correlation (name-only doesn't merge):
         "uncorrelated": sum(1 for x in apps if not x["external_ids"].get("entra_app_id")),
     }

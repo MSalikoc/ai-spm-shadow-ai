@@ -1,7 +1,8 @@
 """
-Asset korelasyonu — farklı kaynaklardan gelen aynı varlığı tek asset altında birleştirir.
+Asset correlation — merges the same real-world entity coming from different sources
+into a single asset.
 
-Öncelik (güçlü → zayıf), confidence ağırlığıyla:
+Priority (strong → weak), with confidence weight:
   1. entra_app_id (98)
   2. agent_identity_id (96)
   3. agent_blueprint_id (90)
@@ -9,10 +10,10 @@ Asset korelasyonu — farklı kaynaklardan gelen aynı varlığı tek asset alt�
   5. agent365_asset_id (80)
   6. manifest_id (75)
   7. verified publisher + domain (65)
-  8. normalize edilmiş ad → SADECE zayıf sinyal; TEK BAŞINA kesin korelasyon YAPMAZ.
+  8. normalized name → weak signal ONLY; NEVER produces a merge on its own.
 
-İsim eşleşmesiyle asla merge edilmez (yanlış birleşmeyi önlemek için). İsim yalnızca
-başka bir güçlü sinyal varken confidence'ı doğrulamak için kullanılabilir.
+Never merged on a name match alone (to avoid false merges). Name can only be used to
+confirm confidence when another strong signal is already present.
 """
 PRIORITY = [
     ("entra_app_id", 98), ("agent_identity_id", 96),
@@ -20,10 +21,10 @@ PRIORITY = [
 ]
 PUB_DOMAIN_WEIGHT = 65
 NAME_ONLY_WEIGHT = 40
-# NOT: `agent_blueprint_id` bilinçli olarak MERGE token'ı DEĞİL (Adım 6 düzeltmesi).
-# Aynı blueprint'ten türeyen birden fazla identity'yi tek asset'e collapse etmemek için
-# blueprint "relate-not-merge" ile bağlanır (bkz. _relate_blueprints): identity ve blueprint
-# ayrı asset kalır, `related` alanıyla çapraz referanslanır.
+# NOTE: `agent_blueprint_id` is deliberately NOT a merge token (Step 6 fix).
+# To avoid collapsing multiple identities derived from the same blueprint into one
+# asset, the blueprint is linked with "relate-not-merge" (see _relate_blueprints):
+# identity and blueprint stay separate assets, cross-referenced via the `related` field.
 BLUEPRINT_RELATE_WEIGHT = 90
 
 _SOURCE_NAME_PRIORITY = ["AGENT_365", "ENTRA_AGENT_ID", "ENTRA_APPS",
@@ -31,7 +32,7 @@ _SOURCE_NAME_PRIORITY = ["AGENT_365", "ENTRA_AGENT_ID", "ENTRA_APPS",
 
 
 def _tokens(a):
-    """Bir asset'in merge token'ları: (token, weight). İsim token'ı YOK (merge etmez)."""
+    """An asset's merge tokens: (token, weight). No name token (never merges)."""
     toks = []
     ext = a.get("external_ids") or {}
     for key, w in PRIORITY:
@@ -69,8 +70,8 @@ def _merge(members):
         if m.get("last_seen"):
             last.append(m["last_seen"])
 
-    merged = dict(members[0])          # connector'a özel alanları koru (ilk üye baz)
-    for m in members[1:]:              # eksik alanları diğer üyelerden tamamla
+    merged = dict(members[0])          # keep connector-specific fields (first member as base)
+    for m in members[1:]:              # fill missing fields from the other members
         for k, v in m.items():
             if k not in ("external_ids", "sources", "first_seen", "last_seen",
                          "correlation_confidence") and merged.get(k) in (None, "", "—", []):
@@ -99,7 +100,7 @@ def _merge(members):
 
 
 def correlate(assets):
-    """assets (ham entity listesi) → korele edilmiş asset listesi (union-find)."""
+    """assets (raw entity list) → correlated asset list (union-find)."""
     n = len(assets)
     parent = list(range(n))
 
@@ -130,10 +131,11 @@ def correlate(assets):
 
 def _relate_blueprints(assets):
     """
-    agent_blueprint_id paylaşan identity ve blueprint asset'lerini MERGE etmeden bağlar.
-    Blueprint = 'parent' tanım; identity = ondan türeyen çalışma-zamanı örneği. Aynı
-    blueprint'ten birden fazla identity olabilir → collapse etmeyip `related` ile çapraz
-    referans veririz (identity ↔ blueprint, confidence BLUEPRINT_RELATE_WEIGHT).
+    Links identity and blueprint assets that share an agent_blueprint_id WITHOUT
+    merging them. Blueprint = the 'parent' definition; identity = a runtime instance
+    derived from it. Multiple identities can share the same blueprint → instead of
+    collapsing them, we cross-reference via `related` (identity ↔ blueprint,
+    confidence BLUEPRINT_RELATE_WEIGHT).
     """
     from collections import defaultdict
     by_bp = defaultdict(list)

@@ -1,10 +1,10 @@
 """
-Business ownership + lifecycle metadata deposu.
+Business ownership + lifecycle metadata store.
 
-Scan her seferinde Graph'tan yeniden kurulur; bu manuel metadata AYRI bir depoda
-(metadata.json, app_id anahtarlı) tutulur ve her taramada bulgulara merge edilir —
-böylece otomatik tarama manuel veriyi ezmez (kriter 5). Lifecycle status ve review
-tarihi değişiklikleri history olarak saklanır (kriter 9).
+Every scan is rebuilt from Graph; this manual metadata is kept in a SEPARATE store
+(metadata.json, keyed by app_id) and merged into the findings on every scan — so an
+automated scan never overwrites manual data (criterion 5). Lifecycle status and review
+date changes are kept as history (criterion 9).
 """
 from datetime import datetime, timezone
 
@@ -18,7 +18,7 @@ def default_entry() -> dict:
         "business_context": {"business_unit": "", "subsidiary": "", "purpose": "",
                              "process": "", "criticality": "", "environment": ""},
         "lifecycle": {"status": "Discovered", "next_review_date": None},
-        "classification": {"category": None, "ownership": None},  # manuel override
+        "classification": {"category": None, "ownership": None},  # manual override
         "notes": "",
         "history": [],
     }
@@ -33,7 +33,7 @@ def save(store: dict) -> None:
 
 
 def merge(findings: list[dict], store: dict) -> None:
-    """Depodaki business/lifecycle metadata'sını bulgulara işler (teknik owner'ı ezmeden)."""
+    """Applies the store's business/lifecycle metadata onto the findings (without overwriting technical owner)."""
     for f in findings:
         entry = store.get(f.get("app_id")) or default_entry()
         own = f.setdefault("ownership", {"application_owners": [], "service_principal_owners": []})
@@ -46,7 +46,7 @@ def merge(findings: list[dict], store: dict) -> None:
 
 
 def set_metadata(store: dict, app_id: str, patch: dict, now=None) -> dict:
-    """Bir app'in business/lifecycle metadata'sını günceller; status/review değişimini history'e yazar."""
+    """Updates an app's business/lifecycle metadata; writes status/review changes to history."""
     now = now or datetime.now(timezone.utc)
     entry = store.setdefault(app_id, default_entry())
 
@@ -66,7 +66,7 @@ def set_metadata(store: dict, app_id: str, patch: dict, now=None) -> dict:
         for k, v in (patch.get(key) or {}).items():
             if k in entry[key] and v is not None:
                 entry[key][k] = v
-    # Manuel classification override — boş değer override'ı temizler
+    # Manual classification override — an empty value clears the override
     if "classification" in patch:
         entry.setdefault("classification", {"category": None, "ownership": None})
         for k, v in (patch["classification"] or {}).items():
@@ -88,7 +88,7 @@ def _parse_date(s):
 
 
 def upcoming_reviews(findings: list[dict], within_days: int = 30, now=None) -> list[dict]:
-    """Review tarihi geçmiş veya `within_days` içinde olan uygulamalar (kriter: yaklaşan review)."""
+    """Applications whose review date is past due or within `within_days` (criterion: upcoming review)."""
     now = now or datetime.now(timezone.utc)
     out = []
     for f in findings:

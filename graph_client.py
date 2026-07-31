@@ -1,4 +1,4 @@
-"""Microsoft Graph için ince istemci: sayfalama + basit hata yönetimi."""
+"""Thin client for Microsoft Graph: pagination + simple error handling."""
 import time
 import requests
 
@@ -12,7 +12,7 @@ class GraphClient:
 
     def get_all(self, path: str, params: dict | None = None,
                 max_items: int | None = None) -> list[dict]:
-        """@odata.nextLink'i takip ederek sayfaları toplar. max_items ile üst sınır."""
+        """Collects pages by following @odata.nextLink. max_items sets an upper bound."""
         url = path if path.startswith("http") else f"{GRAPH_BASE}{path}"
         items: list[dict] = []
         first = True
@@ -34,7 +34,7 @@ class GraphClient:
         return items
 
     def get(self, path: str, params: dict | None = None) -> dict:
-        """Tekil obje GET (ör. bir servicePrincipal). Hata olursa {} döner."""
+        """Single-object GET (e.g. a servicePrincipal). Returns {} on error."""
         url = path if path.startswith("http") else f"{GRAPH_BASE}{path}"
         for _ in range(4):
             resp = requests.get(url, headers=self._headers, params=params, timeout=60)
@@ -47,7 +47,7 @@ class GraphClient:
         return {}
 
     def post(self, path: str, body: dict) -> dict:
-        """Tekil obje POST (ör. audit log query oluşturma). Hata → RuntimeError."""
+        """Single-object POST (e.g. creating an audit log query). Error → RuntimeError."""
         url = path if path.startswith("http") else f"{GRAPH_BASE}{path}"
         while True:
             resp = requests.post(url, headers={**self._headers,

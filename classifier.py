@@ -1,11 +1,11 @@
 """
-Classification engine — AI uygulamalarını governance kategorilerine ayırır.
+Classification engine — sorts AI applications into governance categories.
 
-Sinyaller (güç sırası): manuel override > app_id eşleşmesi > publisher/name/domain >
-business metadata / lifecycle > jenerik. Unknown ASLA güvenli/approved sayılmaz.
+Signals (in order of strength): manual override > app_id match > publisher/name/domain >
+business metadata / lifecycle > generic. Unknown is NEVER treated as safe/approved.
 
-Kategoriler: config.AI_CATEGORIES. Ownership: Internal / External / Unknown.
-Çıktı her app'e `classification` = {category, ownership, confidence, reasons, manual_override}.
+Categories: config.AI_CATEGORIES. Ownership: Internal / External / Unknown.
+Output attaches `classification` = {category, ownership, confidence, reasons, manual_override} to each app.
 """
 from config import MICROSOFT_OWNER_TENANTS
 
@@ -26,7 +26,7 @@ def _has_business_ownership(app):
 
 
 def _personal_pattern(app):
-    """Kişisel kullanım: 3. parti, kullanıcı-consent, tek/az kullanıcı, admin onayı yok."""
+    """Personal usage: third-party, user-consent, single/few users, no admin consent."""
     return (app.get("third_party")
             and app.get("consent_type") == "Principal"
             and app.get("user_count", 0) <= 2
@@ -36,14 +36,14 @@ def _personal_pattern(app):
 def classify(app, home_tenant):
     ownership = _ownership(app, home_tenant)
 
-    # 1) Manuel override — en güçlü sinyal, korunur (metadata deposundan gelir)
+    # 1) Manual override — strongest signal, preserved (comes from the metadata store)
     override = app.get("classification_override") or {}
     if override.get("category"):
         return {
             "category": override["category"],
             "ownership": override.get("ownership") or ownership,
             "confidence": 100,
-            "reasons": ["Manuel override (yönetici sınıflandırması)"],
+            "reasons": ["Manual override (admin classification)"],
             "manual_override": True,
         }
 
@@ -52,26 +52,26 @@ def classify(app, home_tenant):
     vendor = app.get("vendor", "")
     status = (app.get("lifecycle") or {}).get("status")
 
-    # Güven + eşleşme gerekçesi
+    # Confidence + match reason
     if signal == "app_id":
         confidence = 95
-        reasons.append(f"Bilinen uygulama App ID ({vendor})")
+        reasons.append(f"Known application App ID ({vendor})")
     elif signal in ("pattern", "domain"):
         confidence = 72
-        reasons.append(f"Yayıncı/isim/domain eşleşmesi ({vendor})")
+        reasons.append(f"Publisher/name/domain match ({vendor})")
     else:
         confidence = 45
-        reasons.append("Jenerik AI eşleşmesi (kesin değil)")
+        reasons.append("Generic AI match (not certain)")
 
     if app.get("verified_publisher"):
-        reasons.append("Doğrulanmış yayıncı")
+        reasons.append("Verified publisher")
         confidence = min(100, confidence + 5)
     if ownership == "External":
-        reasons.append("Dış yayıncı tenant")
+        reasons.append("External publisher tenant")
     elif ownership == "Internal":
-        reasons.append("İç (home tenant) uygulama")
+        reasons.append("Internal (home tenant) application")
 
-    # 2) Kategori — öncelik sırası
+    # 2) Category — in priority order
     if status == "Retired":
         category = "Retired AI"
         reasons.append("Lifecycle: Retired")
@@ -89,22 +89,22 @@ def classify(app, home_tenant):
         confidence = max(confidence, 80)
     elif _has_business_ownership(app):
         category = "Unapproved Enterprise AI"
-        reasons.append("Business sahipli ama onaylanmamış")
+        reasons.append("Has a business owner but not approved")
     elif ownership == "Internal":
         category = "Internal Custom AI"
-        reasons.append("İç geliştirilmiş uygulama")
+        reasons.append("Internally developed application")
     elif signal in ("app_id", "pattern", "domain") and ownership == "External":
         if _personal_pattern(app):
             category = "Personal AI Usage"
-            reasons.append("Kişisel kullanım deseni (tek kullanıcı, user-consent)")
+            reasons.append("Personal usage pattern (single user, user-consent)")
         else:
             category = "Third-Party Shadow AI"
-            reasons.append("Yönetilmeyen 3. parti AI")
+            reasons.append("Ungoverned third-party AI")
     else:
-        # Kriter: Unknown güvenli/approved sayılmaz — ayrı incelemeye düşer
+        # Criterion: Unknown is not treated as safe/approved — falls to separate review
         category = "Unknown AI"
         confidence = min(confidence, 40)
-        reasons.append("Sınıflandırma kesin değil — inceleme gerekli")
+        reasons.append("Classification is not certain — needs review")
 
     return {
         "category": category,

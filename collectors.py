@@ -1,19 +1,19 @@
 """
-Graph'tan Shadow AI sinyallerini toplar ve normalize eder.
+Collects and normalizes Shadow AI signals from Graph.
 
-Ana fikir:
-  1) Tenant'taki tüm servicePrincipal'ları çek.
-  2) Microsoft/first-party olmayanları (3. parti) ayıkla.
-  3) Bunlardan AI vendor'a benzeyenleri işaretle.
-  4) Her SP için verilmiş delegated OAuth consent'lerini (scope'lar) eşle.
-  5) Application (app-only) permission'ları ve gerçek sign-in aktivitesini ekle.
+Main idea:
+  1) Pull every servicePrincipal in the tenant.
+  2) Filter out the ones that are Microsoft/first-party (keep third-party).
+  3) Flag the ones that look like AI vendors.
+  4) Match each SP's granted delegated OAuth consents (scopes).
+  5) Add application (app-only) permissions and real sign-in activity.
 """
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 from config import AI_VENDORS, GENERIC_AI_HINTS, MICROSOFT_OWNER_TENANTS
 
-_MAX_WORKERS = 10  # her app için ayrı Graph çağrısı yapan enrichment döngülerinde kullanılır
+_MAX_WORKERS = 10  # used in enrichment loops that make a separate Graph call per app
 
 
 def _text_blob(sp: dict) -> str:
@@ -23,8 +23,8 @@ def _text_blob(sp: dict) -> str:
 
 
 def _match_vendor(sp: dict):
-    """(vendor_adı, güven, sinyal) döner; eşleşme yoksa (None, None, None).
-    Sinyal: 'app_id' (en güçlü) > 'pattern' / 'domain' > 'generic'."""
+    """Returns (vendor_name, confidence, signal); (None, None, None) if no match.
+    Signal: 'app_id' (strongest) > 'pattern' / 'domain' > 'generic'."""
     blob = _text_blob(sp)
     app_id = sp.get("appId", "")
     homepage = (sp.get("homepage") or "").lower()
@@ -37,7 +37,7 @@ def _match_vendor(sp: dict):
         if any(dom in homepage or dom in blob for dom in v.get("domains", [])):
             return v["name"], "high", "domain"
     if any(hint in blob for hint in GENERIC_AI_HINTS):
-        return "Bilinmeyen AI (jenerik eşleşme)", "low", "generic"
+        return "Unknown AI (generic match)", "low", "generic"
     return None, None, None
 
 
@@ -45,7 +45,7 @@ _AGENT_HINTS = ("agent", "copilot", " bot", "bot ", "studio", "botframework", "a
 
 
 def _asset_type(sp: dict) -> str:
-    """application vs agent (isim/yayıncı sinyalleriyle — kesin değil, yönetici ayrımı için)."""
+    """application vs agent (via name/publisher signals — not exact, for admin triage)."""
     blob = _text_blob(sp)
     return "agent" if any(h in blob for h in _AGENT_HINTS) else "application"
 
@@ -53,11 +53,11 @@ def _asset_type(sp: dict) -> str:
 def _is_third_party(sp: dict, home_tenant: str) -> bool:
     owner = sp.get("appOwnerOrganizationId")
     if owner is None:
-        return False  # sahibi belirsiz — genelde first-party/managed
+        return False  # owner unknown — usually first-party/managed
     if owner in MICROSOFT_OWNER_TENANTS:
         return False
     if owner == home_tenant:
-        return False  # kendi tenant'ımızda üretilmiş (iç uygulama)
+        return False  # built in our own tenant (internal app)
     return True
 
 
@@ -84,12 +84,12 @@ def collect_service_principals(graph, home_tenant: str) -> list[dict]:
             "confidence": confidence,
             "match_signal": signal,          # app_id / pattern / domain / generic
             "asset_type": _asset_type(sp),   # application / agent
-            "scopes": [],                    # delegated scope adları (skorlama geriye-uyum)
-            "consent_type": None,            # AllPrincipals (admin) / Principal (kullanıcı)
+            "scopes": [],                    # delegated scope names (scoring backward-compat)
+            "consent_type": None,            # AllPrincipals (admin) / Principal (user)
             "user_count": 0,
             "delegated_permissions": [],     # [{resource, permission, consent_type}]
             "application_permissions": [],   # [{resource, permission, permission_id}]
-            "has_app_only_access": False,    # kullanıcısız (app-only) erişebiliyor mu
+            "has_app_only_access": False,    # can it access without a user (app-only)
         })
     return out
 
@@ -98,7 +98,7 @@ ZERO_GUID = "00000000-0000-0000-0000-000000000000"
 
 
 class _ResourceResolver:
-    """resourceId → {name, roles:{roleId:permName}} çözümlemesini önbellekler."""
+    """Caches resourceId → {name, roles:{roleId:permName}} resolution."""
     def __init__(self, graph):
         self._graph = graph
         self._cache: dict[str, dict] = {}
@@ -110,19 +110,19 @@ class _ResourceResolver:
             roles = {r.get("id"): (r.get("value") or r.get("displayName"))
                      for r in obj.get("appRoles", []) if r.get("id")}
             self._cache[resource_id] = {
-                "name": obj.get("displayName") or fallback_name or "Bilinmeyen API",
+                "name": obj.get("displayName") or fallback_name or "Unknown API",
                 "roles": roles,
             }
-        elif fallback_name and self._cache[resource_id]["name"] == "Bilinmeyen API":
+        elif fallback_name and self._cache[resource_id]["name"] == "Unknown API":
             self._cache[resource_id]["name"] = fallback_name
         return self._cache[resource_id]
 
 
 def enrich_with_oauth_grants(graph, discovered: list[dict]) -> None:
     """
-    Delegated (kullanıcı adına) consent scope'larını ekler.
-    Korunur: `scopes` (skorlama), `consent_type`, `user_count`.
-    Eklenir: `delegated_permissions` = [{resource, permission, consent_type}].
+    Adds delegated (on-behalf-of-user) consent scopes.
+    Preserved: `scopes` (scoring), `consent_type`, `user_count`.
+    Added: `delegated_permissions` = [{resource, permission, consent_type}].
     """
     grants = graph.get_all("/oauth2PermissionGrants", {"$top": "999"})
     by_client: dict[str, list[dict]] = {}
@@ -158,11 +158,12 @@ def enrich_with_oauth_grants(graph, discovered: list[dict]) -> None:
 
 def enrich_with_app_role_assignments(graph, discovered: list[dict]) -> None:
     """
-    Application (app-only) permission'ları ekler:
+    Adds application (app-only) permissions:
       GET /servicePrincipals/{id}/appRoleAssignments
-    appRoleId GUID'i, hedef resource SP'nin appRoles'undan okunabilir ada çevrilir;
-    çözümlenemezse GUID kaybedilmez (permission_id olarak saklanır). Microsoft Graph
-    dışındaki custom enterprise API'ler de desteklenir (resource SP'den çözümlenir).
+    The appRoleId GUID is resolved to a readable name from the target resource SP's
+    appRoles; if it can't be resolved the GUID is kept (stored as permission_id).
+    Custom enterprise APIs outside Microsoft Graph are also supported (resolved from
+    the resource SP).
     """
     resolver = _ResourceResolver(graph)
 
@@ -176,24 +177,24 @@ def enrich_with_app_role_assignments(graph, discovered: list[dict]) -> None:
         for a in assigns:
             role_id = a.get("appRoleId")
             if not role_id or role_id == ZERO_GUID:
-                continue  # rol yok (yalnızca atama) → application permission değil
+                continue  # no role (assignment only) → not an application permission
             res = resolver.resolve(a.get("resourceId", ""), a.get("resourceDisplayName", ""))
             perms.append({
                 "resource": res["name"],
-                "permission": res["roles"].get(role_id, role_id),  # çözülemezse GUID
+                "permission": res["roles"].get(role_id, role_id),  # GUID if unresolved
                 "permission_id": role_id,
             })
         app["application_permissions"] = perms
         app["has_app_only_access"] = bool(perms)
 
-    # Her app için ayrı bir appRoleAssignments çağrısı — büyük tenant'larda (onlarca app)
-    # sıralı yapıldığında ciddi gecikme yaratıyor (bkz. connectors/agent365.py'deki aynı
-    # düzeltme). GraphClient thread-safe; paralel çalıştırıyoruz.
+    # A separate appRoleAssignments call per app — doing this sequentially creates
+    # serious delay on large tenants (dozens of apps) (see the same fix in
+    # connectors/agent365.py). GraphClient is thread-safe; run in parallel.
     with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as ex:
         list(ex.map(_enrich, discovered))
 
 
-# --- Gerçek kullanım / sign-in aktivitesi -----------------------------------
+# --- Real usage / sign-in activity -----------------------------------
 def _parse_dt(s):
     if not s:
         return None
@@ -204,7 +205,7 @@ def _parse_dt(s):
 
 
 def _app_usage(graph, app, now, iso90):
-    """Bir app için sign-in loglarından kullanım metriklerini üretir."""
+    """Produces usage metrics from sign-in logs for one app."""
     app_id = app.get("app_id")
     if not app_id:
         return None
@@ -229,7 +230,7 @@ def _app_usage(graph, app, now, iso90):
     users_all, ips, countries = set(), set(), set()
     ok30 = fail30 = 0
     last_deleg = None
-    daily = {}  # gün-index(0..29) → set(user)
+    daily = {}  # day-index(0..29) → set(user)
 
     for s in user_si:
         dt = _parse_dt(s.get("createdDateTime"))
@@ -294,13 +295,13 @@ def _app_usage(graph, app, now, iso90):
 
 def enrich_with_ownership(graph, discovered) -> None:
     """
-    Teknik owner + envanter alanlarını ekler:
+    Adds technical owner + inventory fields:
       - service_principal_owners: /servicePrincipals/{id}/owners
       - technical_inventory: enabled, publisher, homepage, tags, description,
-        credential sayısı ve en yakın credential expiry.
-    Owner bulunamazsa boş bırakılır (otomatik kişi ÜRETİLMEZ — kriter 2).
-    Application owner (yerel application objesi) çoğu 3. parti multi-tenant app'te
-    yoktur; bu yüzden application_owners boş kalır.
+        credential count, and nearest credential expiry.
+    Left empty if no owner is found (no automatic person is FABRICATED — criterion 2).
+    Application owner (the local application object) doesn't exist for most third-party
+    multi-tenant apps; so application_owners stays empty.
     """
     def _enrich(app):
         obj = graph.get(
@@ -330,21 +331,21 @@ def enrich_with_ownership(graph, discovered) -> None:
             "credential_next_expiry": expiries[0] if expiries else None,
         }
 
-    # App başına 2 sıralı çağrı (obje + owners) — bkz. enrich_with_app_role_assignments'taki
-    # aynı gerekçe. Paralel çalıştırıyoruz.
+    # 2 sequential calls per app (object + owners) — same reasoning as
+    # enrich_with_app_role_assignments. Run in parallel.
     with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as ex:
         list(ex.map(_enrich, discovered))
 
 
 def enrich_with_signin_activity(graph, discovered, now=None):
     """
-    Sign-in loglarından (Entra ID P1 gerekir) gerçek kullanım metriklerini ekler.
-    Kriter 10: activity çalışmazsa (P1 yok / 403) her app usage=None olur ve
-    assessment kesintisiz devam eder.
+    Adds real usage metrics from sign-in logs (requires Entra ID P1).
+    Criterion 10: if activity fails (no P1 / 403), every app's usage becomes None and
+    the assessment continues uninterrupted.
     """
     now = now or datetime.now(timezone.utc)
     iso90 = (now - timedelta(days=90)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    try:  # önce erişilebilirlik probu
+    try:  # probe accessibility first
         graph.get_all("/auditLogs/signIns", {"$top": "1"}, max_items=1)
     except Exception:
         for app in discovered:
@@ -356,8 +357,8 @@ def enrich_with_signin_activity(graph, discovered, now=None):
         except Exception:
             app["usage"] = None
 
-    # App başına 2 sign-in log sorgusu (delegated + service principal) — bunlar
-    # /auditLogs/signIns üzerinde filtreli analitik sorgular, tek tek en yavaş
-    # enrichment adımı. Bkz. enrich_with_app_role_assignments'taki aynı gerekçe.
+    # 2 sign-in log queries per app (delegated + service principal) — these are
+    # filtered analytical queries against /auditLogs/signIns, one at a time the
+    # slowest enrichment step. Same reasoning as enrich_with_app_role_assignments.
     with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as ex:
         list(ex.map(_enrich, discovered))

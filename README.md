@@ -105,16 +105,16 @@ Trigger the first scan:
 curl -s "https://$FUNCTION_APP.azurewebsites.net/api/scan?code=$KEY" ; echo
 ```
 
-Print your core dashboard link:
-
-```bash
-echo "https://$FUNCTION_APP.azurewebsites.net/api/report?code=$KEY"
-```
-
 Print your AI Data Sources dashboard link:
 
 ```bash
 echo "https://$FUNCTION_APP.azurewebsites.net/api/connectors?code=$KEY&format=html"
+```
+
+Print your core dashboard link — **open this one first**:
+
+```bash
+echo "https://$FUNCTION_APP.azurewebsites.net/api/report?code=$KEY"
 ```
 
 Give it a few minutes after Step 2 — role propagation and the Function App restart both

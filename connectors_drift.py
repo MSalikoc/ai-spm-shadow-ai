@@ -1,16 +1,17 @@
 """
-Connector kaynaklı change-tracking (Adım 8) — Agent 365 paket, Entra Agent Identity,
-Defender/MDCA Shadow AI ve Purview hassas etkileşim event'leri.
+Connector-sourced change tracking (Step 8) — Agent 365 package, Entra Agent Identity,
+Defender/MDCA Shadow AI, and Purview sensitive interaction events.
 
-Mevcut `drift.py` (klasik Entra/OAuth uygulama drift'i) motoruna PARALEL çalışır —
-`drift.py` HİÇ DEĞİŞTİRİLMEDİ. Ayrı snapshot/changes anahtarları kullanır
-(`connectors_snapshot.json` / `connectors_changes.json`) ki iki farklı şema (klasik
-`findings` listesi vs. birleşik connector asset/profile modeli) birbirine karışmasın ve
-mevcut Entra drift akışı (kriter: ilk scan baseline, değişiklik üretmez) risk altına
-girmesin. İlk çalıştırma (prev snapshot yok) da aynı kuralı izler: baseline, event YOK.
+Runs PARALLEL to the existing `drift.py` engine (classic Entra/OAuth application drift)
+— `drift.py` is NOT MODIFIED AT ALL. Uses separate snapshot/changes keys
+(`connectors_snapshot.json` / `connectors_changes.json`) so the two different schemas
+(classic `findings` list vs. the unified connector asset/profile model) don't mix, and
+the existing Entra drift flow (criterion: first scan is baseline, no changes produced)
+is never put at risk. The first run (no prev snapshot) follows the same rule: baseline,
+NO events.
 
-`process(result)` girdisi `pipeline.run_connectors()` çıktısıdır; `result is None` ise
-(hiçbir connector flag'i açık değilse) hiçbir şey okumaz/yazmaz — no-op.
+`process(result)`'s input is `pipeline.run_connectors()`'s output; if `result is None`
+(no connector flag is on) it reads/writes nothing — no-op.
 """
 import hashlib
 from datetime import datetime, timedelta, timezone
@@ -31,7 +32,7 @@ IMPORTANCE = {
 }
 
 _CONNECTED_LIKE = {"CONNECTED", "PARTIALLY_CONNECTED", "NO_DATA"}
-_MAX_INTERACTION_IDS = 5000       # snapshot şişmesin diye üst sınır (bkz. process())
+_MAX_INTERACTION_IDS = 5000       # upper bound so the snapshot doesn't grow unbounded (see process())
 
 
 def _ev(now, ctype, aid, name, old, new, desc):
@@ -43,7 +44,7 @@ def _ev(now, ctype, aid, name, old, new, desc):
 
 # ---------- snapshot ----------
 def snapshot(result: dict) -> dict:
-    """`pipeline.run_connectors()` çıktısından JSON-serileştirilebilir snapshot üretir."""
+    """Produces a JSON-serializable snapshot from `pipeline.run_connectors()` output."""
     assets = result.get("assets", [])
     packages, identities, apps = {}, {}, {}
     interaction_ids = []
@@ -73,9 +74,10 @@ def snapshot(result: dict) -> dict:
         "packages": packages, "identities": identities, "apps": apps,
         "interaction_ids": sorted(set(interaction_ids))[-_MAX_INTERACTION_IDS:],
         "connector_status": {name: h.get("status") for name, h in result.get("health", {}).items()},
-        # Yeni interaction event'lerini üretebilmek için minimal alanları tut.
-        # DİKKAT: `raw_content` (STORE_RAW_AI_CONTENT=true iken prompt/response) BİLEREK
-        # kopyalanmaz — bu snapshot kalıcı depoya (Blob) yazılır, ham içerik asla saklanmaz.
+        # Keep only the minimal fields needed to produce new interaction events.
+        # NOTE: `raw_content` (prompt/response when STORE_RAW_AI_CONTENT=true) is
+        # DELIBERATELY not copied — this snapshot is written to persistent storage
+        # (Blob), raw content is never retained.
         "_interactions": {
             a["interaction"]["interaction_id"]: {
                 "app_host": a["interaction"].get("app_host"),
@@ -93,81 +95,81 @@ def diff(prev: dict, cur: dict, now=None) -> list:
     now = now or datetime.now(timezone.utc)
     events = []
 
-    # --- Agent 365 paketleri ---
+    # --- Agent 365 packages ---
     p_prev, p_cur = prev.get("packages", {}), cur.get("packages", {})
     for aid in set(p_cur) - set(p_prev):
         c = p_cur[aid]
         events.append(_ev(now, "NEW_AGENT_365_PACKAGE", aid, c["name"], None, c["name"],
-                          f"Yeni Agent 365 paketi keşfedildi: {c['name']}"))
+                          f"New Agent 365 package discovered: {c['name']}"))
     for aid in set(p_cur) & set(p_prev):
         p, c = p_prev[aid], p_cur[aid]
         if c["blocked"] and not p["blocked"]:
             events.append(_ev(now, "AGENT_365_PACKAGE_BLOCKED", aid, c["name"], False, True,
-                              f"Agent 365 paketi engellendi: {c['name']}"))
+                              f"Agent 365 package blocked: {c['name']}"))
         elif p["blocked"] and not c["blocked"]:
             events.append(_ev(now, "AGENT_365_PACKAGE_UNBLOCKED", aid, c["name"], True, False,
-                              f"Agent 365 paketi engeli kaldırıldı: {c['name']}"))
+                              f"Agent 365 package unblocked: {c['name']}"))
 
     # --- Entra Agent Identity ---
     i_prev, i_cur = prev.get("identities", {}), cur.get("identities", {})
     for aid in set(i_cur) - set(i_prev):
         c = i_cur[aid]
         events.append(_ev(now, "NEW_AGENT_IDENTITY", aid, c["name"], None, c["name"],
-                          f"Yeni Entra Agent Identity keşfedildi: {c['name']}"))
+                          f"New Entra Agent Identity discovered: {c['name']}"))
     for aid in set(i_cur) & set(i_prev):
         p, c = i_prev[aid], i_cur[aid]
         if p["enabled"] is True and c["enabled"] is False:
             events.append(_ev(now, "AGENT_IDENTITY_DISABLED", aid, c["name"], True, False,
-                              f"Agent identity devre dışı bırakıldı: {c['name']}"))
+                              f"Agent identity disabled: {c['name']}"))
         elif p["enabled"] is False and c["enabled"] is True:
             events.append(_ev(now, "AGENT_IDENTITY_ENABLED", aid, c["name"], False, True,
-                              f"Agent identity tekrar etkinleştirildi: {c['name']}"))
+                              f"Agent identity re-enabled: {c['name']}"))
         if set(c["owners"]) != set(p["owners"]):
             events.append(_ev(now, "AGENT_OWNER_CHANGED", aid, c["name"], p["owners"], c["owners"],
-                              f"{c['name']} owner listesi değişti"))
+                              f"{c['name']} owner list changed"))
         if set(c["sponsors"]) != set(p["sponsors"]):
             events.append(_ev(now, "AGENT_SPONSOR_CHANGED", aid, c["name"], p["sponsors"], c["sponsors"],
-                              f"{c['name']} sponsor listesi değişti"))
+                              f"{c['name']} sponsor list changed"))
 
-    # --- Defender/MDCA Shadow AI app'leri (sanctioned/unsanctioned durumu) ---
+    # --- Defender/MDCA Shadow AI apps (sanctioned/unsanctioned status) ---
     a_prev, a_cur = prev.get("apps", {}), cur.get("apps", {})
     for aid, c in a_cur.items():
         p = a_prev.get(aid)
         if p is None:
             if c["sanctioned_state"] == "unsanctioned":
                 events.append(_ev(now, "NEW_UNSANCTIONED_AI_APP", aid, c["name"], None, "unsanctioned",
-                                  f"Yeni onaysız (unsanctioned) AI uygulaması: {c['name']}"))
+                                  f"New unsanctioned AI application: {c['name']}"))
             continue
         if c["sanctioned_state"] != p["sanctioned_state"]:
             if c["sanctioned_state"] == "unsanctioned":
                 events.append(_ev(now, "NEW_UNSANCTIONED_AI_APP", aid, c["name"],
                                   p["sanctioned_state"], "unsanctioned",
-                                  f"{c['name']} onaysız (unsanctioned) duruma geçti"))
+                                  f"{c['name']} became unsanctioned"))
             elif c["sanctioned_state"] == "sanctioned":
                 events.append(_ev(now, "AI_APP_SANCTIONED", aid, c["name"],
                                   p["sanctioned_state"], "sanctioned",
-                                  f"{c['name']} kurumsal onaylı (sanctioned) duruma geçti"))
+                                  f"{c['name']} became organizationally sanctioned"))
 
-    # --- Purview hassas etkileşimler (yalnızca YENİ + hassas içerikli kayıtlar) ---
+    # --- Purview sensitive interactions (only NEW + sensitive-content records) ---
     new_ids = set(cur.get("interaction_ids", [])) - set(prev.get("interaction_ids", []))
     interactions = cur.get("_interactions", {})
     for rid in sorted(new_ids):
         it = interactions.get(rid)
         if not it or not (it.get("sensitive_info_types") or it.get("sensitivity_label_id")):
-            continue           # hassas içerik yoksa drift-worthy değil
+            continue           # not drift-worthy without sensitive content
         direction = it.get("direction")
         name = f"{it.get('app_host') or '—'} — {it.get('user') or 'unknown'}"
         if direction == "BLOCKED":
             events.append(_ev(now, "SENSITIVE_INTERACTION_BLOCKED", rid, name, None, direction,
-                              f"Hassas veri DLP ile engellendi: {name}"))
+                              f"Sensitive data blocked by DLP: {name}"))
         elif direction == "ALLOWED":
             events.append(_ev(now, "SENSITIVE_INTERACTION_ALLOWED", rid, name, None, direction,
-                              f"Hassas veri DLP eşleşti ama izin verildi: {name}"))
+                              f"Sensitive data matched DLP but was allowed: {name}"))
         else:
             events.append(_ev(now, "NEW_SENSITIVE_INTERACTION", rid, name, None, direction,
-                              f"Hassas veri içeren yeni AI etkileşimi: {name}"))
+                              f"New AI interaction containing sensitive data: {name}"))
 
-    # --- Kaynak bağlantı durumu (coverage) ---
+    # --- Data source connection status (coverage) ---
     s_prev, s_cur = prev.get("connector_status", {}), cur.get("connector_status", {})
     for name in set(s_cur):
         p_status, c_status = s_prev.get(name), s_cur.get(name)
@@ -183,18 +185,18 @@ def diff(prev: dict, cur: dict, now=None) -> list:
     return events
 
 
-# ---------- kalıcılık (drift.py ile aynı desen, ayrı dosya adları) ----------
+# ---------- persistence (same pattern as drift.py, separate file names) ----------
 def process(result, now=None) -> list:
     """
-    Diff hesaplar, connectors_snapshot.json/connectors_changes.json'u günceller.
-    `result is None` (connector'lar kapalı) ise HİÇBİR ŞEY okumaz/yazmaz — no-op.
+    Computes the diff, updates connectors_snapshot.json/connectors_changes.json.
+    If `result is None` (connectors disabled), reads/writes NOTHING — no-op.
     """
     if result is None:
         return []
     now = now or datetime.now(timezone.utc)
     prev = storage.read_json("connectors_snapshot.json")
     cur = snapshot(result)
-    events = [] if prev is None else diff(prev, cur, now)   # baseline: değişiklik yok
+    events = [] if prev is None else diff(prev, cur, now)   # baseline: no changes
     storage.write_json("connectors_snapshot.json", cur)
     if events:
         log = storage.read_json("connectors_changes.json") or {"events": []}
@@ -219,28 +221,28 @@ def recent(days=14, now=None) -> list:
 
 
 def executive_summary(events) -> list:
-    """Yönetici özeti satırları (haftalık digest için — drift.executive_summary ile aynı üslup)."""
+    """Executive summary lines (for the weekly digest — same style as drift.executive_summary)."""
     lines = []
 
     def cnt(t):
         return sum(1 for e in events if e["change_type"] == t)
 
     if cnt("NEW_UNSANCTIONED_AI_APP"):
-        lines.append(f"{cnt('NEW_UNSANCTIONED_AI_APP')} yeni onaysız (unsanctioned) AI uygulaması tespit edildi.")
+        lines.append(f"{cnt('NEW_UNSANCTIONED_AI_APP')} new unsanctioned AI applications detected.")
     if cnt("SENSITIVE_INTERACTION_ALLOWED"):
-        lines.append(f"{cnt('SENSITIVE_INTERACTION_ALLOWED')} hassas veri etkileşimi DLP tarafından "
-                     "eşleşti ama engellenmedi.")
+        lines.append(f"{cnt('SENSITIVE_INTERACTION_ALLOWED')} sensitive data interactions matched DLP "
+                     "but were not blocked.")
     if cnt("SENSITIVE_INTERACTION_BLOCKED"):
-        lines.append(f"{cnt('SENSITIVE_INTERACTION_BLOCKED')} hassas veri etkileşimi DLP ile engellendi.")
+        lines.append(f"{cnt('SENSITIVE_INTERACTION_BLOCKED')} sensitive data interactions were blocked by DLP.")
     if cnt("NEW_AGENT_365_PACKAGE"):
-        lines.append(f"{cnt('NEW_AGENT_365_PACKAGE')} yeni Agent 365 paketi kaydedildi.")
+        lines.append(f"{cnt('NEW_AGENT_365_PACKAGE')} new Agent 365 packages registered.")
     if cnt("NEW_AGENT_IDENTITY"):
-        lines.append(f"{cnt('NEW_AGENT_IDENTITY')} yeni Entra Agent Identity keşfedildi.")
+        lines.append(f"{cnt('NEW_AGENT_IDENTITY')} new Entra Agent Identities discovered.")
     if cnt("AGENT_OWNER_CHANGED") or cnt("AGENT_SPONSOR_CHANGED"):
-        lines.append(f"{cnt('AGENT_OWNER_CHANGED') + cnt('AGENT_SPONSOR_CHANGED')} agent identity'sinde "
-                     "owner/sponsor değişikliği oldu.")
+        lines.append(f"{cnt('AGENT_OWNER_CHANGED') + cnt('AGENT_SPONSOR_CHANGED')} agent identities had "
+                     "an owner/sponsor change.")
     disc = [e for e in events if e["change_type"] in ("DATA_SOURCE_DISCONNECTED", "PURVIEW_COVERAGE_CHANGED")
             and e.get("new_value") not in _CONNECTED_LIKE]
     if disc:
-        lines.append(f"{len(disc)} veri kaynağı bağlantısı kesildi/kayboldu — coverage etkilendi.")
+        lines.append(f"{len(disc)} data source connections were lost — coverage was affected.")
     return lines

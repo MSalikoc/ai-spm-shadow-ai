@@ -8,7 +8,7 @@ def test_disabled_by_default(monkeypatch):
               "PURVIEW_DSPM_IMPORT_PATH"):
         monkeypatch.delenv(f, raising=False)
     assert pipeline.connectors_enabled() is False
-    assert pipeline.run_connectors(graph=None) is None    # mevcut pipeline'a sıfır etki
+    assert pipeline.run_connectors(graph=None) is None    # zero impact on the existing pipeline
 
 
 def test_enabled_when_any_flag_true(monkeypatch):
@@ -26,7 +26,7 @@ def test_enabled_when_dspm_path_set(monkeypatch):
 
 
 def test_run_connectors_end_to_end(monkeypatch):
-    """Tüm connector'lar sahte veriyle çalışır; registry+correlation+profil zinciri kırılmaz."""
+    """All connectors run with fake data; the registry+correlation+profile chain doesn't break."""
     import connectors
     from connectors.agent365 import Agent365Collector
     from connectors.base import Source

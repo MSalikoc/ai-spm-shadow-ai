@@ -25,12 +25,12 @@ def test_manual_metadata_survives_rescan():
     assert findings[0]["ownership"]["business_owner"] == "Finance Applications Team"
     assert findings[0]["business_context"]["business_unit"] == "Finance"
     assert findings[0]["lifecycle"]["status"] == "Under Review"
-    # Metadata girilmemiş app default alır
+    # An app with no metadata entered gets the default
     assert findings[1]["lifecycle"]["status"] == "Discovered"
 
 
 def test_technical_and_business_owner_separated():
-    """Kriter: teknik ve business owner ayrımı."""
+    """Criterion: distinction between technical and business owner."""
     store = {}
     metadata.set_metadata(store, "app-1",
                           {"ownership": {"business_owner": "BU Team"}}, now=NOW)
@@ -45,7 +45,7 @@ def test_technical_and_business_owner_separated():
 
 
 def test_lifecycle_history_recorded():
-    """Kriter 9: lifecycle ve review değişiklikleri history'de."""
+    """Criterion 9: lifecycle and review changes are in history."""
     store = {}
     metadata.set_metadata(store, "app-1", {"lifecycle": {"status": "Under Review"}}, now=NOW)
     later = NOW + timedelta(days=5)
@@ -62,11 +62,11 @@ def test_lifecycle_history_recorded():
 def test_invalid_lifecycle_status_ignored():
     store = {}
     metadata.set_metadata(store, "app-1", {"lifecycle": {"status": "Bogus"}}, now=NOW)
-    assert store["app-1"]["lifecycle"]["status"] == "Discovered"  # geçersiz değer yok sayıldı
+    assert store["app-1"]["lifecycle"]["status"] == "Discovered"  # invalid value ignored
 
 
 def test_upcoming_reviews():
-    """Kriter: review tarihi yaklaşan uygulamalar listelenebiliyor."""
+    """Criterion: applications with an upcoming review date can be listed."""
     findings = [
         {"app_id": "a", "display_name": "Due", "lifecycle": {"next_review_date": "2026-08-10"}},
         {"app_id": "b", "display_name": "Overdue", "lifecycle": {"next_review_date": "2026-07-01"}},
@@ -77,11 +77,11 @@ def test_upcoming_reviews():
     names = [f["display_name"] for f in due]
     assert "Overdue" in names and "Due" in names
     assert "Far" not in names and "None" not in names
-    assert names[0] == "Overdue"  # en geçmiş önce
+    assert names[0] == "Overdue"  # most overdue first
 
 
 def test_ownership_collector_no_synthesis():
-    """Kriter 2: owner yoksa boş; otomatik kişi üretilmez."""
+    """Criterion 2: empty if no owner; no automatic person is fabricated."""
     class G:
         def get(self, path, params=None):
             return {"accountEnabled": True, "publisherName": "OpenAI",
@@ -89,10 +89,10 @@ def test_ownership_collector_no_synthesis():
                     "passwordCredentials": []}
 
         def get_all(self, path, params=None, max_items=None):
-            return []  # owner yok
+            return []  # no owner
     apps = [{"sp_id": "sp1", "publisher": "OpenAI"}]
     collectors.enrich_with_ownership(G(), apps)
-    assert apps[0]["ownership"]["service_principal_owners"] == []   # boş, uydurma yok
+    assert apps[0]["ownership"]["service_principal_owners"] == []   # empty, no fabrication
     assert apps[0]["technical_inventory"]["credential_count"] == 1
     assert apps[0]["technical_inventory"]["credential_next_expiry"] == "2026-12-01T00:00:00Z"
 
@@ -100,7 +100,7 @@ def test_ownership_collector_no_synthesis():
 def test_dashboard_shows_governance_and_bu_filter():
     apps = [{"display_name": "InvoiceAI", "vendor": "X", "first_party_microsoft": False,
              "third_party": True, "verified_publisher": True, "scopes": ["user.read"],
-             "consent_type": "Principal", "user_count": 5, "risk_score": 30, "risk_level": "Orta",
+             "consent_type": "Principal", "user_count": 5, "risk_score": 30, "risk_level": "Medium",
              "reasons": ["r"], "remediation": ["m"], "app_id": "app-1",
              "delegated_permissions": [], "application_permissions": [], "has_app_only_access": False,
              "usage": None,
@@ -112,10 +112,10 @@ def test_dashboard_shows_governance_and_bu_filter():
              "lifecycle": {"status": "Under Review", "next_review_date": "2026-08-10"},
              "technical_inventory": {"credential_count": 0}, "notes": "", "history": []}]
     doc = report.html_string(apps, "t")
-    assert "Yönetişim" in doc                          # governance bölümü
-    assert 'data-group="bu"' in doc                    # BU filtresi
-    assert '<option value="Finance">' in doc           # BU seçeneği
-    assert "Under Review" in doc                       # lifecycle gösteriliyor
-    assert 'data-bu="Finance"' in doc                  # satır BU etiketi
-    assert "Metadata düzenle" in doc                   # dashboard editör
-    assert "Yaklaşan / geçmiş review" in doc           # upcoming reviews
+    assert "Governance" in doc                         # governance section
+    assert 'data-group="bu"' in doc                    # BU filter
+    assert '<option value="Finance">' in doc           # BU option
+    assert "Under Review" in doc                       # lifecycle is shown
+    assert 'data-bu="Finance"' in doc                  # row BU tag
+    assert "Edit metadata" in doc                      # dashboard editor
+    assert "Upcoming / overdue reviews" in doc         # upcoming reviews
