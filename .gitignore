@@ -16,3 +16,6 @@ out/
 
 # Yerel test yardımcıları (yayınlanmaz)
 demo.py
+
+# macOS
+.DS_Store

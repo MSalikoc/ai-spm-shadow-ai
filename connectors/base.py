@@ -60,6 +60,33 @@ class ApiUnavailable(Exception):
     pass
 
 
+def classify_graph_error(err):
+    """
+    Maps a failed Graph call to the connector status the dashboard should show.
+
+    Prefers the real HTTP status off a `GraphError`; falls back to sniffing the message
+    so hand-built fakes and plain RuntimeErrors still classify. Returns an exception to
+    raise — a generic one is returned unchanged so `safe_run` records it as ERROR.
+    """
+    status = getattr(err, "status", None)
+    text = str(err)
+    s = text.lower()
+
+    # A licensing failure can arrive as 402, 403, or 400 depending on the endpoint, so
+    # the message is the only reliable signal — check it before the status code.
+    if "license" in s or "quota" in s or "subscription" in s:
+        return LicenseMissing(text[:200])
+    if status in (401, 403):
+        return PermissionMissing(text[:200])
+    if status in (400, 404, 501):
+        return ApiUnavailable(text[:200])
+    if "403" in s or "401" in s or "forbidden" in s or "authorization" in s:
+        return PermissionMissing(text[:200])
+    if "404" in s or "not found" in s or "notfound" in s or "400" in s:
+        return ApiUnavailable(text[:200])
+    return err
+
+
 class BaseCollector(ABC):
     """
     Shared contract for all connectors. Subclasses implement `name`, `source`, and

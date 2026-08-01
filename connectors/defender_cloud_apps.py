@@ -20,7 +20,7 @@ import logging
 import os
 
 from .base import (ApiUnavailable, BaseCollector, ConnectorStatus, EntityType,
-                   LicenseMissing, PermissionMissing, Source)
+                   Source, classify_graph_error)
 from .model import NOT_EXPOSED_BY_API, field, make_asset, raw_reference
 
 GRAPH_BETA = "https://graph.microsoft.com/beta"
@@ -104,14 +104,7 @@ class DefenderCloudAppsCollector(BaseCollector):
 
     @staticmethod
     def _classify(err):
-        s = str(err).lower()
-        if "403" in s or "forbidden" in s or "authorization" in s:
-            return PermissionMissing(str(err)[:200])
-        if "license" in s or "quota" in s or "subscription" in s:
-            return LicenseMissing(str(err)[:200])
-        if "404" in s or "not found" in s or "notfound" in s or "400" in s:
-            return ApiUnavailable(str(err)[:200])
-        return err
+        return classify_graph_error(err)
 
     # --- normalize ---
     def normalize(self, raw_records: list) -> list:
