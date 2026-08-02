@@ -89,19 +89,29 @@ echo "==> 4/4 Client secret oluşturuluyor (2 yıl)..."
 SECRET="$(az ad app credential reset --id "$APP_ID" --append \
           --display-name "aispm-cli" --years 2 --query password -o tsv)"
 
+# The values are printed as an `export` block rather than inline flags: it pastes as one
+# unit, keeps the secret out of every later command line (and therefore out of shell
+# history and `ps` output), and leaves nothing to substitute by hand.
 cat <<EOF
 
 ============================================================
-Hazır. Şimdi şunu çalıştırın:
+Hazır. Önce şu üç satırı kopyalayıp yapıştırın:
 
-  python aispm.py doctor \\
-    --auth app \\
-    --tenant "$TENANT_ID" \\
-    --client-id "$APP_ID" \\
-    --client-secret "$SECRET"
+export AISPM_TENANT_ID="$TENANT_ID"
+export AISPM_CLIENT_ID="$APP_ID"
+export AISPM_CLIENT_SECRET="$SECRET"
 
-Secret'ı şimdi kaydedin — Azure bir daha göstermez.
+Sonra sırasıyla:
+
+  python aispm.py doctor --auth app
+  python aispm.py scan  --auth app --scope consented --open
+
+Secret'ı şimdi bir parola yöneticisine kaydedin — Azure bir daha göstermez.
+export'lar sadece bu terminal oturumu için geçerli.
 Rol yayılması 1-2 dakika sürebilir; hemen denerseniz 403 alabilirsiniz.
+
+Secret'ı iptal edip yenilemek isterseniz:
+  az ad app credential reset --id "$APP_ID" --append --display-name aispm-cli --years 2
 ============================================================
 EOF
 

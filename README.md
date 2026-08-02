@@ -187,15 +187,20 @@ grants the six Graph application permissions, admin-consents them, and prints a 
 ./scripts/create_app_registration.sh
 ```
 
-Then re-run with the values it prints:
+It finishes by printing three `export` lines. Paste those, then:
 
 ```bash
-python aispm.py doctor --auth app --tenant <TENANT> --client-id <APP_ID> --client-secret <SECRET>
+python aispm.py doctor --auth app
 ```
 
 ```bash
-python aispm.py scan --auth app --tenant <TENANT> --client-id <APP_ID> --client-secret <SECRET> --scope consented --open
+python aispm.py scan --auth app --scope consented --open
 ```
+
+`AISPM_TENANT_ID`, `AISPM_CLIENT_ID` and `AISPM_CLIENT_SECRET` are read from the
+environment, so the secret never appears on a command line — where it would be captured
+by shell history and visible in `ps`. The matching `--tenant` / `--client-id` /
+`--client-secret` flags still work if you prefer them.
 
 The script needs a role that can grant application permissions — **Privileged Role
 Administrator** or **Global Administrator** — the same requirement the deployment path

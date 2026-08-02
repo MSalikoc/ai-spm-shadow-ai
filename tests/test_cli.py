@@ -282,3 +282,43 @@ def test_function_app_doctor_reports_a_missing_tenant_id(monkeypatch):
     resp = function_app.doctor_view(Req())
     assert resp.status_code == 500
     assert "AISPM_TENANT_ID" in resp.get_body().decode()
+
+
+# --- credentials come from the environment, not the command line -----------
+def test_credentials_fall_back_to_environment(monkeypatch):
+    """Keeps the secret out of shell history and out of `ps` output."""
+    monkeypatch.setenv("AISPM_TENANT_ID", "tenant-env")
+    monkeypatch.setenv("AISPM_CLIENT_ID", "client-env")
+    monkeypatch.setenv("AISPM_CLIENT_SECRET", "secret-env")
+
+    args = aispm.build_parser().parse_args(["scan", "--auth", "app"])
+    assert (args.tenant, args.client_id, args.client_secret) == (
+        "tenant-env", "client-env", "secret-env")
+
+
+def test_explicit_flags_still_beat_the_environment(monkeypatch):
+    monkeypatch.setenv("AISPM_TENANT_ID", "tenant-env")
+    args = aispm.build_parser().parse_args(["scan", "--tenant", "tenant-flag"])
+    assert args.tenant == "tenant-flag"
+
+
+def test_an_unsubstituted_placeholder_is_named_rather_than_sent_to_graph():
+    """
+    `--tenant <T>` pasted into zsh dies with "no such file or directory: T", naming
+    neither the flag nor the fix. Quoted, it reaches us — so say what to do.
+    """
+    for argv in (["scan", "--tenant", "<T>"],
+                 ["scan", "--client-id", "<C>"],
+                 ["scan", "--client-secret", "<SECRET>"],
+                 ["doctor", "--tenant", "<TENANT_ID>"]):
+        with pytest.raises(SystemExit) as e:
+            aispm.main(argv)
+        message = str(e.value)
+        assert "placeholder" in message
+        assert "AISPM_TENANT_ID" in message      # points at the export route
+
+
+def test_a_real_value_that_merely_looks_odd_is_not_rejected(monkeypatch):
+    args = aispm.build_parser().parse_args(
+        ["scan", "--tenant", "af80ebe6-b601-49c4-89b9-381499b97ba6"])
+    aispm._reject_placeholders(args)             # does not raise

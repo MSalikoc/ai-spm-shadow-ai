@@ -209,12 +209,18 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command", required=True)
 
     def common(sp):
-        sp.add_argument("--tenant", help="Entra tenant ID (default: whatever az login points at)")
+        # Credentials fall back to the environment so they need not be typed on the
+        # command line, where they end up in shell history and in `ps` output.
+        sp.add_argument("--tenant", default=os.environ.get("AISPM_TENANT_ID"),
+                        help="Entra tenant ID (env: AISPM_TENANT_ID; "
+                             "default: whatever az login points at)")
         sp.add_argument("--auth", default="azure-cli",
                         choices=["azure-cli", "device-code", "app", "managed"],
                         help="how to authenticate (default: reuse `az login`)")
-        sp.add_argument("--client-id", help="app registration ID (device-code / app auth)")
-        sp.add_argument("--client-secret", help="client secret (app auth)")
+        sp.add_argument("--client-id", default=os.environ.get("AISPM_CLIENT_ID"),
+                        help="app registration ID (env: AISPM_CLIENT_ID)")
+        sp.add_argument("--client-secret", default=os.environ.get("AISPM_CLIENT_SECRET"),
+                        help="client secret (env: AISPM_CLIENT_SECRET)")
         return sp
 
     common(sub.add_parser("doctor", help="check what this identity can read, and why not"))
@@ -234,6 +240,26 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _reject_placeholders(args) -> None:
+    """
+    Catches an unsubstituted placeholder before it becomes a confusing failure.
+
+    Documentation writes `--tenant <TENANT>`; pasted into zsh, `<TENANT>` is an input
+    redirection and the shell dies with "no such file or directory: TENANT", which
+    names neither the flag nor the real problem. Quoted, it reaches us verbatim
+    instead. Either way, say what actually needs doing.
+    """
+    for flag, value in (("--tenant", args.tenant), ("--client-id", getattr(args, "client_id", None)),
+                        ("--client-secret", getattr(args, "client_secret", None))):
+        text = (value or "").strip()
+        if text.startswith("<") and text.endswith(">"):
+            raise SystemExit(
+                f"{flag} is still the placeholder {text} — replace it with the real value.\n"
+                "  Tip: export the values once instead of typing them each run:\n"
+                "    export AISPM_TENANT_ID=... AISPM_CLIENT_ID=... AISPM_CLIENT_SECRET=...\n"
+                "    python aispm.py scan --auth app --scope consented --open")
+
+
 def main(argv=None) -> int:
     # azure-identity logs its own credential failure at WARNING before we get the
     # exception, which prints a raw SDK line above the actionable message below it.
@@ -241,6 +267,7 @@ def main(argv=None) -> int:
     logging.getLogger("azure.identity").setLevel(logging.ERROR)
 
     args = build_parser().parse_args(argv)
+    _reject_placeholders(args)
     handler = {"doctor": cmd_doctor, "scan": cmd_scan, "sample": cmd_sample}[args.command]
     try:
         return handler(args)
