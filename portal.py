@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 import charts
 import collectors
 import executive
+import report
 from report import CSS, LEVEL_COLORS, LEVELS, THEME_JS, _scope_weight
 
 # Where a vendor was observed. Order is the order badges appear in.
@@ -178,8 +179,6 @@ def vendor_rollup(scored, connectors_result=None) -> list[dict]:
 
 def _assessment(connectors_result):
     """connectors_result may be the raw run or an already-built assessment."""
-    if "shadow_ai_usage" in connectors_result:
-        return connectors_result
     import connectors_report
     return connectors_report.assessment(connectors_result)
 
@@ -453,15 +452,7 @@ def html_string(scored, tenant_id="", connectors_result=None, changes=None,
         f'"></span><b>{_esc(name)}</b> <span class="governed">{_esc(detail)}</span></li>'
         for name, ok, detail in executive.connector_status(health))
 
-    body = f"""
-<header>
-  {_LOGO}
-  <h1>AI-SPM</h1>
-  <span class="spacer"></span>
-  <span class="tenant">{_esc(tenant_id)}</span>
-  <button id="tg" class="themebtn" title="Theme">&#9790;</button>
-</header>
-<main>
+    estate_body = f"""
   <div class="hero">
     <div class="card">
       <h3>Tenant</h3>
@@ -538,22 +529,82 @@ def html_string(scored, tenant_id="", connectors_result=None, changes=None,
   </div>
 
   <h3 style="margin:22px 4px 10px;font-size:13px;text-transform:uppercase;
-             letter-spacing:.03em;color:var(--muted)">Detail views</h3>
+             letter-spacing:.03em;color:var(--muted)">Standalone views</h3>
   <div class="srcnav">
     <a href="{_esc(report_href)}"><b>Entra OAuth assessment &#8594;</b>
-      <span>Per-application permissions, usage, governance, findings and change history</span></a>
+      <span>The same sections as a standalone page, for sharing or printing</span></a>
     <a href="{_esc(connectors_href)}"><b>Microsoft AI data sources &#8594;</b>
-      <span>Agents, Shadow AI traffic, sensitive interactions and connector coverage</span></a>
+      <span>The same sections as a standalone page, for sharing or printing</span></a>
   </div>
+"""
 
+    # Both dashboards' own sections, composed here rather than reimplemented — the
+    # portal is the union of the two, not a summary sitting on top of them.
+    core_tabs = report.build_tabs(scored, tenant_id, changes, findings, health)
+    conn = None
+    if connectors_result:
+        try:
+            import connectors_report
+            conn = connectors_report.build_tabs(connectors_result, tenant_id, now)
+        except Exception:
+            conn = None
+
+    def missing(what, why):
+        return (f'<div class="card"><h3>{_esc(what)}</h3>'
+                f'<p class="governed">{_esc(why)}</p></div>')
+
+    no_conn = "The Microsoft AI data source connectors did not run in this scan. " \
+              "Run `aispm.py doctor` to see which are reachable."
+    ctabs = (conn or {}).get("tabs", {})
+
+    panes = [
+        ("estate", "Estate", estate_body),
+        ("apps", "Applications", core_tabs.get("apps", "")),
+        ("usage", "Usage", core_tabs.get("usage", "")),
+        ("agents", "Agents", ctabs.get("agents") or missing("Agents", no_conn)),
+        ("shadow", "Shadow AI", ctabs.get("shadow") or missing("Shadow AI", no_conn)),
+        ("sensitive", "Sensitive Data",
+         ctabs.get("sensitive") or missing("Sensitive Data", no_conn)),
+        ("findings", "Findings",
+         (core_tabs.get("findings") or "")
+         + (ctabs.get("findings") or "")
+         or missing("Findings", "No findings recorded in this scan.")),
+        ("governance", "Governance", core_tabs.get("governance", "")),
+        ("changes", "Changes",
+         core_tabs.get("changes") or missing("Changes", "No change history yet — the "
+                                             "first scan is the baseline.")),
+        ("gaps", "Gaps", ctabs.get("gaps") or missing(
+            "Known gaps", "Connector coverage limits appear here once the connectors run.")),
+    ]
+
+    nav = "".join(
+        f'<a class="navlink{" active" if key == "estate" else ""}" data-tab="{key}">{label}</a>'
+        for key, label, _ in panes)
+    sections = "".join(
+        f'<section class="tab{" active" if key == "estate" else ""}" data-tab="{key}">{content}</section>'
+        for key, _, content in panes)
+
+    page_body = f"""
+<header>
+  {_LOGO}
+  <h1>AI-SPM</h1>
+  <nav class="tabs">{nav}</nav>
+  <span class="spacer"></span>
+  <span class="tenant">{_esc(tenant_id)}</span>
+  <button id="tg" class="themebtn" title="Theme">&#9790;</button>
+</header>
+<main>
+  {sections}
   <div class="foot">AI-SPM · read-only · {ts}</div>
 </main>
-<script>{THEME_JS}{PORTAL_JS}</script>
+{(conn or {}).get("detail_panel", "")}
+<script>{THEME_JS}{PORTAL_JS}{(conn or {}).get("script", "")}</script>
 """
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>AI-SPM · AI Estate</title>'
-            f'<style>{CSS}{charts.CSS}{PORTAL_CSS}</style></head><body>{body}</body></html>')
+            f'<style>{CSS}{charts.CSS}{PORTAL_CSS}{(conn or {}).get("css", "")}</style>'
+            f'</head><body>{page_body}</body></html>')
 
 
 _LOGO = """<svg class="logo" width="22" height="22" viewBox="0 0 21 21" xmlns="http://www.w3.org/2000/svg">

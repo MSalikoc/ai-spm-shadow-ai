@@ -16,18 +16,36 @@ def _oauth(name, vendor=None, score=50, users=10, scopes=(), ai=True):
 
 
 def _assessment(web=(), packages=(), identities=(), interactions=()):
+    """A complete assessment shape — the same 15 keys connectors_report.assessment emits."""
     return {
-        "shadow_ai_usage": {"applications": list(web)},
-        "agent365_packages": {"packages": list(packages)},
-        "agent_identities": {"identities": list(identities)},
-        "sensitive_interactions": {"sample": list(interactions)},
+        "executive": {"connectors_connected": 1, "connectors_total": 5,
+                      "findings_by_severity": {"high": 0, "medium": 0, "low": 0, "info": 0},
+                      "total_apps": len(web), "matched_to_inventory": 0},
+        "data_source_coverage": [],
+        "sensitive_exposure": [],
+        "shadow_ai_usage": {"metrics": {}, "applications": list(web)},
+        "agent365_packages": {"metrics": {}, "packages": list(packages)},
+        "agent_identities": {"metrics": {}, "identities": list(identities)},
+        "sensitive_interactions": {"metrics": {}, "sample": list(interactions)},
+        "findings": [],
+        "direction_analysis": {},
+        "correlation_quality": {},
+        "application_detail": [],
+        "agent_detail": [],
+        "sit_distribution": {},
+        "users_and_groups": {"top_users": [], "groups_without_owner": []},
+        "known_gaps": [],
+        "_generated_at": "2026-08-02T00:00:00+00:00",
+        "health": {},
     }
 
 
 def _web(name, users=100, uploaded=0, risk=5, sanctioned="unreviewed"):
     return {"display_name": name, "users": users, "uploaded_bytes": uploaded,
-            "traffic_bytes": uploaded, "risk_score": risk, "sanctioned_state": sanctioned,
-            "vendor": None}
+            "downloaded_bytes": 0, "traffic_bytes": uploaded, "risk_score": risk,
+            "sanctioned_state": sanctioned, "vendor": None, "devices": 0,
+            "ip_addresses": users, "transactions": 0, "category": "generativeAi",
+            "data_sensitivity": "UNDETERMINED_REQUIRES_PURVIEW", "last_seen": None}
 
 
 # --- the join: one vendor, two sources -------------------------------------
@@ -263,3 +281,60 @@ def test_function_app_portal_says_so_before_the_first_scan(monkeypatch):
     resp = function_app.portal_view(Req())
     assert resp.status_code == 404
     assert "Run /api/scan first" in resp.get_body().decode()
+
+
+# --- the portal is the union of both dashboards, not a summary above them ---
+def _sections(doc):
+    import re
+    return {m.group(1): m.group(2) for m in re.finditer(
+        r'<section class="tab[^"]*" data-tab="([a-z]+)">(.*?)</section>', doc, re.S)}
+
+
+def test_the_portal_carries_every_tab_from_both_dashboards():
+    doc = portal.html_string(
+        [_oauth("ChatGPT", vendor="OpenAI (ChatGPT)", scopes=["mail.read"])], "t",
+        _assessment(web=[_web("ChatGPT", users=486, uploaded=30 * 1024**3)]))
+    tabs = _sections(doc)
+
+    # From the core dashboard, from the connectors dashboard, and the estate spine.
+    assert {"estate", "apps", "usage", "governance", "changes"} <= set(tabs)
+    assert {"agents", "shadow", "sensitive", "gaps"} <= set(tabs)
+    assert "findings" in tabs
+
+
+def test_the_connector_sections_are_the_real_ones_not_placeholders():
+    doc = portal.html_string([], "t", _assessment(
+        web=[_web("ChatGPT", users=486, uploaded=30 * 1024**3)]))
+    shadow = _sections(doc)["shadow"]
+    assert "Shadow AI" in shadow
+    assert "ChatGPT" in shadow
+    assert len(shadow) > 1000            # the full grid, not a one-line stub
+
+
+def test_the_application_inventory_comes_through():
+    doc = portal.html_string(
+        [_oauth("Glean Enterprise Search", vendor="Glean", scopes=["sites.read.all"])], "t")
+    apps = _sections(doc)["apps"]
+    assert "Glean Enterprise Search" in apps
+    assert "sites.read.all" in apps
+
+
+def test_missing_connectors_leave_an_explanation_not_an_empty_tab():
+    tabs = _sections(portal.html_string([_oauth("ChatGPT", vendor="OpenAI (ChatGPT)")], "t"))
+    for key in ("agents", "shadow", "sensitive"):
+        assert "did not run in this scan" in tabs[key]
+
+
+def test_an_assessment_can_be_passed_where_a_raw_run_is_expected():
+    """The JSON cache and the portal both hold assessments; rebuilding one emptied it."""
+    import connectors_report
+    built = _assessment(web=[_web("ChatGPT", users=10)])
+    once = connectors_report.assessment(built)
+    assert once is built
+    assert connectors_report.build_tabs(built)["tabs"]["shadow"]
+
+
+def test_findings_from_both_scans_appear_together():
+    doc = portal.html_string([], "t", _assessment(
+        web=[_web("ChatGPT", users=500, uploaded=40 * 1024**3, sanctioned="unsanctioned")]))
+    assert "findings" in _sections(doc)

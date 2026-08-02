@@ -86,6 +86,16 @@ def _fmt_names(names, limit=6) -> str:
     return ", ".join(shown) + (f" (+{rest} more)" if rest > 0 else "")
 
 
+def is_assessment(d) -> bool:
+    """
+    True when `d` is already an assessment rather than a raw connector run.
+
+    `shadow_ai_usage` is the discriminator: a raw run carries assets/health/coverage and
+    never this key, so the test cannot confuse the two in either direction.
+    """
+    return isinstance(d, dict) and "shadow_ai_usage" in d
+
+
 def assessment(result: dict, now=None) -> dict:
     """
     Produces the 15-section assessment dict from `pipeline.run_connectors()` output.
@@ -98,6 +108,12 @@ def assessment(result: dict, now=None) -> dict:
     is done by the PRESENCE of the connector-specific sub-dict key, NOT by `asset_type`
     equality.
     """
+    # Idempotent: an already-built assessment passes straight through. The portal and
+    # the JSON cache both hold assessments rather than raw runs, and re-running the
+    # builder over one silently produced empty sections instead of failing.
+    if is_assessment(result):
+        return result
+
     now = now or datetime.now(timezone.utc)
     assets = result.get("assets", [])
     coverage = result.get("coverage", {})
@@ -1305,7 +1321,14 @@ def _identity_flow(identity_items):
     return _flow_diagram([col1, col2, col3], flows)
 
 
-def html_string(result: dict, tenant_id: str = "", now=None) -> str:
+def build_tabs(result: dict, tenant_id: str = "", now=None) -> dict:
+    """
+    The six tab bodies, plus the detail-panel markup and assets they need.
+
+    Split out of html_string so the unified portal can compose these sections next to
+    the core dashboard's, rather than a second implementation drifting away from this
+    one. html_string is now a thin wrapper over it.
+    """
     a = assessment(result, now)
     exec_ = a["executive"]
     sev = exec_.get("findings_by_severity", {})
@@ -1428,6 +1451,49 @@ def html_string(result: dict, tenant_id: str = "", now=None) -> str:
     gaps_tab = (f'<div class="card"><h3>Known Gaps / API Limitations</h3>'
               f'<ul class="na">{"".join(f"<li>{_esc(g)}</li>" for g in a["known_gaps"])}</ul></div>')
 
+    return {
+        "assessment": a,
+        "tabs": {"overview": overview, "agents": agents_tab, "shadow": shadow_tab,
+                 "sensitive": sensitive_tab, "findings": findings_tab, "gaps": gaps_tab},
+        "detail_panel": _DETAIL_PANEL,
+        "css": _ZT_CSS,
+        "script": _ZT_SCRIPT,
+    }
+
+
+_DETAIL_PANEL = """
+<div class="zt-overlay" id="zt-overlay" onclick="ztClose()"></div>
+<aside class="zt-panel" id="zt-panel" role="dialog" aria-label="Detail">
+  <button class="zt-panel-close" onclick="ztClose()" aria-label="Close">&times;</button>
+  <h2 id="zt-title"></h2>
+  <div class="zt-facts" id="zt-facts"></div>
+  <h4>Risk Score</h4>
+  <div class="zt-score"><span class="zt-score-num" id="zt-score-num"></span>
+  <div class="zt-score-bar"><div class="zt-score-fill" id="zt-score-fill"></div></div></div>
+  <h4>Why this score?</h4>
+  <ul id="zt-reasons"></ul>
+  <div class="zt-result">
+    <span>Test result &#8594;</span>
+    <span class="zt-pill" id="zt-result-pill"></span>
+    <span id="zt-result-line" style="color:var(--muted);font-size:13px"></span>
+  </div>
+  <section><h4>What was checked</h4><p id="zt-checked"></p></section>
+  <section><h4>Remediation action</h4><ul id="zt-remediation"></ul></section>
+</aside>"""
+
+
+def html_string(result: dict, tenant_id: str = "", now=None) -> str:
+    built = build_tabs(result, tenant_id, now)
+    a = built["assessment"]
+    t = built["tabs"]
+    overview, agents_tab = t["overview"], t["agents"]
+    shadow_tab, sensitive_tab = t["shadow"], t["sensitive"]
+    findings_tab, gaps_tab = t["findings"], t["gaps"]
+    nav = "".join(
+        f'<a class="navlink{" active" if x == "overview" else ""}" data-tab="{x}">{label}</a>'
+        for x, label in (("overview", "Overview"), ("agents", "Agents"), ("shadow", "Shadow AI"),
+                        ("sensitive", "Sensitive Data"), ("findings", "Findings"), ("gaps", "Gaps")))
+
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <title>AI-SPM — Microsoft AI Data Sources Assessment</title>
 <style>{CSS}{charts.CSS}{_ZT_CSS}</style></head><body>
@@ -1446,24 +1512,7 @@ def html_string(result: dict, tenant_id: str = "", now=None) -> str:
 <div class="foot">AI-SPM — Microsoft AI Data Sources · connectors_report.assessment()</div>
 </main>
 
-<div class="zt-overlay" id="zt-overlay" onclick="ztClose()"></div>
-<aside class="zt-panel" id="zt-panel" role="dialog" aria-label="Detail">
-  <button class="zt-panel-close" onclick="ztClose()" aria-label="Close">&times;</button>
-  <h2 id="zt-title"></h2>
-  <div class="zt-facts" id="zt-facts"></div>
-  <h4>Risk Score</h4>
-  <div class="zt-score"><span class="zt-score-num" id="zt-score-num"></span>
-  <div class="zt-score-bar"><div class="zt-score-fill" id="zt-score-fill"></div></div></div>
-  <h4>Why this score?</h4>
-  <ul id="zt-reasons"></ul>
-  <div class="zt-result">
-    <span>Test result →</span>
-    <span class="zt-pill" id="zt-result-pill"></span>
-    <span id="zt-result-line" style="color:var(--muted);font-size:13px"></span>
-  </div>
-  <section><h4>What was checked</h4><p id="zt-checked"></p></section>
-  <section><h4>Remediation action</h4><ul id="zt-remediation"></ul></section>
-</aside>
+{_DETAIL_PANEL}
 <script>{_ZT_SCRIPT}</script>
 </body></html>"""
 

@@ -1,5 +1,6 @@
 """JSON + single-file HTML dashboard (no dependencies, light/dark)."""
 import html
+import re
 import json
 import math
 from datetime import datetime, timezone
@@ -802,8 +803,25 @@ document.querySelectorAll('.fsave').forEach(function(btn){btn.onclick=function()
 """
 
 
+def build_tabs(apps: list[dict], tenant_id: str, changes=None, findings=None,
+               connector_health=None) -> dict:
+    """
+    The six tab bodies of the core dashboard.
+
+    Split out of html_string so the unified portal can place these sections beside the
+    connector ones instead of reimplementing them. html_string wraps this.
+    """
+    return _build(apps, tenant_id, changes, findings, connector_health)["tabs"]
+
+
 def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None,
                 connector_health=None, connectors_href=None) -> str:
+    return _build(apps, tenant_id, changes, findings, connector_health,
+                  connectors_href)["page"]
+
+
+def _build(apps: list[dict], tenant_id: str, changes=None, findings=None,
+           connector_health=None, connectors_href=None) -> dict:
     microsoft = [a for a in apps if a.get("first_party_microsoft")]
     shadow = [a for a in apps if not a.get("first_party_microsoft")]
     shadow.sort(key=lambda a: a["risk_score"], reverse=True)
@@ -1134,11 +1152,18 @@ def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None,
 </main>
 <script>{THEME_JS}</script>
 """
-    return ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+    # The tab bodies are lifted back out of the assembled page rather than built twice.
+    # `<section>` appears nowhere else in this document, so the split is unambiguous, and
+    # a tab added to the markup is exported here automatically instead of being forgotten.
+    _TABS = dict(re.findall(
+        r'<section class="tab(?: active)?" data-tab="([^"]+)">(.*?)</section>', body, re.S))
+
+    page = ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
             "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
             f"<title>AI-SPM · Shadow AI Assessment</title>"
             f"<style>{CSS}{charts.CSS}</style></head>"
             f"<body>{body}</body></html>")
+    return {"page": page, "tabs": _TABS}
 
 
 def write_html(apps: list[dict], path: str, tenant_id: str) -> None:
