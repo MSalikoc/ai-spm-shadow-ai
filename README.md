@@ -1,133 +1,66 @@
-# AI-SPM — Shadow AI Posture Management
+<div align="center">
 
-**Discover, risk-score, and continuously track every AI application and AI agent in your
-organization — third-party OAuth consent, Microsoft 365 Copilot agents, and Shadow AI web
-usage, all from Entra ID and Microsoft Graph.**
+# AI-SPM
 
-Runs from your laptop, from Cloud Shell, or as a scheduled Azure Function with a Managed
-Identity. Every run produces one portal over the whole AI estate, with two ranked,
-explainable dashboards behind it.
+**Find every AI application, agent and Shadow AI tool in your Microsoft 365 tenant —
+and know which one to fix first.**
+
+Read-only. Runs from your laptop in two minutes, or on a schedule in Azure.
+
+[Quick start](#quick-start) · [Live sample](#see-it-before-you-run-it) ·
+[Permissions](#permissions) · [Troubleshooting](#troubleshooting)
+
+</div>
+
+<div align="center">
+  <img src="docs/img/portal.png" alt="The AI-SPM portal: AI estate, risk distribution and triage view" width="820">
+</div>
+
+---
+
+## What it finds
+
+| | |
+| --- | --- |
+| 🔑 **Consented AI apps** | Every third-party AI app holding an OAuth grant, and exactly which permissions |
+| 🌐 **Shadow AI** | AI used through the browser — who, how much data, sanctioned or not |
+| 🤖 **Agents** | Copilot agents and Entra agent identities, with owners and permissions |
+| 🔒 **Sensitive data** | What Purview saw reaching AI, blocked versus allowed |
+
+Everything lands on **one portal**: one row per vendor, whichever route it came in by.
+ChatGPT consented as an app *and* used in the browser is one row, not two.
 
 > **100% read-only.** AI-SPM never revokes a permission, deletes an app, or changes a
-> setting. It observes, scores, and reports — remediation stays with your team.
+> setting. It observes, scores and reports — remediation stays with your team.
 
 ---
 
-## What you get
+## Quick start
 
-**The portal** (`/api/portal`, or `out/portal.html` locally) is where a scan lands you:
-one row per AI **vendor**, across every source, with the evidence behind it.
+Pick the row that matches how far you want to go. Each one includes everything above it.
 
-The two scans see the same vendor differently and share no identifier — Entra reports a
-consented service principal, Defender reports browser traffic, and Defender's records
-carry neither an appId nor a domain. So the portal does not merge them by ID, which
-would invent a correlation the data cannot support. It groups by vendor through the
-shared AI catalog and shows how each was seen:
-
-> **OpenAI (ChatGPT)** · 53/100 · `OAuth consent` `Web traffic`
-> 486 web users · 28.0 GB uploaded · 1 consented app
-
-Two rules keep it readable, both learned from a real tenant:
-
-- **Only AI creates a row.** A `--scope consented` scan sweeps in every app holding a
-  grant; those are counted and linked, never ranked above ChatGPT.
-- **Agents attach, they never create.** Agent 365's catalogue is the tenant's Teams app
-  list — 292 entries like "Jira Cloud" on the tenant this was built against. An agent
-  joins a vendor when it matches one, and is counted separately when it doesn't.
-
-Everything excluded is reported on the page with a link, so nothing is silently dropped.
-The two dashboards below remain, as its detail views.
-
-- **Core dashboard** (`/api/report`) — every third-party AI app with OAuth access to
-  your tenant, each with a transparent 0–100 risk score (reasons included). Charts:
-  a triage scatter (risk against blast radius), a weighted posture gauge, a sensitive
-  permission heatmap, and a vendor treemap.
-- **AI Data Sources dashboard** (`/api/connectors?format=html`) — a 6-tab view (Overview,
-  Agents, Shadow AI, Sensitive Data, Findings, Gaps) fed by four Microsoft sources:
-
-  | Source | Discovers |
-  | --- | --- |
-  | **Agent 365** | Registered Copilot/agent packages |
-  | **Entra Agent ID** | Agent identities — owners, sponsors, permissions |
-  | **Defender for Cloud Apps** | Shadow AI web usage — traffic, users, devices, IPs |
-  | **Purview Audit** | Sensitive-data AI interactions — blocked vs. allowed |
-
-  Every agent, app, and finding gets the same transparent 0–100 score. Click any row to
-  see exactly why: facts → score breakdown → what was checked → remediation.
-
-  **Sample dashboards, no tenant required:**
-  [core](https://htmlpreview.github.io/?https://github.com/MSalikoc/ai-spm-shadow-ai/blob/main/docs/sample-report.html)
-  ·
-  [AI data sources](https://htmlpreview.github.io/?https://github.com/MSalikoc/ai-spm-shadow-ai/blob/main/docs/sample-connectors.html)
-  — a 24-application estate rendered through the real scoring and charting code.
-  Regenerate them yourself with `python3 aispm.py sample`.
-
----
-
-## Three ways to run it
-
-Start at the top and move down only when you need more. Each row is a superset of the
-one above.
-
-| | Setup cost | Reaches | Good for |
+| | You get | You need | Time |
 | --- | --- | --- | --- |
-| **1. `az login`** | nothing to create | Entra OAuth discovery, permissions, sign-in activity | Seeing what the tool finds, in minutes |
-| **2. App registration** | one script, one consent | **all four** AI data source connectors too | A complete one-off assessment |
-| **3. Deploy to Azure** | ARM template + one script | everything, on a schedule, with drift history and the weekly digest | Running this continuously |
+| **1 · Sign in** | Consented AI apps, permissions, usage | `az login` | 2 min |
+| **2 · App registration** | **+ Shadow AI, agents, sensitive data** | One script, admin consent | 10 min |
+| **3 · Deploy** | **+ daily scans, change history, email digest** | An Azure subscription | 20 min |
 
-Option 1 gets you the core dashboard. It **cannot** reach Defender for Cloud Apps,
-Purview Audit or Agent 365 — not a licensing issue, see
-[Why only Entra connected](#why-only-entra-connected). Option 2 fixes that without
-creating any Azure resources.
+<br>
 
----
+### 1 · Sign in — nothing to create
 
-## 1. `az login` — nothing to install or create
-
-### In Azure Cloud Shell (zero setup)
-
-Portal → the terminal icon, top right → **Bash**. `az` is already signed in and Python
-is already there.
+Works on your laptop, or in Azure Cloud Shell where `az` is already signed in.
 
 ```bash
-git clone https://github.com/MSalikoc/ai-spm-shadow-ai.git
-```
-
-```bash
-cd ai-spm-shadow-ai
-```
-
-```bash
-pip install -q -r requirements.txt
-```
-
-```bash
-python3 aispm.py doctor
-```
-
-```bash
-python3 aispm.py scan --scope consented
-```
-
-```bash
-download out/portal.html
-```
-
-`download` is Cloud Shell's own command — it sends the file to your browser. Nothing is
-created in Azure and nothing is written to your tenant.
-
-### On your own machine
-
-```bash
-brew install azure-cli
-```
-
-```bash
-az login
+git clone https://github.com/MSalikoc/ai-spm-shadow-ai.git && cd ai-spm-shadow-ai
 ```
 
 ```bash
 pip install -r requirements.txt
+```
+
+```bash
+az login
 ```
 
 ```bash
@@ -138,81 +71,26 @@ python3 aispm.py doctor
 python3 aispm.py scan --open
 ```
 
-Sign in with an account holding a read-only directory role — **Global Reader** or
-**Security Reader** is enough. `scan` writes `out/portal.html` (opened by `--open`),
-plus `out/report.html` and `out/connectors.html` as its detail views, and the matching
-`.json` for each.
+Opens `out/portal.html`. A read-only directory role — **Global Reader** or **Security
+Reader** — is enough.
 
-Always run `doctor` first. It probes every source with one capped call and reports
-readable / denied / not provisioned, so an empty dashboard section is never ambiguous.
+> In Cloud Shell, use `download out/portal.html` to get the file to your browser.
 
-### Choose how much to look at
+**Only Entra sources connect in this mode.** That is not a licensing problem — see
+[Why only Entra connects](#why-only-entra-connects). Step 2 fixes it.
 
-By default only apps matching the AI catalog are assessed, which is precise but blind
-to any AI vendor the catalog hasn't heard of. Widen it:
+<br>
 
-```bash
-python3 aispm.py scan --scope consented
-```
+### 2 · App registration — all four data sources
 
-| `--scope` | Assesses | Use when |
-| --- | --- | --- |
-| `ai` *(default)* | Apps matching the AI catalog | You want a focused Shadow AI view |
-| `consented` | The above **plus every app holding a real OAuth grant** | You want the honest consent surface, including AI tools nobody catalogued |
-| `all` | Every third-party app | You're auditing the whole estate |
-
-Apps pulled in by scope rather than by a catalog hit are labelled `ai_match: false` —
-being in scope is never dressed up as an AI detection.
-
-The same setting works on the deployed Function via the `AISPM_SCAN_SCOPE` app setting.
-
----
-
-## Why only Entra connected
-
-The most common surprise: `az login` works, the core dashboard is full, and Defender for
-Cloud Apps, Purview Audit and Agent 365 all come back denied — **even for a Global
-Administrator, and even with every licence in place.**
-
-That is not a licensing problem. `az login` produces a **delegated** token, which can
-only carry Graph scopes the *Azure CLI application* is authorized for. The CLI is
-authorized for directory reads, which is exactly why Entra discovery works. It is not
-authorized for `CloudApp-Discovery.Read.All`, `AuditLogsQuery.Read.All` or
-`CopilotPackages.Read.All`, so those scopes are simply absent from the token. The limit
-is on the client application, not on your account, so no directory role changes it.
-
-`doctor` shows this rather than leaving you to guess — it prints the scopes your token
-actually carries, and marks a denial as *"the sign-in does not carry this scope at all"*
-when that is the cause:
-
-```
-Auth      : azure-cli (delegated token)
-Graph scopes carried (3): Application.Read.All, AuditLog.Read.All, Directory.Read.All
-
-  [  OK  ] Enterprise applications   required
-  [  OK  ] Entra Agent ID            optional
-  [DENIED] Defender for Cloud Apps   optional
-           the sign-in does not carry this scope at all — the client application
-           is not authorized for it, so no directory role will change this
-           needs: CloudApp-Discovery.Read.All + Defender for Cloud Apps
-```
-
-A source marked `N/A` instead of `DENIED` genuinely is not provisioned in your tenant —
-that one *is* a licensing or feature question, and no permission grant will help.
-
----
-
-## 2. App registration — all four connectors, still no Azure resources
-
-Application permissions are not bound to a client the way delegated scopes are, so an
-app registration you own can hold every scope AI-SPM needs. One script creates it,
-grants the six Graph application permissions, admin-consents them, and prints a secret:
+One script creates the registration, grants six read-only Graph permissions and consents
+them. No Azure resources are created.
 
 ```bash
 ./scripts/create_app_registration.sh
 ```
 
-It finishes by printing three `export` lines. Paste those, then:
+It prints three `export` lines. Paste them, then:
 
 ```bash
 python3 aispm.py doctor --auth app
@@ -222,272 +100,236 @@ python3 aispm.py doctor --auth app
 python3 aispm.py scan --auth app --scope consented --open
 ```
 
-`AISPM_TENANT_ID`, `AISPM_CLIENT_ID` and `AISPM_CLIENT_SECRET` are read from the
-environment, so the secret never appears on a command line — where it would be captured
-by shell history and visible in `ps`. The matching `--tenant` / `--client-id` /
-`--client-secret` flags still work if you prefer them.
+Needs a role that can grant application permissions — **Privileged Role Administrator**
+or **Global Administrator**.
 
-The script needs a role that can grant application permissions — **Privileged Role
-Administrator** or **Global Administrator** — the same requirement the deployment path
-has. Give role assignment a minute or two to propagate before the first run.
+<br>
 
-Permissions it grants, all read-only:
-
-| Permission | Unlocks |
-| --- | --- |
-| `Application.Read.All` | Enterprise app and service principal inventory |
-| `Directory.Read.All` | OAuth grants, owners, directory context |
-| `AuditLog.Read.All` | Sign-in activity (also needs Entra ID P1) |
-| `CopilotPackages.Read.All` | Agent 365 catalogue |
-| `CloudApp-Discovery.Read.All` | Defender for Cloud Apps — Shadow AI web usage |
-| `AuditLogsQuery.Read.All` | Purview Audit — sensitive AI interactions |
-
-Any permission your tenant's Graph does not expose is reported and skipped rather than
-silently assumed — usually meaning that Microsoft feature is not provisioned at all.
-
-> The secret is shown once. Store it in a password manager or Key Vault; do not commit
-> it. If you would rather not hold a secret at all, go to option 3 — a deployed Managed
-> Identity holds the same permissions with no credential to keep.
-
----
-
-## 3. Deploy to Azure — continuous scanning
-
-Deploying adds what a one-off run cannot give you: a daily scan on a timer, drift
-tracking that says what changed since last time, and the weekly email digest. The
-Function authenticates with a **Managed Identity**, so there is no secret to store.
-
-### Step 1 — Deploy the infrastructure
+### 3 · Deploy — continuous scanning
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FMSalikoc%2Fai-spm-shadow-ai%2Fmain%2Fdeploy%2Fazuredeploy.json)
 
-Fill in the target tenant, scan schedule, and report container name, then **Create**.
-
-### Step 2 — Run the setup script
-
-In **Azure Cloud Shell** (Portal → terminal icon, top right). Run each block **one at a
-time** — click the copy icon on a single block, paste it, press Enter, wait for it to
-finish, then move to the next. (Pasting several commands together can break if your
-clipboard swaps straight quotes `"` for curly ones — one block at a time avoids that.)
-
-Clone the repo:
+Then in **Cloud Shell**, one block at a time:
 
 ```bash
-git clone https://github.com/MSalikoc/ai-spm-shadow-ai.git
+git clone https://github.com/MSalikoc/ai-spm-shadow-ai.git && cd ai-spm-shadow-ai
 ```
-
-Enter it:
-
-```bash
-cd ai-spm-shadow-ai
-```
-
-Set your resource group name — only edit the text **inside the quotes**, keep the quotes:
 
 ```bash
 RESOURCE_GROUP="aispm-rg"
 ```
 
-Set your Function App name — both names are from Step 1:
-
 ```bash
 FUNCTION_APP="aispm-xxxxxxxxxx"
 ```
-
-Run the setup script:
 
 ```bash
 ./scripts/postdeploy.sh "$RESOURCE_GROUP" "$FUNCTION_APP"
 ```
 
-> `$RESOURCE_GROUP` / `$FUNCTION_APP` only last for this Cloud Shell session (it resets
-> after ~20 min idle). If a later command errors with a usage message, just redo the two
-> `RESOURCE_GROUP=`/`FUNCTION_APP=` lines above and re-run.
-
-This one script does everything: deploys the code, grants every Graph permission needed
-(core scan + all four AI Data Sources connectors), and turns the connectors on. Requires
-a directory role that can grant application permissions (Privileged Role Administrator
-or Global Administrator) — if you don't have it, have someone who does run this one command.
-
-### Step 3 — View your dashboards
-
-Same Cloud Shell, one block at a time.
-
-Get your function key:
+That deploys the code, grants every Graph permission and turns the connectors on. Then:
 
 ```bash
 KEY=$(az functionapp keys list -g "$RESOURCE_GROUP" -n "$FUNCTION_APP" --query functionKeys.default -o tsv)
 ```
 
-Trigger the first scan:
-
 ```bash
 curl -s "https://$FUNCTION_APP.azurewebsites.net/api/scan?code=$KEY" ; echo
 ```
-
-Print your AI Data Sources dashboard link:
-
-```bash
-echo "https://$FUNCTION_APP.azurewebsites.net/api/connectors?code=$KEY&format=html"
-```
-
-Print your portal link — **open this one first**:
 
 ```bash
 echo "https://$FUNCTION_APP.azurewebsites.net/api/portal?code=$KEY"
 ```
 
-The core dashboard and AI data sources views are linked from it, and remain available
-directly at `/api/report` and `/api/connectors?format=html`.
+Give it a few minutes — role propagation and the first scan both take a moment.
 
-Give it a few minutes after Step 2 — role propagation and the Function App restart both
-take a little time.
+| Route | Serves |
+| --- | --- |
+| `/api/portal` | The portal — **start here** |
+| `/api/report` | Entra OAuth assessment |
+| `/api/connectors?format=html` | Microsoft AI data sources |
+| `/api/doctor` | What the Managed Identity can read |
+| `/api/scan` | Trigger a scan |
 
-Widen the scan scope while you are here; the deployed default is still the narrow `ai`:
+---
+
+## See it before you run it
+
+Rendered from a synthetic tenant, through the real scoring and charting code.
+
+| | |
+| --- | --- |
+| **[▶ Portal](https://htmlpreview.github.io/?https://github.com/MSalikoc/ai-spm-shadow-ai/blob/main/docs/sample-portal.html)** | 27 AI vendors, 8 seen through two routes |
+| [Entra OAuth assessment](https://htmlpreview.github.io/?https://github.com/MSalikoc/ai-spm-shadow-ai/blob/main/docs/sample-report.html) | Per-application permissions and usage |
+| [AI data sources](https://htmlpreview.github.io/?https://github.com/MSalikoc/ai-spm-shadow-ai/blob/main/docs/sample-connectors.html) | Agents, Shadow AI traffic, sensitive data |
+
+Regenerate them with `python3 aispm.py sample`.
+
+---
+
+## How much to look at
+
+The default assesses only apps matching the AI catalog — precise, but blind to any AI
+vendor the catalog has not heard of.
 
 ```bash
-az functionapp config appsettings set -g "$RESOURCE_GROUP" -n "$FUNCTION_APP" --settings AISPM_SCAN_SCOPE=consented -o none
+python3 aispm.py scan --scope consented
 ```
 
-If something looks empty, ask the deployment directly — same preflight as the CLI, run
-against the Managed Identity:
+| `--scope` | Assesses |
+| --- | --- |
+| `ai` *(default)* | Apps matching the AI catalog |
+| `consented` | **+ every app holding a real OAuth grant** — the honest consent surface |
+| `all` | Every third-party app |
 
-```bash
-curl "https://$FUNCTION_APP.azurewebsites.net/api/doctor?code=$KEY"
+Apps pulled in by scope rather than a catalog hit are tagged `ai_match: false`. Being in
+scope is never dressed up as an AI detection.
+
+On a deployment, set `AISPM_SCAN_SCOPE` instead.
+
+---
+
+## Scores you can check
+
+No black boxes. Every score is a sum of named signals, and the page shows the
+arithmetic — open any vendor row:
+
+```
++18   424 people reached it through the browser
++20   29.8k MB uploaded to it
++15   Large volume leaving the tenant, spread across many people
++12   Marked unsanctioned in Defender for Cloud Apps
+ 65   Risk score out of 100
 ```
 
-On the AI Data Sources dashboard, `PERMISSION_MISSING` that doesn't clear after ~15 min
-usually means your tenant doesn't have that Microsoft feature provisioned yet (e.g. no
-Microsoft 365 Copilot license blocks Agent 365; Purview **Audit** recording not turned
-on in the [Purview portal](https://purview.microsoft.com) blocks Purview Audit).
-`LICENSE_MISSING` means the tenant doesn't hold that license. Both are shown honestly —
-never faked — and aren't something a script can fix.
+**Bands:** 75+ Critical · 50–74 High · 25–49 Medium · under 25 Low.
 
-### Step 4 — *(optional)* Weekly email digest
+A DLP *block* scores nothing — that is the control working. Permission weights live in
+[`config.py`](config.py); the AI catalog in [`catalog.json`](catalog.json), overridable
+with `AISPM_CATALOG_PATH`.
 
-The only optional step. Sends a weekly summary via Microsoft Graph `sendMail` — no SMTP
-secrets, sent by the Managed Identity (`Mail.Send` was already granted in Step 2).
+---
+
+## Permissions
+
+All read-only. `create_app_registration.sh` and `postdeploy.sh` grant these for you.
+
+| Permission | Unlocks | Needed |
+| --- | --- | --- |
+| `Application.Read.All` | App and service principal inventory | Always |
+| `Directory.Read.All` | OAuth grants, owners | Always |
+| `AuditLog.Read.All` | Usage and activity *(also needs Entra ID P1)* | Optional |
+| `CloudApp-Discovery.Read.All` | Shadow AI web traffic | Optional |
+| `CopilotPackages.Read.All` | Agent 365 catalogue | Optional |
+| `AuditLogsQuery.Read.All` | Purview sensitive interactions | Optional |
+
+### Why only Entra connects
+
+With `az login` you get a **delegated** token, which can only carry Graph scopes the
+*Azure CLI application* is authorised for. Directory reads are in that set — which is
+why Entra discovery works. The three connector scopes are not, so they are simply
+absent from the token. **Being Global Administrator does not change this**; the limit is
+on the client application, not on your account.
+
+`doctor` prints the scopes your token actually carries and says so directly:
+
+```
+[DENIED] Defender for Cloud Apps
+         the sign-in does not carry this scope at all — the client application
+         is not authorized for it, so no directory role will change this
+```
+
+Use option 2 or 3, both of which use application permissions instead.
+
+---
+
+## Configuration
+
+Set by the setup scripts; listed for reference.
+
+| Setting | Purpose |
+| --- | --- |
+| `AISPM_TENANT_ID` | Tenant to scan |
+| `AISPM_SCAN_SCOPE` | `ai` / `consented` / `all` |
+| `AISPM_ACTIVITY_DAYS` | Sign-in history window, 7–90 (default 90) |
+| `AISPM_CATALOG_PATH` | Your own AI vendor catalog |
+| `PURVIEW_AUDIT_DAYS`, `PURVIEW_POLL_SECONDS` | Purview window, and how long to wait for the search |
+| `SCAN_SCHEDULE`, `EMAIL_SCHEDULE` | Timers (default: daily 06:00 UTC, Monday 08:00 UTC) |
+| `STORE_RAW_AI_CONTENT` | Leave **off** — prompt/response text is never kept unless this is `true` |
+| `AISPM_MAIL_SENDER`, `AISPM_MAIL_TO`, `AISPM_REPORT_URL` | Weekly email digest |
+
+### Weekly email digest *(optional)*
+
+Sent by the Managed Identity via Graph `sendMail` — no SMTP secrets. The full portal
+travels as a single self-contained attachment, so every tab still works offline.
 
 ```bash
 az functionapp config appsettings set -g "$RESOURCE_GROUP" -n "$FUNCTION_APP" --settings \
   AISPM_MAIL_SENDER="secops@contoso.com" \
-  AISPM_MAIL_TO="team@contoso.com,ciso@contoso.com" \
-  AISPM_REPORT_URL="https://$FUNCTION_APP.azurewebsites.net/api/report?code=$KEY"
+  AISPM_MAIL_TO="team@contoso.com" \
+  AISPM_REPORT_URL="https://$FUNCTION_APP.azurewebsites.net/api/portal?code=$KEY"
 ```
 
-`Mail.Send` can send as *any* mailbox — restrict it to your sender (PowerShell):
-
-```powershell
-$AppId = "PASTE_MANAGED_IDENTITY_APP_ID_HERE"
-$MailGroup = "PASTE_MAIL_ENABLED_GROUP_CONTAINING_SENDER_HERE"
-New-ApplicationAccessPolicy -AppId $AppId -PolicyScopeGroupId $MailGroup `
-  -AccessRight RestrictAccess -Description "AI-SPM digest sender only"
-```
-
-Test:
-
-```bash
-curl "https://$FUNCTION_APP.azurewebsites.net/api/digest?code=$KEY"
-```
+`Mail.Send` can send as any mailbox — restrict it to your sender with
+[`New-ApplicationAccessPolicy`](https://learn.microsoft.com/en-us/powershell/module/exchange/new-applicationaccesspolicy).
 
 ---
-
-## Configuration reference
-
-Set automatically by `postdeploy.sh` — listed here for reference, not something you need
-to set by hand.
-
-| Setting | Purpose |
-| --- | --- |
-| `AISPM_TENANT_ID` | Entra tenant to scan |
-| `AISPM_SCAN_SCOPE` | `ai` (default) / `consented` / `all` — see [Choose how much to look at](#choose-how-much-to-look-at) |
-| `AISPM_ACTIVITY_DAYS` | Sign-in history window, 7–90 (default 90). Lower it on very large tenants |
-| `SCAN_SCHEDULE` | Core scan schedule (default: daily 06:00 UTC) |
-| `ENABLE_AGENT365`, `ENABLE_ENTRA_AGENT_ID`, `ENABLE_DEFENDER_CLOUD_APPS`, `ENABLE_PREVIEW_CONNECTORS`, `ENABLE_PURVIEW_AUDIT` | Turn on the four AI Data Sources connectors |
-| `STORE_RAW_AI_CONTENT` | Leave **off** — sensitive-interaction records never keep prompt/response text unless this is explicitly `true` |
-| `PURVIEW_DSPM_IMPORT_PATH` | Advanced, rarely-needed 5th source — a manually exported Purview DSPM file. No upload UI exists for this; skip it unless you specifically need it |
-| `AISPM_MAIL_SENDER`, `AISPM_MAIL_TO`, `AISPM_REPORT_URL`, `EMAIL_SCHEDULE` | Weekly digest (Step 4 only) |
-
-What counts as an "AI application" and how scores are weighted lives in
-[`config.py`](config.py) — a single place to tune to your environment.
-
----
-
-## Architecture
-
-```
-aispm.py                     local CLI — doctor / scan / sample
-portal.py                    the unified estate view (vendor rollup across both scans)
-preflight.py                 permission + licence probes ("can this identity read X?")
-function_app.py              Azure Function entry points (timers + HTTP routes)
-pipeline.py                  core scan flow + AI Data Sources entry point
-collectors.py, scoring.py    OAuth-consent discovery + transparent risk scoring
-charts.py                    shared inline-SVG chart library (no external deps)
-report.py, executive.py      core HTML dashboard + executive KPIs
-findings.py, drift.py        managed findings + change-tracking
-notify.py                    weekly email digest
-
-connectors/                  the four AI Data Sources connectors + correlation engine
-connectors_report.py         AI Data Sources dashboard (6-tab, /api/connectors)
-connectors_drift.py          AI Data Sources change-tracking (parallel to drift.py)
-
-auth.py, graph_client.py, config.py   shared: auth, Graph client, tunable AI catalog
-deploy/                      ARM template (one-click Deploy to Azure)
-scripts/                     create_app_registration.sh, postdeploy.sh, make_sample.py
-.github/                     CI/CD (auto-deploy on push to main)
-```
 
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| `zsh: command not found: python` | macOS ships `python3` only | use `python3`, or `.venv/bin/python` if you made a venv |
-| `ModuleNotFoundError: No module named 'azure'` | running an interpreter the dependencies aren't installed into | `pip install -r requirements.txt` for *that* interpreter, or use `.venv/bin/python` |
-| `no such file or directory: T` | a `<PLACEHOLDER>` pasted into the shell, read as a redirect | use the `export` lines the setup script prints |
-| `Azure CLI is not installed` | no `az` on PATH | `brew install azure-cli`, or use `--auth app` |
-| Everything denied, including Enterprise applications | account has no directory role | sign in as Global Reader / Security Reader |
-| Only Entra sources connect | delegated token can't carry connector scopes | [Why only Entra connected](#why-only-entra-connected) → option 2 |
-| Sign-in logs denied or empty | needs `AuditLog.Read.All` **and** Entra ID P1 | scan continues; usage metrics stay blank and say so |
-| A source shows `N/A` | that Microsoft feature isn't provisioned in the tenant | licensing question, not a permission one |
-| Denied right after running the setup script | role assignment hasn't propagated | wait 1–2 minutes and retry |
-| Dashboard has fewer apps than expected | scope is the default `ai` | `--scope consented` |
-| Scan slow on a large tenant | sign-in history window | `--activity-days 30` |
+| `command not found: python` | macOS ships `python3` only | Use `python3` |
+| `No module named 'azure'` | Wrong interpreter | `pip install -r requirements.txt` for that one |
+| `Azure CLI is not installed` | No `az` | `brew install azure-cli`, or use `--auth app` |
+| `no such file or directory: T` | A `<PLACEHOLDER>` pasted literally | Use the `export` lines the script prints |
+| Only Entra sources connect | Delegated token limit | [See above](#why-only-entra-connects) — go to option 2 |
+| A source shows `N/A` | Not provisioned in the tenant | A licensing question, not a permission one |
+| Purview "still running" | Audit searches take minutes | Raise `PURVIEW_POLL_SECONDS` |
+| Fewer apps than expected | Default scope is `ai` | `--scope consented` |
+| Slow on a large tenant | Sign-in history window | `--activity-days 30` |
 
-## Local testing
+Not sure which? `python3 aispm.py doctor` — or `/api/doctor` on a deployment — reports
+every source as readable, denied, or not provisioned, and names the permission to grant.
 
-```bash
-pip install -r requirements.txt pytest
+---
+
+## How it works
+
+```
+aispm.py          CLI — doctor / scan / sample
+preflight.py      "can this identity read X?" probes
+pipeline.py       scan flow: discovery → permissions → activity → scoring
+collectors.py     OAuth-consent discovery        scoring.py             risk scoring
+connectors/       the four Microsoft data sources + correlation
+portal.py         the unified estate view        charts.py              inline-SVG charts
+report.py         Entra OAuth dashboard          connectors_report.py   AI data sources
+drift.py          change tracking                findings.py            managed findings
+function_app.py   Azure Function entry points    notify.py              weekly digest
 ```
 
-```bash
-pytest
-```
+The portal groups by **vendor**, not by ID. Defender's records carry no appId and no
+domain, so nothing can merge them with the Entra side by identifier — forcing it would
+invent a correlation the data cannot support. Both sides go through the same AI catalog
+instead, and every row states how it was seen.
+
+### Local testing
 
 ```bash
-python3 -c "import function_app"
+pip install -r requirements.txt pytest && pytest
 ```
 
-CI runs the same checks on every pull request and before every deploy — a failing test
-blocks deployment.
-
-## Continuous deployment (optional)
-
-Pushes to `main` auto-deploy via GitHub Actions if you set, once:
-- Repository **variable** `AZURE_FUNCTIONAPP_NAME`
-- Repository **secret** `AZURE_FUNCTIONAPP_PUBLISH_PROFILE`
-  (`az functionapp deployment list-publishing-profiles -g "$RESOURCE_GROUP" -n "$FUNCTION_APP" --xml`)
-
-Without these, the one-click button + `postdeploy.sh` remain the primary path.
+CI runs the same checks on every pull request and before every deploy.
 
 ---
 
 ## Security & privacy
 
-- **Read-only** — no permission is revoked, no app deleted, no setting changed.
-- **No stored secrets** — Managed Identity only.
-- **Your data stays in your tenant** — reports are written to your own Storage account.
-- **No raw AI content by default** — sensitive-interaction records keep metadata only
-  (user, app, data type, DLP action), never prompt/response text.
+- **Read-only** — nothing is revoked, deleted or changed.
+- **No stored secrets** on a deployment — Managed Identity only.
+- **Your data stays in your tenant** — reports go to your own Storage account.
+- **No raw AI content** — sensitive-interaction records keep metadata only, never
+  prompt or response text, unless `STORE_RAW_AI_CONTENT` is explicitly turned on.
 
 ## License
 

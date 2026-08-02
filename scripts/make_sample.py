@@ -153,9 +153,10 @@ def build_fleet():
 def main():
     import connectors_report
     import pipeline
+    import portal
     import report
     import scoring
-    from test_connectors_report import MegaFakeGraph
+    from sample_tenant import SampleGraph
 
     for flag in ("ENABLE_AGENT365", "ENABLE_ENTRA_AGENT_ID", "ENABLE_DEFENDER_CLOUD_APPS",
                  "ENABLE_PURVIEW_AUDIT", "ENABLE_PREVIEW_CONNECTORS"):
@@ -171,18 +172,35 @@ def main():
     except Exception:
         pass
 
+    # Through the real connectors, so the sample is engine output rather than a mock-up.
+    result = pipeline.run_connectors(SampleGraph())
+    health = (result or {}).get("health")
+
     core = os.path.join(docs, "sample-report.html")
     with open(core, "w", encoding="utf-8") as f:
-        f.write(report.html_string(scored, TENANT))
+        f.write(report.html_string(scored, TENANT, connector_health=health,
+                                   connectors_href="sample-connectors.html",
+                                   portal_href="sample-portal.html"))
 
-    result = pipeline.run_connectors(MegaFakeGraph())
     conn = os.path.join(docs, "sample-connectors.html")
     with open(conn, "w", encoding="utf-8") as f:
-        f.write(connectors_report.html_string(result, TENANT))
+        f.write(connectors_report.html_string(result, TENANT,
+                                              portal_href="sample-portal.html"))
+
+    hub = os.path.join(docs, "sample-portal.html")
+    with open(hub, "w", encoding="utf-8") as f:
+        f.write(portal.html_string(scored, TENANT, result,
+                                   report_href="sample-report.html",
+                                   connectors_href="sample-connectors.html"))
 
     counts = {lv: sum(1 for a in scored if a["risk_level"] == lv)
               for lv in ("Critical", "High", "Medium", "Low")}
+    estate = portal.build_estate(scored, result)
+    both = [v for v in estate["vendors"] if {"oauth", "web"} <= v["evidence"]]
     print(f"{len(scored)} applications — {counts}")
+    print(f"{len(estate['vendors'])} AI vendors, {len(both)} seen through both routes")
+    print(f"  {len(estate['unattached_agents'])} agents/packages held out of the estate")
+    print(f"  portal     : {hub}")
     print(f"  core       : {core}")
     print(f"  connectors : {conn}")
 
