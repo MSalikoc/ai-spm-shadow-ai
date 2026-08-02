@@ -332,8 +332,16 @@ def _pull_signins(graph, app_ids, iso_from, sp_events=False) -> list[dict]:
     few hundred apps that was hundreds of the slowest call in the whole scan, and it is
     the reason large tenants timed out. Chunking the appId filter cuts it to a couple of
     queries per 15 apps, and the rows are grouped by appId in memory afterwards.
+
+    The service-principal pass goes to BETA. `signInEventTypes` does not exist on the
+    v1.0 signIn resource — v1.0 only exposes `isInteractive` — so filtering on it there
+    returns 400 BadRequest, silently costing every app-only application its last-used
+    date and making it look unused. That filter was wrong against v1.0 all along; it
+    just failed inside a bare except.
     """
     rows: list[dict] = []
+    failed_chunks = 0
+    first_error = ""
     for i in range(0, len(app_ids), _APPID_CHUNK):
         chunk = app_ids[i:i + _APPID_CHUNK]
         remaining = _SIGNIN_CAP - len(rows)
@@ -344,9 +352,15 @@ def _pull_signins(graph, app_ids, iso_from, sp_events=False) -> list[dict]:
             rows.extend(graph.get_all(
                 "/auditLogs/signIns",
                 {"$filter": _signin_filter(chunk, iso_from, sp_events), "$top": "999"},
-                max_items=remaining))
-        except Exception:
-            logging.exception("sign-in pull failed for a chunk of %s apps", len(chunk))
+                max_items=remaining, beta=sp_events))
+        except Exception as e:
+            # One concise line for the whole pass rather than a traceback per chunk:
+            # a tenant without P1 would otherwise print twenty stack traces.
+            failed_chunks += 1
+            first_error = first_error or str(e)[:200]
+    if failed_chunks:
+        logging.warning("sign-in pull (%s pass): %s chunk(s) failed, metrics are partial — %s",
+                        "service principal" if sp_events else "user", failed_chunks, first_error)
     return rows
 
 

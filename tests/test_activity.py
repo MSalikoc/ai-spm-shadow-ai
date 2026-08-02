@@ -22,18 +22,26 @@ class ActivityGraph:
         self._sp = sp_signins or []
         self._fail = fail_probe
 
-    def get_all(self, path, params=None, max_items=None):
+    def get_all(self, path, params=None, max_items=None, beta=False):
         if path == "/auditLogs/signIns":
             if self._fail:
                 raise RuntimeError("Graph 403: sign-in logs require P1")
             flt = (params or {}).get("$filter", "")
             if params and params.get("$top") == "1":  # probe
                 return self._user[:1]
-            rows = self._sp if "servicePrincipal" in flt else self._user
+            if "signInEventTypes" in flt:
+                # v1.0 has no such property; only beta answers this filter at all.
+                if not beta:
+                    raise RuntimeError(
+                        "Graph 400: Could not find a property named 'signInEventTypes' "
+                        "on type 'microsoft.graph.signIn'.")
+                rows = self._sp
+            else:
+                rows = self._user
             return [r for r in rows if f"appId eq '{r.get('appId')}'" in flt]
         return []
 
-    def get(self, path, params=None):
+    def get(self, path, params=None, beta=False):
         return {}
 
 
@@ -152,10 +160,10 @@ def test_signin_pull_is_chunked_not_one_query_per_app():
     calls = []
 
     class Counting(ActivityGraph):
-        def get_all(self, path, params=None, max_items=None):
+        def get_all(self, path, params=None, max_items=None, beta=False):
             if path == "/auditLogs/signIns" and (params or {}).get("$top") != "1":
                 calls.append((params or {}).get("$filter", ""))
-            return super().get_all(path, params, max_items)
+            return super().get_all(path, params, max_items, beta)
 
     apps = [{"app_id": f"a{i}", "user_count": 0} for i in range(30)]
     collectors.enrich_with_signin_activity(Counting(user_signins=[]), apps, now=NOW)
@@ -173,3 +181,45 @@ def test_activity_window_is_configurable(monkeypatch):
     assert collectors.activity_days() == 90
     monkeypatch.setenv("AISPM_ACTIVITY_DAYS", "nonsense")
     assert collectors.activity_days() == 90
+
+
+def test_service_principal_pass_uses_beta_because_v1_lacks_the_property():
+    """
+    v1.0's signIn resource has no `signInEventTypes` — filtering on it there returns
+    400, which silently cost every app-only application its last-used date.
+    """
+    calls = []
+
+    class Recording(ActivityGraph):
+        def get_all(self, path, params=None, max_items=None, beta=False):
+            if path == "/auditLogs/signIns" and (params or {}).get("$top") != "1":
+                calls.append((beta, "signInEventTypes" in (params or {}).get("$filter", "")))
+            return super().get_all(path, params, max_items, beta)
+
+    graph = Recording(
+        user_signins=[],
+        sp_signins=[{"appId": "a1", "createdDateTime": _iso(3)}])
+    apps = [{"app_id": "a1", "user_count": 0, "has_app_only_access": True}]
+    collectors.enrich_with_signin_activity(graph, apps, now=NOW)
+
+    assert (False, False) in calls          # user pass on v1.0
+    assert (True, True) in calls            # service principal pass on beta
+    assert apps[0]["usage"]["last_service_principal_signin"] is not None
+
+
+def test_a_failing_signin_pass_degrades_without_a_traceback_per_chunk(caplog):
+    class BrokenSp(ActivityGraph):
+        def get_all(self, path, params=None, max_items=None, beta=False):
+            if "signInEventTypes" in (params or {}).get("$filter", ""):
+                raise RuntimeError("Graph 400: BadRequest")
+            return super().get_all(path, params, max_items, beta)
+
+    apps = [{"app_id": f"a{i}", "user_count": 0} for i in range(30)]
+    with caplog.at_level("WARNING"):
+        collectors.enrich_with_signin_activity(BrokenSp(user_signins=[]), apps, now=NOW)
+
+    # One summary line for the whole pass, not one stack trace per chunk.
+    warnings = [r for r in caplog.records if "sign-in pull" in r.message]
+    assert len(warnings) == 1
+    assert "2 chunk(s) failed" in warnings[0].getMessage()
+    assert all(a["usage"]["available"] for a in apps)   # scan still produced metrics
