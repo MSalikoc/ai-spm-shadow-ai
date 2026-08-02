@@ -18,7 +18,7 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 
-from .base import (ApiUnavailable, BaseCollector, EntityType, Source,
+from .base import (ApiUnavailable, BaseCollector, EntityType, QueryStillRunning, Source,
                    classify_graph_error)
 from .model import NOT_EXPOSED_BY_API, field, make_asset, raw_reference
 
@@ -31,13 +31,23 @@ class PurviewAuditCollector(BaseCollector):
     source = Source.PURVIEW_AUDIT
 
     def __init__(self, graph=None, days=30, operations=None,
-                 poll_max=30, poll_interval=2.0, sleep=time.sleep):
+                 poll_max=None, poll_interval=5.0, sleep=time.sleep):
         super().__init__()
         self._graph = graph
         self._days = int(os.environ.get("PURVIEW_AUDIT_DAYS", days))
         self._operations = operations or DEFAULT_OPERATIONS
-        self._poll_max = poll_max
+        # A Purview audit search is asynchronous and routinely takes minutes. The old
+        # budget was 30 polls at 2s — 60 seconds — so on a real tenant the query was
+        # still running when we gave up, and the dashboard reported the source as
+        # unavailable. Budget in seconds, overridable, and long enough to actually wait.
         self._poll_interval = poll_interval
+        if poll_max is None:
+            try:
+                budget = float(os.environ.get("PURVIEW_POLL_SECONDS", 300))
+            except ValueError:
+                budget = 300.0
+            poll_max = max(1, int(budget / max(poll_interval, 0.1)))
+        self._poll_max = poll_max
         self._sleep = sleep
         self._store_raw = os.environ.get("STORE_RAW_AI_CONTENT", "").lower() == "true"
 
@@ -75,7 +85,10 @@ class PurviewAuditCollector(BaseCollector):
         if status in ("failed", "cancelled"):
             raise ApiUnavailable(f"audit query {status}")
         if status != "succeeded":
-            raise ApiUnavailable("audit query timed out (poll_max)")
+            raise QueryStillRunning(
+                f"the Purview audit query was still running after "
+                f"{int(self._poll_max * self._poll_interval)}s. Raise PURVIEW_POLL_SECONDS, "
+                f"or narrow the window with PURVIEW_AUDIT_DAYS.")
 
         try:
             return self._graph.get_all(f"{_QUERIES}/{qid}/records", {"$top": "999"})

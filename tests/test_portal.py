@@ -338,3 +338,66 @@ def test_findings_from_both_scans_appear_together():
     doc = portal.html_string([], "t", _assessment(
         web=[_web("ChatGPT", users=500, uploaded=40 * 1024**3, sanctioned="unsanctioned")]))
     assert "findings" in _sections(doc)
+
+
+# --- a score nobody can decompose is a score nobody can act on -------------
+def test_every_scoring_signal_carries_its_points():
+    row = portal.vendor_rollup([], _assessment(
+        web=[_web("DeepSeek", users=470, uploaded=63 * 1024**3, sanctioned="unreviewed")]))[0]
+
+    assert row["breakdown"], "the score must show its parts"
+    assert sum(p for p, _ in row["breakdown"]) == row["raw_score"]
+    assert row["raw_score"] == row["risk_score"]         # nothing lost below the cap
+    assert all(r.startswith("+") or p == 0
+               for r, (p, _) in zip(row["reasons"], row["breakdown"]))
+
+
+def test_the_parts_add_up_to_the_number_shown():
+    for users, gb in ((5, 0), (150, 2), (500, 60)):
+        row = portal.vendor_rollup([], _assessment(
+            web=[_web("Zed", users=users, uploaded=int(gb * 1024**3))]))[0]
+        assert sum(p for p, _ in row["breakdown"]) == row["raw_score"]
+
+
+def test_a_capped_score_says_so_rather_than_quietly_losing_points():
+    row = portal.vendor_rollup(
+        [_oauth("A", vendor="Glean", score=100), _oauth("B", vendor="Glean", score=99)],
+        _assessment(web=[_web("Glean", users=900, uploaded=99 * 1024**3,
+                              sanctioned="unsanctioned")]))[0]
+    assert row["raw_score"] > 100 and row["risk_score"] == 100
+    assert "capped at 100" in portal.html_string(
+        [_oauth("A", vendor="Glean", score=100), _oauth("B", vendor="Glean", score=99)], "t",
+        _assessment(web=[_web("Glean", users=900, uploaded=99 * 1024**3,
+                              sanctioned="unsanctioned")]))
+
+
+def test_a_blocked_interaction_scores_nothing_and_says_why():
+    row = portal.vendor_rollup([], _assessment(
+        web=[_web("ChatGPT")],
+        interactions=[{"app_host": "ChatGPT", "direction": "BLOCKED", "sits": ["SSN"]}]))[0]
+    blocked = [(p, w) for p, w in row["breakdown"] if "blocked by DLP" in w]
+    assert blocked and blocked[0][0] == 0
+    assert "the control working" in blocked[0][1]
+
+
+def test_a_collapsed_row_names_its_biggest_contributor():
+    row = portal.vendor_rollup([], _assessment(
+        web=[_web("DeepSeek", users=470, uploaded=63 * 1024**3)]))[0]
+    top = portal._top_reason(row)
+    assert "MB uploaded" in top and "+26" in top
+
+
+def test_the_posture_number_shows_what_built_it():
+    doc = portal.html_string([], "t", _assessment(
+        web=[_web(f"V{i}", users=400, uploaded=20 * 1024**3) for i in range(3)]))
+    assert "Posture score out of 100" in doc
+    assert "High vendors" in doc
+    assert "not an average" in doc
+
+
+def test_the_scoring_model_is_documented_on_the_page():
+    doc = portal.html_string([_oauth("ChatGPT", vendor="OpenAI (ChatGPT)")], "t")
+    assert "What the score means" in doc
+    assert "75+ Critical" in doc
+    assert "How to read this" in doc          # the scatter explainer
+    assert "logarithmic" in doc

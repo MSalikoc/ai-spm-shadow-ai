@@ -192,74 +192,71 @@ def _score_vendor(rec) -> None:
     permission is worse when more people use it and worse again when Purview has
     already seen sensitive content go that way.
     """
-    reasons = []
+    parts: list[tuple[int, str]] = []          # (points, why) — the visible arithmetic
     score = 0
 
     worst = max((app.get("risk_score", 0) or 0 for app in rec["oauth_apps"]), default=0)
     if worst:
         score = worst
         top = max(rec["oauth_apps"], key=lambda x: x.get("risk_score", 0) or 0)
-        reasons.append(f"Highest-risk consented app: {top.get('display_name')} ({worst}/100)")
+        parts.append((worst, f"Starting point: its riskiest consented app, "
+                             f"{top.get('display_name')} at {worst}/100"))
     if len(rec["oauth_apps"]) > 1:
-        score += min(len(rec["oauth_apps"]), 5)
-        reasons.append(f"{len(rec['oauth_apps'])} separate consented applications")
+        n = min(len(rec["oauth_apps"]), 5)
+        score += n
+        parts.append((n, f"{len(rec['oauth_apps'])} separate consented applications"))
 
     web = rec["web"]
     if web:
         users = web["users"]
-        if users >= 100:
-            score += 18
-            reasons.append(f"{users} users reached it through the browser")
-        elif users >= 10:
-            score += 10
-            reasons.append(f"{users} users reached it through the browser")
-        elif users:
-            score += 4
-            reasons.append(f"{users} users reached it through the browser")
+        pts = 18 if users >= 100 else 10 if users >= 10 else 4 if users else 0
+        if pts:
+            score += pts
+            parts.append((pts, f"{users} people reached it through the browser"))
         gb = web["uploaded_bytes"] / 1_073_741_824
-        if gb >= 50:
-            score += 26
-        elif gb >= 10:
-            score += 20
-        elif gb >= 1:
-            score += 13
-        elif web["uploaded_bytes"] >= 100 * 1_048_576:
-            score += 7
-        elif web["uploaded_bytes"]:
-            score += 3
-        if web["uploaded_bytes"]:
-            reasons.append(f"{charts._fmt(web['uploaded_bytes'] / 1_048_576)} MB uploaded")
+        pts = (26 if gb >= 50 else 20 if gb >= 10 else 13 if gb >= 1
+               else 7 if web["uploaded_bytes"] >= 100 * 1_048_576
+               else 3 if web["uploaded_bytes"] else 0)
+        if pts:
+            score += pts
+            parts.append((pts, f"{charts._fmt(web['uploaded_bytes'] / 1_048_576)} MB "
+                               f"uploaded to it"))
         # Reach and volume together are the egress signal: a hundred people each moving
         # a little is a different problem from one person moving a lot, and scoring the
         # two factors independently flattens both into the same middling band.
         if users >= 100 and gb >= 1:
             score += 15
-            reasons.append("Large volume leaving the tenant across many users")
+            parts.append((15, "Large volume leaving the tenant, spread across many people"))
         if web["sanctioned"] == "unsanctioned":
             score += 12
-            reasons.append("Marked unsanctioned in Defender for Cloud Apps")
+            parts.append((12, "Marked unsanctioned in Defender for Cloud Apps"))
         elif web["sanctioned"] in (None, "unreviewed"):
             score += 5
-            reasons.append("Never reviewed in Defender for Cloud Apps")
+            parts.append((5, "Never reviewed in Defender for Cloud Apps"))
 
     if rec["interactions"]:
         allowed = rec["interactions"] - rec["blocked"]
         if allowed > 0:
             score += 15
-            reasons.append(f"{allowed} sensitive interaction(s) were allowed through")
+            parts.append((15, f"{allowed} sensitive interaction(s) were allowed through"))
         if rec["blocked"]:
-            reasons.append(f"{rec['blocked']} blocked by DLP")
+            parts.append((0, f"{rec['blocked']} blocked by DLP — no points, this is the "
+                             f"control working"))
         if rec["sensitive_types"]:
-            reasons.append("Data types: " + ", ".join(sorted(rec["sensitive_types"])[:4]))
+            parts.append((0, "Data types seen: "
+                             + ", ".join(sorted(rec["sensitive_types"])[:4])))
 
     if not rec["catalog_match"]:
-        reasons.append("Not in the AI catalog — verify what this is before acting")
+        parts.append((0, "Not in the AI catalog — verify what this is before acting"))
 
-    rec["risk_score"] = max(0, min(100, round(score)))
+    raw = round(score)
+    rec["raw_score"] = raw
+    rec["risk_score"] = max(0, min(100, raw))
     rec["risk_level"] = ("Critical" if rec["risk_score"] >= 75 else
                          "High" if rec["risk_score"] >= 50 else
                          "Medium" if rec["risk_score"] >= 25 else "Low")
-    rec["reasons"] = reasons or ["No notable signal"]
+    rec["breakdown"] = parts
+    rec["reasons"] = [f"+{p} — {why}" if p else why for p, why in parts] or ["No notable signal"]
 
 
 # --- rendering ---------------------------------------------------------------
@@ -295,7 +292,16 @@ def _vendor_row(rec, idx) -> str:
         f'<li><b>{_esc(app.get("display_name"))}</b> — {app.get("risk_score", 0)}/100 · '
         f'{_esc(app.get("consent_type") or "no consent recorded")}</li>'
         for app in sorted(rec["oauth_apps"], key=lambda x: -(x.get("risk_score") or 0))[:8])
-    reasons = "".join(f"<li>{_esc(r)}</li>" for r in rec["reasons"])
+    sums = "".join(
+        f'<li><span class="pt{"" if pts else " zero"}">{"+" + str(pts) if pts else "·"}</span>'
+        f'<span>{_esc(why)}</span></li>' for pts, why in rec.get("breakdown", []))
+    total = sum(p for p, _ in rec.get("breakdown", []))
+    capped = ('<li class="cap"><span class="pt">=</span><span>capped at 100</span></li>'
+              if total > 100 else "")
+    reasons = (f'<ul class="calc">{sums}'
+               f'<li class="tot"><span class="pt">{rec["risk_score"]}</span>'
+               f'<span>Risk score out of 100</span></li>{capped}</ul>'
+               if sums else '<p class="governed">No notable signal.</p>')
 
     return f"""
 <div class="vrow" data-level="{_esc(rec['risk_level'])}"
@@ -304,13 +310,14 @@ def _vendor_row(rec, idx) -> str:
     <span class="vscore" style="--sc:{LEVEL_COLORS[rec['risk_level']]}">{rec['risk_score']}</span>
     <span class="vname">{_esc(rec['vendor'])}
       <span class="vfacts">{_esc(' · '.join(facts)) or 'no activity recorded'}</span>
+      <span class="vwhy">{_esc(_top_reason(rec))}</span>
     </span>
     <span class="vbadges">{_evidence_badges(rec)}</span>
     <span class="vchev">&#9662;</span>
   </button>
   <div class="vbody">
     <div class="vgrid">
-      <div><h4>Why this score</h4><ul>{reasons}</ul></div>
+      <div><h4>How this score is built</h4>{reasons}</div>
       <div><h4>Consented applications</h4>
         <ul>{app_html or '<li class="muted">None — seen only through other sources.</li>'}</ul>
         {f'<h4>Sensitive permissions</h4><div>{perm_html}</div>' if perm_html else ''}
@@ -347,6 +354,28 @@ PORTAL_CSS = """
 .chip{display:inline-block;font-size:11px;background:var(--track);padding:2px 8px;
  border-radius:5px;margin:2px 4px 2px 0;font-family:ui-monospace,monospace}
 .muted{color:var(--muted)}
+.calc{list-style:none;margin:10px 0 0;padding:0;font-size:13px}
+.calc li{display:flex;gap:12px;align-items:baseline;padding:5px 0;
+ border-top:1px solid var(--line)}
+.calc li:first-child{border-top:0}
+.calc .pt{flex:0 0 46px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums;
+ color:var(--ink)}
+.calc .pt.zero{color:var(--muted);font-weight:400}
+.calc li.tot{border-top:2px solid var(--line);margin-top:4px;padding-top:8px;font-weight:600}
+.calc li.cap span{color:var(--muted);font-weight:400;font-size:12px}
+.explain{font-size:13px;color:var(--muted);line-height:1.55;margin-top:12px}
+.explain p{margin:8px 0}
+.explain b{color:var(--ink)}
+details.explain{border:1px solid var(--line);border-radius:9px;padding:10px 14px;
+ margin:12px 0 16px}
+details.explain summary{cursor:pointer;font-weight:600;color:var(--ink);font-size:13px}
+details.explain[open] summary{margin-bottom:8px}
+.scoretab{width:100%;border-collapse:collapse;font-size:12px;margin:10px 0}
+.scoretab th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.03em;
+ color:var(--muted);padding:6px 10px 6px 0;border-bottom:1px solid var(--line)}
+.scoretab td{padding:6px 10px 6px 0;border-bottom:1px solid var(--line);vertical-align:top}
+.scoretab td:nth-child(2){white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--ink)}
+.vwhy{font-size:11px;color:var(--muted);font-weight:400}
 @media(max-width:820px){.vgrid{grid-template-columns:1fr}.vbadges{display:none}}
 .pfilters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
 .pfilters button{cursor:pointer;border:1px solid var(--line);background:transparent;
@@ -411,7 +440,14 @@ def html_string(scored, tenant_id="", connectors_result=None, changes=None,
     web_users = sum((v["web"] or {}).get("users", 0) for v in vendors)
     uploaded = sum((v["web"] or {}).get("uploaded_bytes", 0) for v in vendors)
 
-    posture = _posture(vendors, counts)
+    posture, posture_parts = _posture(vendors, counts)
+    posture_calc = (
+        '<ul class="calc">'
+        + "".join(f'<li><span class="pt">+{p}</span><span>{_esc(w)}</span></li>'
+                  for p, w in posture_parts)
+        + f'<li class="tot"><span class="pt">{posture}</span>'
+          f'<span>Posture score out of 100</span></li></ul>'
+    ) if posture_parts else '<p class="governed">Nothing contributing yet.</p>' 
     donut = charts.donut([(lv, counts[lv], LEVEL_COLORS[lv]) for lv in LEVELS],
                          center_value=len(vendors), center_label="AI vendors")
     legend = charts.legend([(lv, LEVEL_COLORS[lv], counts[lv]) for lv in LEVELS])
@@ -479,26 +515,52 @@ def html_string(scored, tenant_id="", connectors_result=None, changes=None,
     <div class="card">
       <h3>Where to start</h3>
       {scatter}{legend}
-      <p class="governed">One dot per vendor, across every source. Up and to the right is
-      urgent: a high score reaching many people.</p>
+      <div class="explain">
+        <p><b>How to read this.</b> One dot per vendor. Left to right is how many people
+        it reaches; bottom to top is its risk score. Bigger dots hold more permissions.</p>
+        <p><b>Work the top-right corner first</b> — high risk reaching many people. A dot
+        high on the left is serious but contained; one low on the right is widespread but
+        currently harmless. The user axis is logarithmic, so each gridline is ten times
+        the last: 5 users and 500 users are not a short distance apart.</p>
+      </div>
     </div>
     <div class="card">
       <h3>Tenant AI posture</h3>
       <div style="display:flex;justify-content:center">{charts.gauge(posture, "Tenant AI posture")}</div>
-      <div class="grid cols-2" style="margin-top:14px">
-        <div class="card kpi crit"><span class="n">{counts['Critical']}</span><span class="l">Critical vendors</span></div>
-        <div class="card kpi high"><span class="n">{len(sensitive)}</span><span class="l">With sensitive data</span></div>
-      </div>
-      <p class="governed" style="margin-top:12px">
-        {charts._fmt(uploaded / 1_048_576) if uploaded else "0"} MB uploaded to AI services
-        in the observed period.</p>
+      <p class="governed">One number for the whole estate. Each vendor contributes points
+      by severity; the total is put through a curve so it keeps moving instead of pinning
+      at 100. It is not an average — two Critical vendors must not be diluted by twenty
+      quiet ones.</p>
+      {posture_calc}
     </div>
   </div>
 
   <div class="card" style="margin-top:16px">
     <h3>AI estate — {len(vendors)} vendors</h3>
     <p class="governed" style="margin-top:-6px">One row per vendor. Badges show how it was
-    seen; a vendor found through several routes is one row, not several. Click to open.</p>
+    seen; a vendor found through several routes is one row, not several.</p>
+    <details class="explain">
+      <summary>What the score means, and where the number comes from</summary>
+      <p>Every score is a sum of named signals — open any row to see the arithmetic that
+      produced it. Nothing is weighted secretly and nothing is a model output.</p>
+      <table class="scoretab">
+        <tr><th>Signal</th><th>Points</th><th>Why it counts</th></tr>
+        <tr><td>Riskiest consented app</td><td>its own 0–100 score</td>
+            <td>A vendor is at least as risky as the worst grant it holds</td></tr>
+        <tr><td>People reached (browser)</td><td>+4 / +10 / +18</td>
+            <td>1+, 10+, 100+ users — the blast radius</td></tr>
+        <tr><td>Uploaded volume</td><td>+3 … +26</td>
+            <td>100 MB through 50 GB+ — how much actually left</td></tr>
+        <tr><td>Volume across many people</td><td>+15</td>
+            <td>Wide and heavy together, which neither factor shows alone</td></tr>
+        <tr><td>Unsanctioned / never reviewed</td><td>+12 / +5</td>
+            <td>Nobody has made a decision about this tool</td></tr>
+        <tr><td>Sensitive data allowed through</td><td>+15</td>
+            <td>Purview saw it and DLP did not stop it</td></tr>
+      </table>
+      <p><b>Bands:</b> 75+ Critical · 50–74 High · 25–49 Medium · under 25 Low.
+      A DLP <i>block</i> adds nothing — that is the control working, not a failure.</p>
+    </details>
     <div class="pfilters">
       <button data-group="level" data-value="all" class="active">All risk</button>
       <button data-group="level" data-value="Critical">Critical</button>
@@ -613,16 +675,36 @@ _LOGO = """<svg class="logo" width="22" height="22" viewBox="0 0 21 21" xmlns="h
 </svg>"""
 
 
-def _posture(vendors, counts) -> int:
-    """Same saturating curve as the core dashboard, over vendors rather than apps."""
+_POSTURE_WEIGHTS = {"Critical": 14, "High": 7, "Medium": 2, "Low": 0.5,
+                    "both_routes": 4, "sensitive": 5}
+_POSTURE_SCALE = 120.0
+
+
+def _posture(vendors, counts):
+    """
+    (score, contributions). Same saturating curve as the core dashboard, over vendors.
+
+    Returns the parts as well as the number so the page can show its arithmetic —
+    a posture score nobody can decompose is a number nobody can act on.
+    """
     import math
     if not vendors:
-        return 0
-    raw = (counts["Critical"] * 14 + counts["High"] * 7
-           + counts["Medium"] * 2 + counts["Low"] * 0.5)
-    raw += 4 * sum(1 for v in vendors if {"oauth", "web"} <= v["evidence"])
-    raw += 5 * sum(1 for v in vendors if "sensitive" in v["evidence"])
-    return round(100 * (1 - math.exp(-raw / 120.0)))
+        return 0, []
+    w = _POSTURE_WEIGHTS
+    both = sum(1 for v in vendors if {"oauth", "web"} <= v["evidence"])
+    sens = sum(1 for v in vendors if "sensitive" in v["evidence"])
+    rows = [
+        (counts["Critical"], w["Critical"], "Critical vendors"),
+        (counts["High"], w["High"], "High vendors"),
+        (counts["Medium"], w["Medium"], "Medium vendors"),
+        (counts["Low"], w["Low"], "Low vendors"),
+        (both, w["both_routes"], "reachable through both consent and the browser"),
+        (sens, w["sensitive"], "with sensitive data recorded by Purview"),
+    ]
+    parts = [(round(n * weight), f"{n} {label} x {weight:g}")
+             for n, weight, label in rows if n]
+    raw = sum(n * weight for n, weight, _ in rows)
+    return round(100 * (1 - math.exp(-raw / _POSTURE_SCALE))), parts
 
 
 def json_string(scored, connectors_result=None, tenant_id="") -> str:
@@ -640,3 +722,12 @@ def json_string(scored, connectors_result=None, tenant_id="") -> str:
 def write_html(scored, path, tenant_id="", connectors_result=None, **kw) -> None:
     with open(path, "w", encoding="utf-8") as f:
         f.write(html_string(scored, tenant_id, connectors_result, **kw))
+
+
+def _top_reason(rec) -> str:
+    """The single largest contributor — so a collapsed row never shows a bare number."""
+    scoring = [(p, why) for p, why in rec.get("breakdown", []) if p]
+    if not scoring:
+        return "no scoring signal"
+    pts, why = max(scoring, key=lambda x: x[0])
+    return f"mostly: {why} (+{pts})"

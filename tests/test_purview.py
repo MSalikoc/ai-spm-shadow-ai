@@ -122,9 +122,36 @@ def test_permission_missing_does_not_stop(monkeypatch):
     assert c.get_health()["status"] == ConnectorStatus.PERMISSION_MISSING
 
 
-def test_query_timeout_is_api_unavailable(monkeypatch):
+def test_a_query_still_running_is_not_reported_as_unavailable(monkeypatch):
+    """
+    Seen on a real tenant: the search was still running when we stopped waiting, and the
+    dashboard said "not available in this tenant" — sending someone to look for a licence
+    they already had. The source works; the fix is to wait longer.
+    """
     monkeypatch.setenv("ENABLE_PURVIEW_AUDIT", "true")
     c = PurviewAuditCollector(FakeGraph(_records(), statuses=["running"]),
+                              poll_max=3, sleep=NOSLEEP)
+    assert c.safe_run() == []
+    assert c.get_health()["status"] == ConnectorStatus.TIMEOUT
+    assert "PURVIEW_POLL_SECONDS" in c.get_health()["error"]
+
+
+def test_the_poll_budget_is_generous_by_default_and_configurable(monkeypatch):
+    """60 seconds was never enough — a Purview audit search routinely takes minutes."""
+    c = PurviewAuditCollector(FakeGraph(_records()), sleep=NOSLEEP)
+    assert c._poll_max * c._poll_interval >= 240
+
+    monkeypatch.setenv("PURVIEW_POLL_SECONDS", "600")
+    c2 = PurviewAuditCollector(FakeGraph(_records()), sleep=NOSLEEP)
+    assert c2._poll_max * c2._poll_interval == 600
+
+    monkeypatch.setenv("PURVIEW_POLL_SECONDS", "not-a-number")
+    assert PurviewAuditCollector(FakeGraph(_records()), sleep=NOSLEEP)._poll_max > 0
+
+
+def test_a_failed_query_is_still_reported_as_unavailable(monkeypatch):
+    monkeypatch.setenv("ENABLE_PURVIEW_AUDIT", "true")
+    c = PurviewAuditCollector(FakeGraph(_records(), statuses=["failed"]),
                               poll_max=3, sleep=NOSLEEP)
     assert c.safe_run() == []
     assert c.get_health()["status"] == ConnectorStatus.API_UNAVAILABLE

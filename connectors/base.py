@@ -17,6 +17,7 @@ class ConnectorStatus:
     PERMISSION_MISSING = "PERMISSION_MISSING"
     LICENSE_MISSING = "LICENSE_MISSING"
     NO_DATA = "NO_DATA"
+    TIMEOUT = "TIMEOUT"
     API_UNAVAILABLE = "API_UNAVAILABLE"
     ERROR = "ERROR"
 
@@ -58,6 +59,16 @@ class PermissionMissing(Exception):
 
 class ApiUnavailable(Exception):
     pass
+
+
+class QueryStillRunning(Exception):
+    """
+    The source accepted the query and had not finished it when we stopped waiting.
+
+    Distinct from ApiUnavailable on purpose: the source works, the tenant has the
+    feature, and the fix is to wait longer — reporting it as "not available in this
+    tenant" sent people looking for a licence they already had.
+    """
 
 
 def classify_graph_error(err):
@@ -143,6 +154,8 @@ class BaseCollector(ABC):
             self._status, self._error = ConnectorStatus.LICENSE_MISSING, str(e)
         except PermissionMissing as e:
             self._status, self._error = ConnectorStatus.PERMISSION_MISSING, str(e)
+        except QueryStillRunning as e:
+            self._status, self._error = ConnectorStatus.TIMEOUT, str(e)
         except ApiUnavailable as e:
             self._status, self._error = ConnectorStatus.API_UNAVAILABLE, str(e)
         except Exception as e:  # no error is allowed to stop the assessment

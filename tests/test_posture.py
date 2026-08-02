@@ -152,3 +152,11 @@ def test_heatmap_legend_does_not_repeat_its_range():
     out = report._permission_heatmap(apps)
     assert "0–10 (0 –" not in out
     assert "Permission sensitivity (0 –" in out
+
+
+def test_the_application_score_model_is_documented_on_the_page():
+    """A 100/100 bar with no explanation is a number nobody can act on."""
+    doc = report.html_string([_app("A", "Critical", 90, scopes=["mail.read"])], "t")
+    assert "What an application" in doc
+    assert "75+ Critical" in doc
+    assert "up to +55" in doc                # the scope-sensitivity ceiling

@@ -56,6 +56,17 @@ a.card:hover{border-color:var(--accent)}
 a.card .n{font-size:24px}
 .kpi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
 .na li{margin:5px 0}
+details.explain{border:1px solid var(--line);border-radius:9px;padding:10px 14px;
+ margin:0 0 16px;background:var(--panel);font-size:13px;color:var(--muted);line-height:1.55}
+details.explain summary{cursor:pointer;font-weight:600;color:var(--ink);font-size:13px}
+details.explain[open] summary{margin-bottom:8px}
+details.explain b{color:var(--ink)}
+details.explain code{background:var(--track);padding:1px 5px;border-radius:4px}
+.scoretab{width:100%;border-collapse:collapse;font-size:12px;margin:10px 0}
+.scoretab th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.03em;
+ color:var(--muted);padding:6px 10px 6px 0;border-bottom:1px solid var(--line)}
+.scoretab td{padding:6px 10px 6px 0;border-bottom:1px solid var(--line);vertical-align:top}
+.scoretab td:nth-child(2){white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--ink)}
 .posture-parts{list-style:none;margin:14px 0 0;padding:0;font-size:12px}
 .posture-parts li{display:flex;justify-content:space-between;gap:12px;padding:5px 0;
  border-top:1px solid var(--line);color:var(--muted)}
@@ -262,7 +273,7 @@ table.zt-table tbody tr:hover{background:var(--track)}
       <b>Tenant</b><span>contoso-sample-0000-0000-000000000000</span>
       <b>Connected sources</b><span>4/5</span>
       <b>Matched assets</b><span>6/7</span>
-      <b>Generated</b><span>2026-08-02 14:50:04 UTC</span>
+      <b>Generated</b><span>2026-08-02 15:11:57 UTC</span>
     </div>
   </div>
   <div class="tiles"><div class="card tile high"><span class="n">2</span><span class="l">Apps sharing sensitive data</span></div><div class="card tile"><span class="n">2</span><span class="l">Affected users</span></div><div class="card tile"><span class="n">1</span><span class="l">Blocked (DLP)</span></div><div class="card tile high"><span class="n">1</span><span class="l">High severity findings</span></div></div>

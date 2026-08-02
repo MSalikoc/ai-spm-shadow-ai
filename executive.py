@@ -37,6 +37,7 @@ _STATUS_LABEL = {
     "CONNECTED": ("connected", True),
     "PARTIALLY_CONNECTED": ("partially connected", True),
     "NO_DATA": ("connected, no data in this period", True),
+    "TIMEOUT": ("still running when the scan stopped waiting", False),
     "PERMISSION_MISSING": ("permission missing", False),
     "LICENSE_MISSING": ("not licensed in this tenant", False),
     "API_UNAVAILABLE": ("not available in this tenant", False),

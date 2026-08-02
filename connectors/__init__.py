@@ -7,7 +7,8 @@ through the shared BaseCollector interface; registry.run() runs them resiliently
 correlation merges the results.
 """
 from .base import (BaseCollector, ConnectorStatus, Source, EntityType,
-                   LicenseMissing, PermissionMissing, ApiUnavailable)
+                   LicenseMissing, PermissionMissing, ApiUnavailable,
+                   QueryStillRunning)
 from . import model, correlation, registry, sensitive_data
 from .agent365 import Agent365Collector
 from .entra_agent_id import EntraAgentIdCollector
@@ -17,7 +18,7 @@ from .purview_dspm_import import PurviewDspmImportCollector
 
 __all__ = [
     "BaseCollector", "ConnectorStatus", "Source", "EntityType",
-    "LicenseMissing", "PermissionMissing", "ApiUnavailable",
+    "LicenseMissing", "PermissionMissing", "ApiUnavailable", "QueryStillRunning",
     "model", "correlation", "registry", "sensitive_data", "default_collectors",
     "Agent365Collector", "EntraAgentIdCollector", "DefenderCloudAppsCollector",
     "PurviewAuditCollector", "PurviewDspmImportCollector",

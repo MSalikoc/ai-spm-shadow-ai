@@ -675,6 +675,17 @@ a.card:hover{border-color:var(--accent)}
 a.card .n{font-size:24px}
 .kpi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
 .na li{margin:5px 0}
+details.explain{border:1px solid var(--line);border-radius:9px;padding:10px 14px;
+ margin:0 0 16px;background:var(--panel);font-size:13px;color:var(--muted);line-height:1.55}
+details.explain summary{cursor:pointer;font-weight:600;color:var(--ink);font-size:13px}
+details.explain[open] summary{margin-bottom:8px}
+details.explain b{color:var(--ink)}
+details.explain code{background:var(--track);padding:1px 5px;border-radius:4px}
+.scoretab{width:100%;border-collapse:collapse;font-size:12px;margin:10px 0}
+.scoretab th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.03em;
+ color:var(--muted);padding:6px 10px 6px 0;border-bottom:1px solid var(--line)}
+.scoretab td{padding:6px 10px 6px 0;border-bottom:1px solid var(--line);vertical-align:top}
+.scoretab td:nth-child(2){white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--ink)}
 .posture-parts{list-style:none;margin:14px 0 0;padding:0;font-size:12px}
 .posture-parts li{display:flex;justify-content:space-between;gap:12px;padding:5px 0;
  border-top:1px solid var(--line);color:var(--muted)}
@@ -1092,6 +1103,27 @@ def _build(apps: list[dict], tenant_id: str, changes=None, findings=None,
   </section>
 
   <section class="tab" data-tab="apps">
+    <details class="explain">
+      <summary>What an application's 0–100 score means, and where the number comes from</summary>
+      <p>Per <b>application</b> here, not per vendor — the Estate tab rolls these up.
+      Every score is a sum of named signals; open any row below to see the ones that
+      produced it. Nothing is weighted secretly and nothing is a model output.</p>
+      <table class="scoretab">
+        <tr><th>Signal</th><th>Points</th><th>Why it counts</th></tr>
+        <tr><td>Sensitive permissions</td><td>up to +55</td>
+            <td>The four riskiest scopes it holds, weighted 0–10 each</td></tr>
+        <tr><td>App-only permissions</td><td>up to +45</td>
+            <td>Runs with no user present, tenant-wide, around the clock</td></tr>
+        <tr><td>Admin consent for everyone</td><td>+20</td>
+            <td>Granted across the whole organisation, not app by app</td></tr>
+        <tr><td>10 or more users consented</td><td>+10</td><td>Blast radius</td></tr>
+        <tr><td>Publisher not verified</td><td>+10</td><td>Nobody vouches for who wrote it</td></tr>
+        <tr><td>offline_access</td><td>+6</td>
+            <td>A refresh token keeps working until someone revokes it</td></tr>
+      </table>
+      <p><b>Bands:</b> 75+ Critical · 50–74 High · 25–49 Medium · under 25 Low.
+      Permission sensitivity itself is tunable in <code>config.py</code>.</p>
+    </details>
     <div class="grid cols-2">
       <div class="card"><h3>Riskiest applications</h3>{top_bars}</div>
       <div class="card"><h3>Most granted sensitive permissions</h3>{scope_bars}</div>
