@@ -4,8 +4,9 @@
 organization — third-party OAuth consent, Microsoft 365 Copilot agents, and Shadow AI web
 usage, all from Entra ID and Microsoft Graph.**
 
-Runs as a scheduled Azure Function, authenticates with a Managed Identity (no secrets),
-and produces two ranked, explainable dashboards on every run.
+Runs from your laptop, from Cloud Shell, or as a scheduled Azure Function with a Managed
+Identity. Every run produces one portal over the whole AI estate, with two ranked,
+explainable dashboards behind it.
 
 > **100% read-only.** AI-SPM never revokes a permission, deletes an app, or changes a
 > setting. It observes, scores, and reports — remediation stays with your team.
@@ -13,6 +14,29 @@ and produces two ranked, explainable dashboards on every run.
 ---
 
 ## What you get
+
+**The portal** (`/api/portal`, or `out/portal.html` locally) is where a scan lands you:
+one row per AI **vendor**, across every source, with the evidence behind it.
+
+The two scans see the same vendor differently and share no identifier — Entra reports a
+consented service principal, Defender reports browser traffic, and Defender's records
+carry neither an appId nor a domain. So the portal does not merge them by ID, which
+would invent a correlation the data cannot support. It groups by vendor through the
+shared AI catalog and shows how each was seen:
+
+> **OpenAI (ChatGPT)** · 53/100 · `OAuth consent` `Web traffic`
+> 486 web users · 28.0 GB uploaded · 1 consented app
+
+Two rules keep it readable, both learned from a real tenant:
+
+- **Only AI creates a row.** A `--scope consented` scan sweeps in every app holding a
+  grant; those are counted and linked, never ranked above ChatGPT.
+- **Agents attach, they never create.** Agent 365's catalogue is the tenant's Teams app
+  list — 292 entries like "Jira Cloud" on the tenant this was built against. An agent
+  joins a vendor when it matches one, and is counted separately when it doesn't.
+
+Everything excluded is reported on the page with a link, so nothing is silently dropped.
+The two dashboards below remain, as its detail views.
 
 - **Core dashboard** (`/api/report`) — every third-party AI app with OAuth access to
   your tenant, each with a transparent 0–100 risk score (reasons included). Charts:
@@ -86,7 +110,7 @@ python3 aispm.py scan --scope consented
 ```
 
 ```bash
-download out/report.html
+download out/portal.html
 ```
 
 `download` is Cloud Shell's own command — it sends the file to your browser. Nothing is
@@ -115,8 +139,9 @@ python3 aispm.py scan --open
 ```
 
 Sign in with an account holding a read-only directory role — **Global Reader** or
-**Security Reader** is enough. `scan` writes `out/report.html`, `out/report.json`, and
-`out/connectors.html` when any connector is reachable.
+**Security Reader** is enough. `scan` writes `out/portal.html` (opened by `--open`),
+plus `out/report.html` and `out/connectors.html` as its detail views, and the matching
+`.json` for each.
 
 Always run `doctor` first. It probes every source with one capped call and reports
 readable / denied / not provisioned, so an empty dashboard section is never ambiguous.
@@ -306,11 +331,14 @@ Print your AI Data Sources dashboard link:
 echo "https://$FUNCTION_APP.azurewebsites.net/api/connectors?code=$KEY&format=html"
 ```
 
-Print your core dashboard link — **open this one first**:
+Print your portal link — **open this one first**:
 
 ```bash
-echo "https://$FUNCTION_APP.azurewebsites.net/api/report?code=$KEY"
+echo "https://$FUNCTION_APP.azurewebsites.net/api/portal?code=$KEY"
 ```
+
+The core dashboard and AI data sources views are linked from it, and remain available
+directly at `/api/report` and `/api/connectors?format=html`.
 
 Give it a few minutes after Step 2 — role propagation and the Function App restart both
 take a little time.
@@ -389,6 +417,7 @@ What counts as an "AI application" and how scores are weighted lives in
 
 ```
 aispm.py                     local CLI — doctor / scan / sample
+portal.py                    the unified estate view (vendor rollup across both scans)
 preflight.py                 permission + licence probes ("can this identity read X?")
 function_app.py              Azure Function entry points (timers + HTTP routes)
 pipeline.py                  core scan flow + AI Data Sources entry point

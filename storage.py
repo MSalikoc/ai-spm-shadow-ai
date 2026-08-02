@@ -180,3 +180,40 @@ def _publish_local(html: str, js: str, stamp: str) -> dict:
         with open(os.path.join("out", name), "w", encoding="utf-8") as f:
             f.write(data)
     return {"target": "local", "dir": "out", "stamp": stamp}
+
+
+def publish_portal(html: str, js: str) -> dict:
+    """
+    Writes the unified portal as `portal_latest.html/json`.
+
+    Same pre-compute-then-serve pattern as publish_connectors: the portal reads both
+    scans, so building it on request would put the whole correlation in front of the
+    Consumption plan's ~230s HTTP limit.
+    """
+    return _publish_pair("portal_latest", html, js)
+
+
+def _publish_pair(stem: str, html: str, js: str) -> dict:
+    conn = os.environ.get("AzureWebJobsStorage") or os.environ.get("REPORT_STORAGE_CONNECTION")
+    if conn and not conn.lower().startswith("usedevelopmentstorage"):
+        try:
+            from azure.storage.blob import BlobServiceClient, ContentSettings
+            container = os.environ.get("REPORT_CONTAINER", "aispm-reports")
+            cc = BlobServiceClient.from_connection_string(conn).get_container_client(container)
+            try:
+                cc.create_container()
+            except Exception:
+                pass
+            cc.upload_blob(f"{stem}.html", html.encode("utf-8"), overwrite=True,
+                           content_settings=ContentSettings(content_type="text/html"))
+            cc.upload_blob(f"{stem}.json", js.encode("utf-8"), overwrite=True,
+                           content_settings=ContentSettings(content_type="application/json"))
+            return {"target": "blob", "container": container}
+        except Exception as e:
+            print(f"[!] Could not write {stem} to Blob ({e}); writing locally.")
+    os.makedirs("out", exist_ok=True)
+    with open(os.path.join("out", f"{stem}.html"), "w", encoding="utf-8") as f:
+        f.write(html)
+    with open(os.path.join("out", f"{stem}.json"), "w", encoding="utf-8") as f:
+        f.write(js)
+    return {"target": "local", "dir": "out"}

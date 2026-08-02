@@ -70,6 +70,26 @@ def _match_vendor(sp: dict):
     return None, None, None
 
 
+def match_vendor_name(*texts):
+    """
+    Maps free text to a catalog vendor, or None.
+
+    The unified portal needs one name for what the two sides call differently: Entra
+    reports the service principal's display name, Defender reports its own app name
+    ("ChatGPT (Consumer & Enterprise)"), and neither carries an ID the other shares.
+    Running both through the same catalog is what lets a vendor be counted once.
+    """
+    blob = " ".join(t.lower() for t in texts if t)
+    if not blob:
+        return None
+    for v in AI_VENDORS:
+        if any(pat in blob for pat in v.get("patterns", [])):
+            return v["name"]
+        if any(dom in blob for dom in v.get("domains", [])):
+            return v["name"]
+    return None
+
+
 _AGENT_HINTS = ("agent", "copilot", " bot", "bot ", "studio", "botframework", "assistant")
 
 

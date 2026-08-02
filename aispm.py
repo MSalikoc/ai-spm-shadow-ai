@@ -169,6 +169,17 @@ def cmd_scan(args) -> int:
             connectors_href="connectors.html" if conn_path else None))
     report.write_json(scored, os.path.join(args.out, "report.json"))
 
+    # The portal is the landing page: one estate over both scans, with the two
+    # dashboards above as its detail views.
+    import portal
+    portal_path = os.path.join(args.out, "portal.html")
+    with open(portal_path, "w", encoding="utf-8") as f:
+        f.write(portal.html_string(scored, tenant, connectors_result,
+                                   connectors_href="connectors.html" if conn_path
+                                   else "report.html"))
+    with open(os.path.join(args.out, "portal.json"), "w", encoding="utf-8") as f:
+        f.write(portal.json_string(scored, connectors_result, tenant))
+
     summary = pipeline.summary(scored)
     ai_matched = sum(1 for a in scored if a.get("ai_match"))
     telemetry = graph.telemetry()
@@ -182,15 +193,22 @@ def cmd_scan(args) -> int:
     print(f"  {telemetry['requests']} Graph requests"
           f" · {telemetry['batch_calls']} batched calls"
           f" · {telemetry['throttled']} throttled")
-    print(f"\n  {core_path}")
+    vendors = portal.vendor_rollup(scored, connectors_result)
+    both = [v for v in vendors if {"oauth", "web"} <= v["evidence"]]
+    print(f"  {len(vendors)} AI vendors across all sources"
+          + (f", {len(both)} seen through both consent and web traffic" if both else ""))
+
+    print(f"\n  {portal_path}   <- start here")
+    print(f"  {core_path}")
     if conn_path:
         print(f"  {conn_path}")
 
-    for a in scored[:5]:
-        print(f"    [{a['risk_score']:>3} {a['risk_level']:<8}] {a['display_name']}")
+    for v in vendors[:5]:
+        print(f"    [{v['risk_score']:>3} {v['risk_level']:<8}] {v['vendor']}"
+              f"  ({', '.join(sorted(v['evidence'])) or 'no evidence'})")
 
     if args.open:
-        webbrowser.open(f"file://{os.path.abspath(core_path)}")
+        webbrowser.open(f"file://{os.path.abspath(portal_path)}")
     return 0
 
 

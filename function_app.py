@@ -63,6 +63,7 @@ def _run_scan(source: str):
         except Exception:
             logging.exception("findings error")
             finding_records = []
+        connectors_result = None
         try:  # connector drift (Step 8) + AI Data Sources dashboard cache (Step 7) — both
               # are no-ops if the flag is off (run_connectors returns None)
             connectors_result = pipeline.run_connectors(graph)
@@ -73,6 +74,14 @@ def _run_scan(source: str):
                     connectors_report.json_string(connectors_result))
         except Exception:
             logging.exception("connector drift/dashboard error")
+        try:  # the unified portal — one estate over both scans, the landing page
+            import portal
+            storage.publish_portal(
+                portal.html_string(scored, tenant_id, connectors_result,
+                                   report_href="report", connectors_href="connectors"),
+                portal.json_string(scored, connectors_result, tenant_id))
+        except Exception:
+            logging.exception("portal render error")
         published = storage.publish(scored, tenant_id, changes, finding_records)
         summ = pipeline.summary(scored)
 
@@ -239,6 +248,20 @@ def connectors_now(req: func.HttpRequest) -> func.HttpResponse:
         logging.exception("connectors_now (live fallback) error")
         return func.HttpResponse(json.dumps({"error": str(e)}, ensure_ascii=False),
                                  mimetype="application/json", status_code=500)
+
+
+@app.route(route="portal", auth_level=func.AuthLevel.FUNCTION)
+def portal_view(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    The landing page: one AI estate over both scans, with /api/report and
+    /api/connectors as its detail views. Pre-computed by _run_scan.
+    """
+    doc = storage.read_latest("portal_latest.html")
+    if doc is None:
+        return func.HttpResponse(
+            "No portal yet. Run /api/scan first." + _last_scan_error_note(),
+            status_code=404, mimetype="text/plain")
+    return func.HttpResponse(doc, mimetype="text/html", status_code=200)
 
 
 @app.route(route="doctor", auth_level=func.AuthLevel.FUNCTION)
