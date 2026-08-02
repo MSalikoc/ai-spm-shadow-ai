@@ -42,8 +42,47 @@ def test_coverage_gaps_visible():
     cov = executive.coverage(apps)
     assert cov["owner_coverage"] == 50
     names = {c[0]: c[1] for c in cov["connectors"]}
-    assert names["Microsoft Purview"] is False           # not connected
     assert names["Entra ID / Microsoft Graph"] is True
+    # Without a connectors run, a real source is "not run in this scan" — not asserted
+    # to be disconnected, which is what the old hardcoded list did.
+    assert names["Microsoft Purview Audit"] is False
+    # A source with no collector at all is neither connected nor disconnected.
+    assert names["Azure AI Foundry"] is None
+
+
+def test_coverage_reports_the_real_connector_run():
+    """The list has to follow what actually happened, or it contradicts the data below it."""
+    health = {
+        "defender_cloud_apps": {"status": "CONNECTED", "count": 18},
+        "purview_audit": {"status": "CONNECTED", "count": 4},
+        "agent365": {"status": "LICENSE_MISSING", "count": 0},
+        "entra_agent_id": {"status": "PERMISSION_MISSING", "count": 0},
+    }
+    rows = {c[0]: (c[1], c[2]) for c in executive.coverage([], health)["connectors"]}
+
+    assert rows["Defender for Cloud Apps"][0] is True
+    assert "18 assets" in rows["Defender for Cloud Apps"][1]
+    assert rows["Microsoft Purview Audit"][0] is True
+    assert rows["Microsoft Agent 365"][0] is False
+    assert "not licensed" in rows["Microsoft Agent 365"][1]
+    assert "permission missing" in rows["Microsoft Entra Agent ID"][1]
+
+
+def test_a_connected_source_is_not_reported_as_a_gap():
+    """The narrative said Purview was disconnected while Purview was returning data."""
+    health = {"purview_audit": {"status": "CONNECTED", "count": 4},
+              "defender_cloud_apps": {"status": "CONNECTED", "count": 18}}
+    lines = " ".join(executive.needs_attention([], [], [], health))
+    assert "Purview connector is not connected" not in lines
+    assert "Defender for Cloud Apps is not connected" not in lines
+    # A source that genuinely has no collector is still declared.
+    assert "Azure AI Foundry is not connected" in lines
+
+
+def test_partially_connected_still_counts_as_reachable():
+    health = {"defender_cloud_apps": {"status": "PARTIALLY_CONNECTED", "count": 3}}
+    rows = {c[0]: c[1] for c in executive.connector_status(health)}
+    assert rows["Defender for Cloud Apps"] is True
 
 
 def test_needs_attention_generates_stories():

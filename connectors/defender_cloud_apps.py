@@ -135,7 +135,8 @@ class DefenderCloudAppsCollector(BaseCollector):
                     "category": category, "vendor": app.get("publisher") or app.get("vendor"),
                     "risk_score": m["risk_score"], "sanctioned_state": self._sanction(app),
                     "users": 0, "devices": 0, "ips": 0, "transactions": 0,
-                    "uploaded_bytes": 0, "downloaded_bytes": 0, "streams": set(),
+                    "uploaded_bytes": 0, "downloaded_bytes": 0, "traffic_bytes": 0,
+                    "streams": set(),
                     "first_seen": m["first_seen"], "last_seen": m["last_seen"],
                 }
             # users/IPs/devices can't be deduped across different streams → conservative
@@ -146,6 +147,7 @@ class DefenderCloudAppsCollector(BaseCollector):
             agg["transactions"] += m["transactions"]
             agg["uploaded_bytes"] += m["uploaded_bytes"]
             agg["downloaded_bytes"] += m["downloaded_bytes"]
+            agg["traffic_bytes"] += m["traffic_bytes"]
             agg["streams"].add(r.get("stream_id"))
             if m["risk_score"] is not None:
                 agg["risk_score"] = m["risk_score"]
@@ -178,6 +180,7 @@ class DefenderCloudAppsCollector(BaseCollector):
             "ip_addresses": a["ips"],
             "transactions": a["transactions"],
             "uploaded_bytes": a["uploaded_bytes"],
+            "traffic_bytes": a["traffic_bytes"],
             "downloaded_bytes": a["downloaded_bytes"],
             "stream_count": len(a["streams"]),
             "period": self._period,
@@ -210,6 +213,7 @@ class DefenderCloudAppsCollector(BaseCollector):
             "ip_addresses": m["ips"],
             "transactions": m["transactions"],
             "uploaded_bytes": m["uploaded_bytes"],
+            "traffic_bytes": m["traffic_bytes"],
             "downloaded_bytes": m["downloaded_bytes"],
             "period": self._period,
             # access/upload observation ≠ sensitive sharing (Step 6 will apply the direction split):
@@ -241,26 +245,64 @@ class DefenderCloudAppsCollector(BaseCollector):
         return "unreviewed"
 
     @staticmethod
-    def _metrics_of(app):
+    def _num_field(app, include, exclude=()):
+        """
+        Finds a numeric field by what its name *means*, not by an exact spelling.
+
+        The beta schema is not fixed and does not match the portal's own vocabulary: a
+        fixed guess list of uploadedBytes/uploadedVolume/dataUploaded/bytesUploaded
+        matched none of the real field names, so every application reported 0 bytes
+        while the portal showed gigabytes. Matching on a substring survives
+        uploadedBytes, uploadVolume, bytesUploaded and totalUploadedVolumeInBytes
+        alike; `exclude` keeps "downloaded" from satisfying a search for "upload".
+        """
+        for key, value in app.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            name = key.lower()
+            if any(x in name for x in exclude):
+                continue
+            if any(i in name for i in include):
+                return int(value)
+        return 0
+
+    @classmethod
+    def _metrics_of(cls, app):
         def num(*keys):
             for k in keys:
                 v = app.get(k)
-                if isinstance(v, (int, float)):
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
                     return int(v)
             return 0
+
         rs = None
         for k in ("riskScore", "score", "risk"):
             v = app.get(k)
-            if isinstance(v, (int, float)):
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
                 rs = int(v)
                 break
+
+        # Exact names first (cheapest and unambiguous), then a meaning-based search.
+        uploaded = num("uploadedBytes", "uploadedVolume", "dataUploaded", "bytesUploaded") \
+            or cls._num_field(app, ("upload",), exclude=("download",))
+        downloaded = num("downloadedBytes", "downloadedVolume", "dataDownloaded",
+                         "bytesDownloaded") \
+            or cls._num_field(app, ("download",), exclude=("upload",))
         return {
-            "users": num("userCount", "usersCount", "distinctUsers", "distinctUsersCount"),
-            "devices": num("deviceCount", "devicesCount", "distinctDevices"),
-            "ips": num("ipAddressCount", "ipCount", "distinctIpAddresses"),
-            "transactions": num("transactionCount", "transactionsCount", "requestCount"),
-            "uploaded_bytes": num("uploadedBytes", "uploadedVolume", "dataUploaded", "bytesUploaded"),
-            "downloaded_bytes": num("downloadedBytes", "downloadedVolume", "dataDownloaded", "bytesDownloaded"),
+            "users": num("userCount", "usersCount", "distinctUsers", "distinctUsersCount")
+                     or cls._num_field(app, ("user",)),
+            "devices": num("deviceCount", "devicesCount", "distinctDevices")
+                       or cls._num_field(app, ("device",)),
+            "ips": num("ipAddressCount", "ipCount", "distinctIpAddresses")
+                   or cls._num_field(app, ("ipaddress", "ipcount")),
+            "transactions": num("transactionCount", "transactionsCount", "requestCount")
+                            or cls._num_field(app, ("transaction", "request")),
+            "uploaded_bytes": uploaded,
+            "downloaded_bytes": downloaded,
+            # Total traffic is reported separately by MDCA; keep it when upload and
+            # download are not broken out, so the dashboard is not left with nothing.
+            "traffic_bytes": cls._num_field(app, ("traffic", "totalvolume"),
+                                            exclude=("upload", "download")),
             "risk_score": rs,
             "first_seen": app.get("firstSeenDateTime") or app.get("firstSeen"),
             "last_seen": app.get("lastSeenDateTime") or app.get("lastSeen"),
@@ -295,6 +337,7 @@ def metrics(assets):
         "unreviewed": sum(1 for x in apps if g(x).get("sanctioned_state") in (None, "unreviewed", "monitored")),
         "total_users_observed": sum(g(x).get("users", 0) for x in apps),   # NO cross-app dedupe
         "total_uploaded_bytes": sum(g(x).get("uploaded_bytes", 0) for x in apps),
+        "total_traffic_bytes": sum(g(x).get("traffic_bytes", 0) for x in apps),
         "high_risk_apps": sum(1 for x in apps if isinstance(g(x).get("risk_score"), int)
                               and g(x)["risk_score"] <= 3),                # MDCA: lower score = higher risk
         "usage_observations": len(obs),

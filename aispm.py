@@ -149,10 +149,6 @@ def cmd_scan(args) -> int:
             print(f"  ! AI data sources step failed, continuing: {e}")
 
     os.makedirs(args.out, exist_ok=True)
-    core_path = os.path.join(args.out, "report.html")
-    with open(core_path, "w", encoding="utf-8") as f:
-        f.write(report.html_string(scored, tenant))
-    report.write_json(scored, os.path.join(args.out, "report.json"))
 
     conn_path = None
     if connectors_result is not None:
@@ -161,6 +157,17 @@ def cmd_scan(args) -> int:
             f.write(connectors_report.html_string(connectors_result, tenant))
         with open(os.path.join(args.out, "connectors.json"), "w", encoding="utf-8") as f:
             f.write(connectors_report.json_string(connectors_result))
+
+    # Written after the connectors run so the core dashboard can report their real
+    # status, and link to the sibling file rather than to an /api/ route that does not
+    # exist for a page opened off disk.
+    core_path = os.path.join(args.out, "report.html")
+    with open(core_path, "w", encoding="utf-8") as f:
+        f.write(report.html_string(
+            scored, tenant,
+            connector_health=(connectors_result or {}).get("health"),
+            connectors_href="connectors.html" if conn_path else None))
+    report.write_json(scored, os.path.join(args.out, "report.json"))
 
     summary = pipeline.summary(scored)
     ai_matched = sum(1 for a in scored if a.get("ai_match"))

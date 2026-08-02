@@ -200,14 +200,19 @@ def _executive_section(apps, changes, findings):
 """
 
 
-def _coverage_section(apps):
+_CONN_DOT = {True: charts.SEVERITY["Low"], False: charts.SEVERITY["Critical"], None: "#6b7280"}
+
+
+def _coverage_section(apps, connector_health=None):
     import executive
     cov = executive.coverage(apps)
+    # `None` means "no collector exists for this yet" — grey, not red: a red dot invites
+    # someone to go and fix a connection that was never on offer.
     conn_html = "".join(
-        f'<li><span class="dot" style="background:{"#2e8b57" if ok else "#c0392b"}"></span>'
-        f'{html.escape(name)} — {"connected" if ok else "<b>not connected</b>"} '
-        f'<span class="governed">({html.escape(purpose)})</span></li>'
-        for name, ok, purpose in cov["connectors"])
+        f'<li><span class="dot" style="background:{_CONN_DOT[ok]}"></span>'
+        f'<b>{html.escape(name)}</b> '
+        f'<span class="governed">{html.escape(detail)}</span></li>'
+        for name, ok, detail in executive.connector_status(connector_health))
     own_bar = _bars([("Owner coverage", f"{cov['owner_coverage']}%", cov["owner_coverage"], "#0f6cbd"),
                      ("Agent purpose coverage", f"{cov['purpose_coverage']}%", cov["purpose_coverage"], "#7c3aed")],
                     100)
@@ -748,9 +753,12 @@ THEME_JS = """
 (function(){
 var aiLink=document.getElementById('aiDataSourcesLink');
 if(aiLink){
+  var localHref=aiLink.getAttribute('data-local-href');
   if(location.pathname.indexOf('/api/')===0){
     var aiCode=new URLSearchParams(location.search).get('code');
     aiLink.href='/api/connectors?format=html'+(aiCode?'&code='+encodeURIComponent(aiCode):'');
+  }else if(localHref){
+    aiLink.href=localHref;
   }else{
     aiLink.remove();
   }
@@ -794,7 +802,8 @@ document.querySelectorAll('.fsave').forEach(function(btn){btn.onclick=function()
 """
 
 
-def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None) -> str:
+def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None,
+                connector_health=None, connectors_href=None) -> str:
     microsoft = [a for a in apps if a.get("first_party_microsoft")]
     shadow = [a for a in apps if not a.get("first_party_microsoft")]
     shadow.sort(key=lambda a: a["risk_score"], reverse=True)
@@ -991,6 +1000,8 @@ def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None) -
     import executive
     estate = executive.estate_metrics(apps, changes, findings)
     ts = datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M UTC")
+    local_link_attr = (f' data-local-href="{html.escape(connectors_href, quote=True)}"'
+                       if connectors_href else "")
 
     body = f"""
 <header>
@@ -1011,7 +1022,7 @@ def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None) -
   </nav>
   <span class="spacer"></span>
   <span class="tenant">{html.escape(tenant_id)}</span>
-  <a id="aiDataSourcesLink" class="themebtn" href="#" style="display:inline-block;text-decoration:none" title="Go to the Microsoft AI Data Sources dashboard">AI Data Sources &#8594;</a>
+  <a id="aiDataSourcesLink" class="themebtn" href="#"{local_link_attr} style="display:inline-block;text-decoration:none" title="Go to the Microsoft AI Data Sources dashboard">AI Data Sources &#8594;</a>
   <button id="tg" class="themebtn" title="Theme">&#9790;</button>
 </header>
 <main>
@@ -1115,7 +1126,7 @@ def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None) -
   </section>
 
   <section class="tab" data-tab="usage">{usage_section}</section>
-  <section class="tab" data-tab="governance">{governance_section}{_coverage_section(apps)}</section>
+  <section class="tab" data-tab="governance">{governance_section}{_coverage_section(apps, connector_health)}</section>
   <section class="tab" data-tab="findings">{_findings_section(findings)}</section>
   <section class="tab" data-tab="changes">{_timeline_section(changes)}{new_bu_section}</section>
 

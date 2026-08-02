@@ -137,3 +137,58 @@ def test_not_configured_without_preview_flag(monkeypatch):
     c = DefenderCloudAppsCollector(FakeGraph(_data()))
     assert c.safe_run() == []
     assert c.get_health()["status"] == ConnectorStatus.NOT_CONFIGURED
+
+
+# --- traffic volume: the schema does not use the names we guessed ----------
+def _one(app):
+    c = DefenderCloudAppsCollector(graph=None)
+    return c._metrics_of(app)
+
+
+def test_traffic_is_found_under_whatever_the_schema_calls_it():
+    """
+    A fixed guess list matched none of the real field names, so every application
+    reported 0 bytes while the portal showed gigabytes.
+    """
+    for upload_key in ("uploadedBytes", "uploadVolume", "bytesUploaded",
+                       "totalUploadedVolumeInBytes", "uploadedDataVolume"):
+        m = _one({upload_key: 12 * 1024**3, "displayName": "ChatGPT"})
+        assert m["uploaded_bytes"] == 12 * 1024**3, upload_key
+
+
+def test_upload_and_download_are_never_confused():
+    m = _one({"downloadedBytes": 500, "uploadedBytes": 100})
+    assert m["uploaded_bytes"] == 100
+    assert m["downloaded_bytes"] == 500
+
+    # Only a download field present: upload must stay 0, not borrow the download value.
+    only_down = _one({"totalDownloadedVolume": 900})
+    assert only_down["uploaded_bytes"] == 0
+    assert only_down["downloaded_bytes"] == 900
+
+
+def test_total_traffic_is_kept_when_the_split_is_not_reported():
+    m = _one({"trafficBytes": 7 * 1024**3})
+    assert m["traffic_bytes"] == 7 * 1024**3
+    assert m["uploaded_bytes"] == 0        # not invented from the total
+
+
+def test_traffic_search_ignores_upload_and_download_fields():
+    m = _one({"uploadedBytes": 10, "downloadedBytes": 20, "totalTrafficVolume": 30})
+    assert m["traffic_bytes"] == 30
+
+
+def test_booleans_are_never_read_as_a_count():
+    m = _one({"isUploadBlocked": True, "uploadedBytes": 42})
+    assert m["uploaded_bytes"] == 42
+
+
+def test_exact_names_still_win_over_the_pattern_search():
+    m = _one({"uploadedBytes": 5, "someOtherUploadThing": 999})
+    assert m["uploaded_bytes"] == 5
+
+
+def test_users_and_transactions_survive_a_renamed_field():
+    m = _one({"distinctUserCount": 486, "totalTransactions": 570})
+    assert m["users"] == 486
+    assert m["transactions"] == 570

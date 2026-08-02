@@ -9,13 +9,68 @@ separate CONNECTOR; until connected their counts are 0 and Coverage shows this o
 from datetime import datetime, timezone
 
 # Data source / connector status. Unconnected ones produce a coverage gap.
+# Sources that exist as real connectors, keyed by the name registry.run() reports them
+# under. Their status comes from the run — never asserted.
+_LIVE_CONNECTORS = [
+    ("agent365", "Microsoft Agent 365", "Registered Copilot/agent packages"),
+    ("entra_agent_id", "Microsoft Entra Agent ID", "Agent identities, owners, permissions"),
+    ("defender_cloud_apps", "Defender for Cloud Apps", "Shadow AI web usage & traffic"),
+    ("purview_audit", "Microsoft Purview Audit", "Sensitive AI interactions"),
+]
+
+# Sources that are on the roadmap but have no collector yet. Kept visible so the
+# dashboard states the limits of its own coverage, but labelled distinctly: "not
+# connected" wrongly implies an operator could go and connect it.
+_PLANNED_CONNECTORS = [
+    ("Defender for Endpoint / Intune", "Local AI agent & device discovery"),
+    ("Azure AI Foundry", "AI model inventory"),
+    ("MCP server inventory", "MCP server discovery"),
+]
+
+# Retained for callers that predate connector_status(); the live view is preferred.
 CONNECTORS = [
     ("Entra ID / Microsoft Graph", True, "AI application & OAuth consent discovery"),
-    ("Microsoft Purview", False, "Sensitive data visibility (DSPM)"),
-    ("Defender for Endpoint / Intune", False, "Local AI agent & device discovery"),
-    ("Azure AI Foundry", False, "AI model inventory"),
-    ("MCP server inventory", False, "MCP server discovery"),
+    *[(label, False, purpose) for label, purpose in _PLANNED_CONNECTORS],
 ]
+
+_STATUS_LABEL = {
+    "CONNECTED": ("connected", True),
+    "PARTIALLY_CONNECTED": ("partially connected", True),
+    "NO_DATA": ("connected, no data in this period", True),
+    "PERMISSION_MISSING": ("permission missing", False),
+    "LICENSE_MISSING": ("not licensed in this tenant", False),
+    "API_UNAVAILABLE": ("not available in this tenant", False),
+    "NOT_CONFIGURED": ("not enabled", False),
+    "ERROR": ("error", False),
+}
+
+
+def connector_status(health=None):
+    """
+    The real state of every data source: (label, ok, detail).
+
+    `health` is the dict pipeline.run_connectors() returns under "health". Without it
+    the live connectors report "not run in this scan" rather than a fabricated
+    "not connected" — the previous hardcoded list said Purview and Defender were
+    disconnected even while those connectors were running and returning data, and it
+    listed Defender for *Endpoint*, which has no collector, in place of Defender for
+    Cloud Apps, which does.
+    """
+    rows = [("Entra ID / Microsoft Graph", True, "AI application & OAuth consent discovery")]
+    for key, label, purpose in _LIVE_CONNECTORS:
+        entry = (health or {}).get(key)
+        if not entry:
+            rows.append((label, False, f"{purpose} — not run in this scan"))
+            continue
+        text, ok = _STATUS_LABEL.get(entry.get("status"), (entry.get("status", "unknown"), False))
+        count = entry.get("count")
+        detail = f"{purpose} — {text}"
+        if ok and count:
+            detail += f", {count} assets"
+        rows.append((label, ok, detail))
+    for label, purpose in _PLANNED_CONNECTORS:
+        rows.append((label, None, f"{purpose} — no collector yet"))
+    return rows
 
 _IMP_ORDER = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Info": 4}
 
@@ -93,14 +148,14 @@ def usage_surface(apps):
     return {"enterprise": enterprise, "web": web, "local": 0}
 
 
-def coverage(apps):
+def coverage(apps, health=None):
     non_ms = [a for a in apps if not a.get("first_party_microsoft")]
     agents = _agents(apps)
     return {
         "owner_coverage": _pct(sum(1 for a in non_ms if _has_owner(a)), len(non_ms)),
         "purpose_coverage": _pct(sum(1 for a in agents
                                      if (a.get("business_context") or {}).get("purpose")), len(agents)),
-        "connectors": CONNECTORS,
+        "connectors": connector_status(health),
     }
 
 
@@ -108,7 +163,7 @@ def top_changes(changes, n=5):
     return sorted(changes or [], key=lambda e: _IMP_ORDER.get(e.get("importance"), 5))[:n]
 
 
-def needs_attention(apps, changes=None, findings=None):
+def needs_attention(apps, changes=None, findings=None, health=None):
     """Rule-based executive narratives — from real data only (no fabrication)."""
     changes = changes or []
     findings = findings or []
@@ -144,15 +199,23 @@ def needs_attention(apps, changes=None, findings=None):
     if m["overdue_findings"]:
         lines.append(f"{m['overdue_findings']} findings are overdue — SLA breach.")
 
-    # Connector gaps (honest coverage narratives)
-    for name, connected, purpose in CONNECTORS:
-        if not connected:
-            if "Purview" in name:
-                lines.append("Sensitive data visibility is unavailable because the Purview connector is not connected.")
-            elif "Endpoint" in name:
-                lines.append("Local AI agent visibility is unavailable because the Endpoint connector is not connected.")
-            elif "Foundry" in name:
-                lines.append("AI model inventory is not visible because Azure AI Foundry is not connected.")
-            elif "MCP" in name:
-                lines.append("MCP server visibility is unavailable because the MCP connector is not connected.")
+    # Connector gaps (honest coverage narratives). Driven by the real run when one is
+    # available, so a source that IS connected no longer gets reported as a gap.
+    for name, connected, purpose in connector_status(health):
+        if connected:
+            continue
+        if "Purview" in name:
+            lines.append("Sensitive data visibility is unavailable because the Purview connector is not connected.")
+        elif "Endpoint" in name:
+            lines.append("Local AI agent visibility is unavailable because the Endpoint connector is not connected.")
+        elif "Foundry" in name:
+            lines.append("AI model inventory is not visible because Azure AI Foundry is not connected.")
+        elif "MCP" in name:
+            lines.append("MCP server visibility is unavailable because the MCP connector is not connected.")
+        elif "Agent 365" in name:
+            lines.append("Registered Copilot agents are not visible because Agent 365 is not connected.")
+        elif "Agent ID" in name:
+            lines.append("Agent identities and their owners are not visible because Entra Agent ID is not connected.")
+        elif "Cloud Apps" in name:
+            lines.append("Shadow AI web usage is not visible because Defender for Cloud Apps is not connected.")
     return lines
