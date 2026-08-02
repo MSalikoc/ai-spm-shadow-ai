@@ -41,7 +41,13 @@ else
   TMP="$(mktemp -d)"
   # Tüm kök .py dosyaları + host.json + requirements.txt (notify.py dahil, yeni
   # modül eklendiğinde manuel liste güncellemeye gerek kalmasın diye).
-  zip -qr "$TMP/src.zip" ./*.py host.json requirements.txt -x demo.py
+  #
+  # catalog.json ve connectors/ ZORUNLU: config.py katalogu import anında açar
+  # (yoksa Function ayağa kalkmaz), pipeline.run_connectors ise connectors paketini
+  # import eder (yoksa AI Data Sources dashboard'u çalışmaz). Bu iki girdi
+  # eksikti — sadece 'func' bulunamadığında bu yola düşüldüğü için fark edilmemiş.
+  zip -qr "$TMP/src.zip" ./*.py catalog.json host.json requirements.txt connectors \
+    -x demo.py 'connectors/__pycache__/*' '*/.DS_Store'
   az functionapp deployment source config-zip -g "$RG" -n "$FUNC" --src "$TMP/src.zip"
 fi
 
@@ -68,6 +74,11 @@ echo "==> 4/4 Tamam."
 echo "    İlk taramayı tetikle          :  curl -s \"https://$FUNC.azurewebsites.net/api/scan?code=$KEY\""
 echo "    AI Data Sources dashboard     :  https://$FUNC.azurewebsites.net/api/connectors?code=$KEY&format=html"
 echo "    Çekirdek dashboard (buradan başlayın) :  https://$FUNC.azurewebsites.net/api/report?code=$KEY"
+echo
+echo "    Tarama kapsamı varsayılan olarak 'ai' — sadece katalogdaki AI satıcıları."
+echo "    Katalogda olmayan AI araçlarını da görmek için (gerçek rıza yüzeyi):"
+echo "      az functionapp config appsettings set -g $RG -n $FUNC \\"
+echo "        --settings AISPM_SCAN_SCOPE=consented -o none"
 echo "    (Rol yayılması + Function App yeniden başlaması birkaç dakika sürebilir —"
 echo "     bu sürede AI Data Sources dashboard'u bazı kaynakları PERMISSION_MISSING"
 echo "     gösterebilir; birkaç dakika sonra sayfayı yenileyin. LICENSE_MISSING ise"
