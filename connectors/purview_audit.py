@@ -1,25 +1,25 @@
 """
-Microsoft Purview Audit collector — hassas AI etkileşimlerinin ana kaynağı (Adım 5).
+Microsoft Purview Audit collector — the primary source of sensitive AI interactions (Step 5).
 
-Akış    : POST /v1.0/security/auditLog/queries  (sorgu oluştur)
+Flow    : POST /v1.0/security/auditLog/queries  (create query)
           GET  .../auditLog/queries/{id}         (poll → 'succeeded')
-          GET  .../auditLog/queries/{id}/records (kayıtlar)
+          GET  .../auditLog/queries/{id}/records (records)
 Operations: CopilotInteraction, ConnectedAIAppInteraction, AIAppInteraction
 Permission: AuditLogsQuery.Read.All
 
-Her kayıt → birleşik **SENSITIVE_INTERACTION** entity'si: user, app, SIT (sensitive info
-type), sensitivity label, referenced resources, DLP policy/rule/action, yön (direction).
-API'de olmayan alanlar `field(NOT_EXPOSED_BY_API)` ile dürüstçe işaretlenir.
+Each record → a merged **SENSITIVE_INTERACTION** entity: user, app, SIT (sensitive info
+type), sensitivity label, referenced resources, DLP policy/rule/action, direction.
+Fields not in the API are honestly marked with `field(NOT_EXPOSED_BY_API)`.
 
-GİZLİLİK: Raw prompt/response içeriği STORE_RAW_AI_CONTENT=true DEĞİLSE ASLA saklanmaz.
-Portal scraping / undocumented endpoint KULLANILMAZ.
+PRIVACY: Raw prompt/response content is NEVER stored unless STORE_RAW_AI_CONTENT=true.
+Portal scraping / undocumented endpoints are NOT used.
 """
 import os
 import time
 from datetime import datetime, timedelta, timezone
 
-from .base import (ApiUnavailable, BaseCollector, EntityType, LicenseMissing,
-                   PermissionMissing, Source)
+from .base import (ApiUnavailable, BaseCollector, EntityType, Source,
+                   classify_graph_error)
 from .model import NOT_EXPOSED_BY_API, field, make_asset, raw_reference
 
 DEFAULT_OPERATIONS = ["CopilotInteraction", "ConnectedAIAppInteraction", "AIAppInteraction"]
@@ -44,10 +44,10 @@ class PurviewAuditCollector(BaseCollector):
     def is_configured(self) -> bool:
         return os.environ.get("ENABLE_PURVIEW_AUDIT", "").lower() == "true"
 
-    # --- toplama (create → poll → records) ---
+    # --- collection (create → poll → records) ---
     def collect(self, since=None) -> list:
         if self._graph is None:
-            raise ApiUnavailable("Graph istemcisi yok")
+            raise ApiUnavailable("No Graph client")
         end = datetime.now(timezone.utc)
         start = since or (end - timedelta(days=self._days))
         body = {
@@ -63,7 +63,7 @@ class PurviewAuditCollector(BaseCollector):
             raise self._classify(e)
         qid = created.get("id")
         if not qid:
-            raise ApiUnavailable("audit query id dönmedi")
+            raise ApiUnavailable("audit query did not return an id")
 
         status = (created.get("status") or "").lower()
         attempts = 0
@@ -75,7 +75,7 @@ class PurviewAuditCollector(BaseCollector):
         if status in ("failed", "cancelled"):
             raise ApiUnavailable(f"audit query {status}")
         if status != "succeeded":
-            raise ApiUnavailable("audit query zaman aşımı (poll_max)")
+            raise ApiUnavailable("audit query timed out (poll_max)")
 
         try:
             return self._graph.get_all(f"{_QUERIES}/{qid}/records", {"$top": "999"})
@@ -84,14 +84,7 @@ class PurviewAuditCollector(BaseCollector):
 
     @staticmethod
     def _classify(err):
-        s = str(err).lower()
-        if "403" in s or "forbidden" in s or "authorization" in s:
-            return PermissionMissing(str(err)[:200])
-        if "license" in s or "quota" in s or "subscription" in s:
-            return LicenseMissing(str(err)[:200])
-        if "404" in s or "not found" in s or "notfound" in s or "400" in s:
-            return ApiUnavailable(str(err)[:200])
-        return err
+        return classify_graph_error(err)
 
     # --- normalize ---
     def normalize(self, raw_records: list) -> list:
@@ -125,7 +118,7 @@ class PurviewAuditCollector(BaseCollector):
             EntityType.SENSITIVE_INTERACTION,
             f"{op or 'AIInteraction'} — {upn or 'unknown'}",
             self.source,
-            external_ids={"purview_record_id": rec_id},   # benzersiz id; merge token DEĞİL
+            external_ids={"purview_record_id": rec_id},   # unique id; NOT a merge token
             first_seen=ts,
             last_seen=ts,
         )
@@ -136,10 +129,10 @@ class PurviewAuditCollector(BaseCollector):
             "user_id": user_id,
             "timestamp": ts,
             "app_host": app_host,
-            "app_id": app_id,                 # join alanı (external_id DEĞİL → merge etmez)
+            "app_id": app_id,                 # join field (NOT an external_id → doesn't merge)
             "workload": ad.get("Workload"),
             "sensitivity_label_id": label_id,
-            # audit kaydı label adını genelde vermez → dürüstçe işaretle:
+            # the audit record usually doesn't give the label name → mark it honestly:
             "sensitivity_label_name": field(NOT_EXPOSED_BY_API),
             "sensitive_info_types": sits,
             "referenced_resources": resources,
@@ -149,7 +142,7 @@ class PurviewAuditCollector(BaseCollector):
             "raw_content_stored": self._store_raw,
             "raw_reference": raw_reference(self.source, record_id=rec_id, operation=op),
         }
-        if self._store_raw:  # yalnızca açıkça izin verilirse
+        if self._store_raw:  # only if explicitly allowed
             asset["interaction"]["raw_content"] = {
                 "prompt": ad.get("Prompt") or ced.get("Prompt"),
                 "response": ad.get("Response") or ced.get("Response"),
@@ -161,7 +154,7 @@ class PurviewAuditCollector(BaseCollector):
                 "sensitive_interactions": self._count}
 
 
-# --- yardımcılar (defansif parse; şema varyantlarını dener) ---
+# --- helpers (defensive parsing; tries schema variants) ---
 def _iso(dt):
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
@@ -169,7 +162,7 @@ def _iso(dt):
 
 
 def _dlp(ad):
-    """DLP policy/rule/action + SIT'leri çıkarır. action: Block > Audit/Allow."""
+    """Extracts DLP policy/rule/action + SITs. action: Block > Audit/Allow."""
     policies, sits, action = [], [], None
     for pol in (ad.get("PolicyDetails") or ad.get("policyDetails") or []):
         pname = pol.get("PolicyName") or pol.get("policyName")
@@ -195,7 +188,7 @@ def _dlp(ad):
 
 
 def _sits(ad):
-    """DLP dışı SIT verisi (varsa)."""
+    """Non-DLP SIT data (if present)."""
     out = []
     for si in (ad.get("SensitiveInfoTypeData") or ad.get("sensitiveInfoTypeData") or []):
         n = si.get("SensitiveInformationTypeName") or si.get("Name") or si.get("name")
@@ -220,21 +213,21 @@ def _resources(ad, ced):
 
 
 def _direction(op, action, resources, sits):
-    """Kaba yön çıkarımı — kesin yön taksonomisi Adım 6'da netleşir."""
+    """Rough direction inference — the precise direction taxonomy is finalized in Step 6."""
     if action and "block" in str(action).lower():
         return "BLOCKED"
-    if action:                       # DLP eşleşti ama engellenmedi
+    if action:                       # DLP matched but wasn't blocked
         return "ALLOWED"
-    if resources:                    # kurumsal kaynağa erişerek grounding
+    if resources:                    # grounding by accessing a corporate resource
         return "ACCESSED"
-    if op and "AIApp" in str(op):    # dış AI app'ine veri
+    if op and "AIApp" in str(op):    # data sent to an external AI app
         return "SHARED"
     return "UNKNOWN_DIRECTION"
 
 
 def metrics(assets):
-    """Purview Audit dashboard metrikleri (SENSITIVE_INTERACTION listesinden)."""
-    # not: DSPM import de SENSITIVE_INTERACTION üretir; burada sadece audit kaynağı sayılır.
+    """Purview Audit dashboard metrics (from the SENSITIVE_INTERACTION list)."""
+    # note: DSPM import also produces SENSITIVE_INTERACTION; only the audit source is counted here.
     ix = [x for x in assets if x.get("interaction")
           and Source.PURVIEW_AUDIT in x.get("sources", [])]
 

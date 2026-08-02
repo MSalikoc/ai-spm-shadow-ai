@@ -4,15 +4,18 @@ __pycache__/
 .venv/
 venv/
 
-# Azure Functions / lokal
+# Azure Functions / local
 local.settings.json
 .python_packages/
 bin/
 obj/
 
-# Çıktılar
+# Outputs
 out/
 *.zip
 
-# Yerel test yardımcıları (yayınlanmaz)
+# Local test helpers (not published)
 demo.py
+
+# macOS
+.DS_Store

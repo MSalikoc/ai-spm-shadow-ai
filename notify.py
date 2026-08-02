@@ -1,13 +1,13 @@
 """
-Haftalık özet e-postası — Microsoft Graph sendMail (Managed Identity ile).
+Weekly digest email — Microsoft Graph sendMail (via Managed Identity).
 
-Gerekli app ayarları:
-  AISPM_MAIL_SENDER : gönderen mailbox (UPN/e-posta) — MI bu kutudan gönderir
-  AISPM_MAIL_TO     : alıcı(lar), virgülle ayrılmış
-  AISPM_REPORT_URL  : (opsiyonel) dashboard endpoint tam URL'i (buton için)
+Required app settings:
+  AISPM_MAIL_SENDER : sender mailbox (UPN/email) — MI sends from this mailbox
+  AISPM_MAIL_TO     : recipient(s), comma-separated
+  AISPM_REPORT_URL  : (optional) full dashboard endpoint URL (for the button)
 
-MI'ın Graph 'Mail.Send' application iznine sahip olması gerekir. Güvenlik için
-Exchange Application Access Policy ile yalnızca AISPM_MAIL_SENDER kutusuna kısıtla.
+The MI needs the Graph 'Mail.Send' application permission. For safety, restrict
+it to only AISPM_MAIL_SENDER via an Exchange Application Access Policy.
 """
 import base64
 import html
@@ -19,7 +19,7 @@ import requests
 import auth
 import report
 
-LEVEL_COLORS = {"Kritik": "#c0392b", "Yüksek": "#d35400", "Orta": "#b8860b", "Düşük": "#2e8b57"}
+LEVEL_COLORS = {"Critical": "#c0392b", "High": "#d35400", "Medium": "#b8860b", "Low": "#2e8b57"}
 
 
 def _shadow(scored):
@@ -27,8 +27,8 @@ def _shadow(scored):
 
 
 def _report_url():
-    """Dashboard linki. AISPM_REPORT_URL varsa (function-key içerebilir) olduğu gibi
-    kullanılır; yoksa WEBSITE_HOSTNAME'den türetilir."""
+    """Dashboard link. Uses AISPM_REPORT_URL as-is if set (may include a function
+    key); otherwise derives it from WEBSITE_HOSTNAME."""
     explicit = os.environ.get("AISPM_REPORT_URL")
     if explicit:
         return explicit
@@ -38,22 +38,22 @@ def _report_url():
 
 def _changes_block(changes):
     if not changes:
-        return ('<h3 style="margin:18px 0 8px;font-size:15px">Bu hafta</h3>'
+        return ('<h3 style="margin:18px 0 8px;font-size:15px">This week</h3>'
                 '<p style="font:14px Segoe UI,sans-serif;color:#5f6b7a">'
-                'Önceki taramaya göre değişiklik yok.</p>')
+                'No changes since the previous scan.</p>')
     import drift
     lines = drift.executive_summary(changes)
     items = "".join(f'<li style="margin:4px 0">{html.escape(l)}</li>' for l in lines) \
-        or f'<li>{len(changes)} değişiklik kaydedildi.</li>'
-    return (f'<h3 style="margin:18px 0 8px;font-size:15px">Bu hafta ({len(changes)} değişiklik)</h3>'
+        or f'<li>{len(changes)} changes recorded.</li>'
+    return (f'<h3 style="margin:18px 0 8px;font-size:15px">This week ({len(changes)} changes)</h3>'
             f'<ul style="font:14px Segoe UI,sans-serif;color:#1a1a1a;padding-left:18px">{items}</ul>')
 
 
 def _digest_html(scored, tenant_id, report_url, changes=None):
     shadow = sorted(_shadow(scored), key=lambda a: a["risk_score"], reverse=True)
-    crit = sum(1 for a in shadow if a["risk_level"] == "Kritik")
-    high = sum(1 for a in shadow if a["risk_level"] == "Yüksek")
-    notable = [a for a in shadow if a["risk_level"] in ("Kritik", "Yüksek")][:10]
+    crit = sum(1 for a in shadow if a["risk_level"] == "Critical")
+    high = sum(1 for a in shadow if a["risk_level"] == "High")
+    notable = [a for a in shadow if a["risk_level"] in ("Critical", "High")][:10]
 
     def stat(n, label, color="#1a1a1a"):
         return (f'<td style="padding:10px 16px;text-align:center">'
@@ -76,32 +76,32 @@ def _digest_html(scored, tenant_id, report_url, changes=None):
             f'{reason}</td></tr>')
     if not rows:
         rows = ('<tr><td colspan="3" style="padding:14px;font:14px Segoe UI,sans-serif;'
-                'color:#2e8b57">Kritik/yüksek Shadow AI bulgusu yok. 👍</td></tr>')
+                'color:#2e8b57">No critical/high Shadow AI findings. 👍</td></tr>')
 
     button = ""
     if report_url:
         button = (
             f'<div style="margin:22px 0"><a href="{html.escape(report_url)}" '
             f'style="background:#0f6cbd;color:#fff;text-decoration:none;padding:11px 22px;'
-            f'border-radius:8px;font:600 14px Segoe UI,sans-serif">Dashboard\'u aç →</a></div>')
+            f'border-radius:8px;font:600 14px Segoe UI,sans-serif">Open Dashboard →</a></div>')
 
     return f"""
 <div style="max-width:640px;margin:0 auto;font-family:Segoe UI,sans-serif;color:#1a1a1a">
-  <h2 style="margin:0 0 4px">AI-SPM · Haftalık Shadow AI Özeti</h2>
+  <h2 style="margin:0 0 4px">AI-SPM · Weekly Shadow AI Digest</h2>
   <div style="color:#5f6b7a;font-size:13px;margin-bottom:16px">Tenant: {html.escape(tenant_id)}</div>
   <table style="border-collapse:collapse;background:#f7f9fb;border-radius:10px;margin-bottom:8px">
-    <tr>{stat(len(shadow), "Shadow AI")}{stat(crit, "Kritik", "#c0392b")}{stat(high, "Yüksek", "#d35400")}</tr>
+    <tr>{stat(len(shadow), "Shadow AI")}{stat(crit, "Critical", "#c0392b")}{stat(high, "High", "#d35400")}</tr>
   </table>
   {_changes_block(changes)}
   {button}
-  <h3 style="margin:18px 0 8px;font-size:15px">Dikkat gerektiren uygulamalar</h3>
+  <h3 style="margin:18px 0 8px;font-size:15px">Apps needing attention</h3>
   <table style="border-collapse:collapse;width:100%">{rows}</table>
   <p style="background:#eef4fb;border-radius:8px;padding:12px 14px;margin:20px 0 0;
      font:13px Segoe UI,sans-serif;color:#0f4c81">
-    📎 <b>Tam rapor ekte:</b> <code>shadow-ai-report.html</code> — tarayıcıda açarak
-    tüm bulguları, gerekçeleri ve öneri adımlarını interaktif dashboard'da görün.</p>
+    📎 <b>Full report attached:</b> <code>shadow-ai-report.html</code> — open it in a browser
+    to see all findings, reasons, and remediation steps in the interactive dashboard.</p>
   <p style="color:#8b98a6;font-size:12px;margin-top:16px">
-    AI-SPM · read-only Entra/Graph taraması. Bu e-posta otomatik oluşturuldu.</p>
+    AI-SPM · read-only Entra/Graph scan. This email was generated automatically.</p>
 </div>"""
 
 
@@ -109,17 +109,17 @@ def send_email_digest(scored, tenant_id, changes=None):
     sender = os.environ.get("AISPM_MAIL_SENDER")
     to = os.environ.get("AISPM_MAIL_TO")
     if not sender or not to:
-        return {"sent": False, "reason": "AISPM_MAIL_SENDER / AISPM_MAIL_TO tanımlı değil"}
+        return {"sent": False, "reason": "AISPM_MAIL_SENDER / AISPM_MAIL_TO not set"}
 
     recipients = [{"emailAddress": {"address": a.strip()}} for a in to.split(",") if a.strip()]
     shadow = _shadow(scored)
-    crit = sum(1 for a in shadow if a["risk_level"] == "Kritik")
+    crit = sum(1 for a in shadow if a["risk_level"] == "Critical")
     n_ch = len(changes or [])
-    subject = f"[AI-SPM] Haftalık özet — {n_ch} değişiklik, {len(shadow)} uygulama, {crit} kritik"
+    subject = f"[AI-SPM] Weekly digest — {n_ch} changes, {len(shadow)} apps, {crit} critical"
 
     body = _digest_html(scored, tenant_id, _report_url(), changes)
 
-    # Tam dashboard'u HTML eki olarak iliştir (okunurluk için)
+    # Attach the full dashboard as an HTML attachment (readability)
     dashboard = report.html_string(scored, tenant_id)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
     attachment = {

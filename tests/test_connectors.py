@@ -1,4 +1,4 @@
-"""Adım 1 — connector framework + birleşik model + korelasyon testleri (offline)."""
+"""Step 1 — connector framework + unified model + correlation tests (offline)."""
 import json
 import os
 
@@ -70,22 +70,22 @@ class FailingCollector(BaseCollector):
 # --- Testler ----------------------------------------------------------------
 def test_same_model_correlation_and_failure_isolation():
     res = registry.run([MockAgent365(), MockEntraAgentId(), MockDefender(), FailingCollector()])
-    # Kabul: connector hatası scan'i durdurmuyor
+    # Acceptance: a connector error doesn't stop the scan
     assert res["health"]["boom"]["status"] == ConnectorStatus.ERROR
     assert res["health"]["agent365"]["status"] == ConnectorStatus.CONNECTED
     assert res["health"]["defender_cloud_apps"]["status"] == ConnectorStatus.CONNECTED
-    # Kabul: aynı agent iki kaynaktan → tek asset
+    # Acceptance: same agent from two sources → one asset
     agents = [a for a in res["assets"] if a["asset_type"] == "AI_AGENT"]
     assert len(agents) == 1
     a = agents[0]
-    assert set(a["sources"]) == {"AGENT_365", "ENTRA_AGENT_ID"}      # her kaydın kaynağı görünür
+    assert set(a["sources"]) == {"AGENT_365", "ENTRA_AGENT_ID"}      # each record's source is visible
     assert a["correlation_confidence"] == 98                          # entra_app_id ile korele
-    assert a["external_ids"]["agent_identity_id"] == "OID-9"          # external id'ler birleşti
+    assert a["external_ids"]["agent_identity_id"] == "OID-9"          # external ids merged
     assert a["external_ids"]["agent365_package_id"] == "pkg-123"
     assert a["first_seen"] == "2026-06-15T00:00:00Z"                  # min
     assert a["last_seen"] == "2026-07-26T00:00:00Z"                   # max
     assert len(a["_correlated_from"]) == 2                            # izlenebilirlik
-    # Paylaşılan id'si olmayan uygulama ayrı kalır
+    # An application without a shared id stays separate
     apps = [x for x in res["assets"] if x["asset_type"] == "AI_APPLICATION"]
     assert len(apps) == 1 and apps[0]["sources"] == ["DEFENDER_CLOUD_APPS"]
 
@@ -96,7 +96,7 @@ def test_name_only_does_not_merge():
     b = model.make_asset(EntityType.AI_APPLICATION, "Claude", Source.DEFENDER_CLOUD_APPS,
                          external_ids={"mdca_app_id": "m-b"})
     merged = correlation.correlate([a, b])
-    assert len(merged) == 2   # aynı ad, güçlü ortak id yok → merge YOK
+    assert len(merged) == 2   # same name, no strong shared id → NO merge
 
 
 def test_publisher_domain_correlation_confidence():
@@ -127,7 +127,7 @@ def test_offline_fixture_correlation():
     with open(fx, encoding="utf-8") as f:
         data = json.load(f)
     merged = correlation.correlate(data)
-    assert len(merged) == 1                          # fixture'daki 2 kayıt tek asset
+    assert len(merged) == 1                          # the fixture's 2 records become one asset
     assert merged[0]["correlation_confidence"] == 98
     assert set(merged[0]["sources"]) == {"AGENT_365", "ENTRA_AGENT_ID"}
 
@@ -135,6 +135,6 @@ def test_offline_fixture_correlation():
 def test_deterministic_asset_id():
     a1 = model.make_asset(EntityType.AI_AGENT, "X", Source.AGENT_365,
                           external_ids={"entra_app_id": "APP-9"})
-    a2 = model.make_asset(EntityType.AI_AGENT, "Y farklı ad", Source.ENTRA_AGENT_ID,
+    a2 = model.make_asset(EntityType.AI_AGENT, "Y different name", Source.ENTRA_AGENT_ID,
                           external_ids={"entra_app_id": "APP-9"})
     assert a1["asset_id"] == a2["asset_id"] == "entra_app_id:APP-9"   # deterministic

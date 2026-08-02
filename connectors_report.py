@@ -1,49 +1,50 @@
 """
-Microsoft AI Data Sources — birleşik assessment/rapor (Adım 7).
+Microsoft AI Data Sources — unified assessment/report (Step 7).
 
-`report.py` (mevcut Entra/OAuth dashboard'u) HİÇ DEĞİŞTİRİLMEDİ; bu modül tamamen ayrı,
-standalone bir sayfa üretir (aynı CSS/tema diliyle — `report.CSS` içe aktarılır, kopyalanmaz;
-tab-switching JS deseni de report.py'den ilham alınarak — kopyalanarak, import edilmeden —
-yeniden kurulur). Girdi `pipeline.run_connectors()`'ın döndürdüğü sonuç sözlüğü
-(assets/coverage/health/counts/profiles/portfolio) — connector'lar env-flag ile kapalıysa
-bu modül hiç çağrılmaz.
+`report.py` (the existing Entra/OAuth dashboard) is NOT MODIFIED AT ALL; this module
+produces a completely separate, standalone page (in the same CSS/theme language —
+`report.CSS` is imported, not copied; the tab-switching JS pattern is also rebuilt here
+— inspired by report.py, copied not imported). Input is the result dict returned by
+`pipeline.run_connectors()` (assets/coverage/health/counts/profiles/portfolio) — if the
+connectors are disabled via env flag, this module is never called.
 
-15 bölüm (assessment(result) sözlük anahtarları):
- 1. executive            — portfolio özeti (apps_with_sensitive_data, affected_users, findings…)
- 2. data_source_coverage — 5 connector'ın health/permission/lisans durumu (dürüst, uydurma yok)
- 3. sensitive_exposure   — "Applications with Sensitive Data Exposure" tablosu (Adım 7 kabul kriteri)
- 4. agent_identities      — Entra Agent ID envanteri (owner/sponsor/perm ayrımı)
- 5. agent365_packages     — Agent 365 paket envanteri (build_type/blocked/scope)
- 6. shadow_ai_usage       — Defender/MDCA keşfedilen AI app'leri (sanctioned/upload/risk)
- 7. sensitive_interactions— Purview audit özet (blocked/allowed/SIT)
- 8. findings              — evaluate_findings çıktısı, önem sırasına göre
- 9. direction_analysis    — ACCESSED/SHARED/UPLOADED/GENERATED/BLOCKED/ALLOWED/UNKNOWN dağılımı
-10. correlation_quality   — confidence dağılımı + kaynak-başına uncorrelated sayaçları
-11. application_detail    — her app için "Sensitive Data" sekmesi içeriği (Adım 7 kabul kriteri)
-12. agent_detail          — her identity için "Data Access" sekmesi içeriği (owners/sponsors/perms)
-13. sit_distribution      — estate-geneli SIT/label dağılımı
-14. users_and_groups      — en çok etkilenen kullanıcılar + owner/sponsor'suz grup üyelikleri
-15. known_gaps            — API'de olmayan alanlar + bilinen korelasyon eksikleri (dürüst coverage)
+15 sections (assessment(result) dict keys):
+ 1. executive            — portfolio summary (apps_with_sensitive_data, affected_users, findings…)
+ 2. data_source_coverage — health/permission/license status of the 5 connectors (honest, no fabrication)
+ 3. sensitive_exposure   — "Applications with Sensitive Data Exposure" table (Step 7 acceptance criterion)
+ 4. agent_identities      — Entra Agent ID inventory (owner/sponsor/permission breakdown)
+ 5. agent365_packages     — Agent 365 package inventory (build_type/blocked/scope)
+ 6. shadow_ai_usage       — AI apps discovered by Defender/MDCA (sanctioned/upload/risk)
+ 7. sensitive_interactions— Purview audit summary (blocked/allowed/SIT)
+ 8. findings              — evaluate_findings output, ordered by importance
+ 9. direction_analysis    — ACCESSED/SHARED/UPLOADED/GENERATED/BLOCKED/ALLOWED/UNKNOWN breakdown
+10. correlation_quality   — confidence distribution + per-source uncorrelated counters
+11. application_detail    — "Sensitive Data" tab content per app (Step 7 acceptance criterion)
+12. agent_detail          — "Data Access" tab content per identity (owners/sponsors/perms)
+13. sit_distribution      — estate-wide SIT/label distribution
+14. users_and_groups      — most-affected users + group memberships without owner/sponsor
+15. known_gaps            — fields not in the API + known correlation gaps (honest coverage)
 
-HTML görünümü (html_string), Microsoft'un Zero Trust Assessment aracındaki desenle çok
-sayfalı bir dashboard kurar:
-  - Overview   : hero (tenant/KPI/bulgu donut) + akış diyagramları (Shadow AI ve Agent
-                 Identity için) + estate genelinde en yüksek skorlu 5 madde.
-  - Agents     : Agent 365 paketleri + Entra Agent Identities (assessment tablosu).
-  - Shadow AI  : Defender/MDCA keşfedilen uygulamalar (kullanıcı/cihaz/IP SAYILARI ile —
-                 bireysel kimlik listesi API'de yok, bkz. known_gaps).
-  - Sensitive Data: hassas veri exposure tablosu + Purview etkileşim log'u.
-  - Findings   : bulgular.
-  - Gaps       : bilinen eksikler / API sınırları.
-Her madde (agent/uygulama/bulgu) 0-100 ŞEFFAF RİSK SKORU alır — `scoring.py`'nin
-"toplanan puan + gerekçe" felsefesiyle aynı: her puan bileşeni "+N — sebep" olarak
-gösterilir, skor uydurulmaz. Satıra tıklayınca açılan panelde: facts → Risk Skoru +
-gerekçe listesi → Result → What was checked → Remediation action.
+The HTML view (html_string) builds a multi-page dashboard in the pattern of Microsoft's
+Zero Trust Assessment tool:
+  - Overview   : hero (tenant/KPI/finding donut) + flow diagrams (for Shadow AI and Agent
+                 Identity) + the top 5 highest-scored items estate-wide.
+  - Agents     : Agent 365 packages + Entra Agent Identities (assessment table).
+  - Shadow AI  : apps discovered by Defender/MDCA (with user/device/IP COUNTS —
+                 individual identity lists are not in the API, see known_gaps).
+  - Sensitive Data: sensitive data exposure table + Purview interaction log.
+  - Findings   : findings.
+  - Gaps       : known gaps / API limitations.
+Every item (agent/app/finding) gets a 0-100 TRANSPARENT RISK SCORE — same philosophy as
+`scoring.py`'s "additive score + reason chain": every score component is shown as
+"+N — reason", the score is never fabricated. Clicking a row opens a detail panel:
+facts → Risk Score + reason list → Result → What was checked → Remediation action.
 """
 import html
 import json
 from datetime import datetime, timezone
 
+import charts
 from connectors.agent365 import metrics as agent365_metrics
 from connectors.base import ConnectorStatus
 from connectors.defender_cloud_apps import metrics as mdca_metrics
@@ -56,19 +57,19 @@ _CONNECTOR_INFO = {
     "entra_agent_id": ("Microsoft Entra Agent ID", "Application.Read.All + Directory.Read.All"),
     "defender_cloud_apps": ("Defender for Cloud Apps (Shadow AI)", "CloudApp-Discovery.Read.All"),
     "purview_audit": ("Microsoft Purview Audit", "AuditLogsQuery.Read.All"),
-    # NOT: "purview_dspm_import" bilerek burada YOK — dashboard coverage listesinde
-    # gösterilmiyor. O bir gerçek connector değil, dosya-yolu tabanlı manuel bir
-    # import adaptörü (bkz. connectors/purview_dspm_import.py): kendi başına her zaman
-    # NOT_CONFIGURED görünür ve tek başına açılamaz (Kudu ile dosya yükleme gerektirir),
-    # bu yüzden ekranda kafa karıştırmaması için gizlendi. `PURVIEW_DSPM_IMPORT_PATH`
-    # env var'ı hâlâ çalışır — ileri seviye kullanıcılar için sessizce kullanılabilir
-    # kalıyor, sadece coverage/gaps listesinde satır olarak görünmüyor.
+    # NOTE: "purview_dspm_import" is deliberately NOT here — it isn't shown in the
+    # dashboard's coverage list. It isn't a real connector, it's a file-path-based
+    # manual import adapter (see connectors/purview_dspm_import.py): on its own it
+    # always shows NOT_CONFIGURED and can't be enabled by itself (requires a Kudu file
+    # upload), so it's hidden here to avoid confusion. The `PURVIEW_DSPM_IMPORT_PATH`
+    # env var still works — it remains usable silently for advanced users, it just
+    # doesn't appear as a row in the coverage/gaps list.
 }
 
 _SOURCE_LABEL = {
     "AGENT_365": "Agent 365", "ENTRA_AGENT_ID": "Entra Agent ID",
     "DEFENDER_CLOUD_APPS": "Defender for Cloud Apps", "PURVIEW_AUDIT": "Purview Audit",
-    "PURVIEW_DSPM_EXPORT": "Purview DSPM", "ENTRA_APPS": "Entra OAuth (klasik)",
+    "PURVIEW_DSPM_EXPORT": "Purview DSPM", "ENTRA_APPS": "Entra OAuth (classic)",
 }
 
 
@@ -82,20 +83,20 @@ def _fmt_names(names, limit=6) -> str:
         return "—"
     shown = names[:limit]
     rest = len(names) - len(shown)
-    return ", ".join(shown) + (f" (+{rest} daha)" if rest > 0 else "")
+    return ", ".join(shown) + (f" (+{rest} more)" if rest > 0 else "")
 
 
 def assessment(result: dict, now=None) -> dict:
     """
-    `pipeline.run_connectors()` çıktısından 15-bölümlü assessment sözlüğü üretir.
+    Produces the 15-section assessment dict from `pipeline.run_connectors()` output.
 
-    NOT: Korelasyon farklı kaynaklardan gelen asset'leri birleştirdiğinde, birleşik
-    asset'in `asset_type`'ı ilk üyeden (index sırasına göre) miras kalır — ör. Agent365
-    paketiyle aynı entra_app_id üzerinden korele olan bir Entra Agent Identity, birleşik
-    asset'te `asset_type=AI_AGENT` görünebilir ama `agent_identity` alt-dict'i hâlâ
-    taşınır. Bu yüzden burada (ve connector `metrics()` fonksiyonlarında olduğu gibi)
-    filtreleme `asset_type` eşitliğiyle DEĞİL, connector'a özel alt-dict anahtarının
-    varlığıyla yapılır.
+    NOTE: when correlation merges assets from different sources, the merged asset's
+    `asset_type` is inherited from the first member (by index order) — e.g. an Entra
+    Agent Identity correlated via the same entra_app_id as an Agent365 package may show
+    `asset_type=AI_AGENT` on the merged asset, but the `agent_identity` sub-dict is still
+    carried along. That's why filtering here (and in the connector `metrics()` functions)
+    is done by the PRESENCE of the connector-specific sub-dict key, NOT by `asset_type`
+    equality.
     """
     now = now or datetime.now(timezone.utc)
     assets = result.get("assets", [])
@@ -130,7 +131,7 @@ def assessment(result: dict, now=None) -> dict:
     }
 
 
-# ---------- bölüm oluşturucular ----------
+# ---------- section builders ----------
 def _executive(portfolio, health):
     connected = sum(1 for h in health.values() if h.get("status") == ConnectorStatus.CONNECTED)
     return {**portfolio, "connectors_connected": connected, "connectors_total": len(health)}
@@ -255,7 +256,7 @@ def _correlation_quality(assets):
 
 
 def _application_detail(profiles):
-    """Application Detail 'Sensitive Data' sekmesi içeriği (Adım 7 kabul kriteri)."""
+    """Content of the Application Detail 'Sensitive Data' tab (Step 7 acceptance criterion)."""
     return [{
         "app_key": p["app_key"], "display_name": p["display_name"],
         "matched_to_inventory": p["matched_to_inventory"],
@@ -268,7 +269,7 @@ def _application_detail(profiles):
 
 
 def _agent_detail(identities, blueprints):
-    """Agent Detail 'Data Access' sekmesi içeriği (owners/sponsors/perms/groups)."""
+    """Content of the Agent Detail 'Data Access' tab (owners/sponsors/perms/groups)."""
     bp_by_id = {b["asset_id"]: b for b in blueprints}
     rows = []
     for a in identities:
@@ -315,36 +316,39 @@ def _known_gaps(coverage):
     gaps = []
     for name, (label, _) in _CONNECTOR_INFO.items():
         if not coverage.get(name):
-            gaps.append(f"{label}: coverage verisi yok (connector hiç çalışmadı).")
+            gaps.append(f"{label}: no coverage data (connector never ran).")
         elif coverage[name].get("status") in (ConnectorStatus.NOT_CONFIGURED,):
-            gaps.append(f"{label}: bağlı değil — bu kaynağa ait envanter/hassaslık verisi YOK "
-                        f"(uydurma envanter üretilmedi, dürüstçe boş).")
-    gaps.append("Purview audit'te sensitivity_label_name API'de yok (field=NOT_EXPOSED_BY_API); "
-               "yalnızca label_id mevcut.")
-    gaps.append("MDCA upload hacmi tek başına 'hassas paylaşım' sayılmaz; Purview korelasyonu "
-               "yoksa data_sensitivity=UNDETERMINED_REQUIRES_PURVIEW kalır.")
-    gaps.append("agent_blueprint_id merge token'ı DEĞİL (relate-not-merge); aynı blueprint'ten "
-               "türeyen birden fazla identity ayrı asset olarak kalır.")
-    gaps.append("Defender for Cloud Apps (aggregatedAppsDetails) yalnızca kullanıcı/cihaz/IP "
-               "SAYISI verir — bireysel kullanıcı/cihaz/IP kimliği bu API'de YOK; bu yüzden "
-               "'hangi kullanıcı/cihaz' sorusu yalnızca Purview etkileşimleri (gerçek kullanıcı "
-               "kimliği taşır) üzerinden cevaplanabilir.")
+            gaps.append(f"{label}: not connected — there is NO inventory/sensitivity data for this "
+                        f"source (no fabricated inventory was generated; honestly empty).")
+    gaps.append("Purview audit's sensitivity_label_name is not exposed by the API "
+               "(field=NOT_EXPOSED_BY_API); only label_id is available.")
+    gaps.append("MDCA upload volume alone does not count as 'sensitive sharing'; without Purview "
+               "correlation, data_sensitivity stays UNDETERMINED_REQUIRES_PURVIEW.")
+    gaps.append("agent_blueprint_id is NOT a merge token (relate-not-merge); multiple identities "
+               "derived from the same blueprint remain separate assets.")
+    gaps.append("Defender for Cloud Apps (aggregatedAppsDetails) only returns user/device/IP "
+               "COUNTS — individual user/device/IP identity is NOT in this API; so the "
+               "'which user/device' question can only be answered via Purview interactions "
+               "(which carry real user identity).")
     return gaps
 
 
-# ---------- JSON çıktı ----------
+# ---------- JSON output ----------
 def json_string(result: dict, now=None) -> str:
     return json.dumps(assessment(result, now), ensure_ascii=False, indent=2, default=str)
 
 
-# ---------- ortak HTML yardımcıları ----------
-_SEV = {"high": "#c0392b", "medium": "#b8860b", "low": "#2e8b57", "info": "#6b7280"}
-_RISK_LABEL = {"high": "Yüksek", "medium": "Orta", "low": "Düşük", "info": "Bilgi"}
-_RISK_RANK = {"high": 3, "medium": 2, "low": 1, "info": 0}  # tablo sıralaması için
+# ---------- shared HTML helpers ----------
+# Risk tiers here are the same status scale as report.py's severity levels, one step
+# coarser: high/medium/low map onto Critical/Medium/Low, and info stays neutral ink.
+_SEV = {"high": charts.SEVERITY["Critical"], "medium": charts.SEVERITY["Medium"],
+        "low": charts.SEVERITY["Low"], "info": "#6b7280"}
+_RISK_LABEL = {"high": "High", "medium": "Medium", "low": "Low", "info": "Info"}
+_RISK_RANK = {"high": 3, "medium": 2, "low": 1, "info": 0}  # for table sorting
 
 
 def _risk_tier(score):
-    """Skor → risk kademesi. Tek doğruluk kaynağı: risk_label HER ZAMAN score'dan türetilir."""
+    """Score → risk tier. Single source of truth: risk_label is ALWAYS derived from score."""
     if score >= 70:
         return "high"
     if score >= 40:
@@ -368,7 +372,7 @@ def _status_color(status):
 def _coverage_html(rows):
     items = "".join(
         f'<li><span class="dot" style="background:{_status_color(r["status"])}"></span>'
-        f'<b>{_esc(r["label"])}</b> — {_esc(r["status"])} · {_esc(r["count"])} varlık '
+        f'<b>{_esc(r["label"])}</b> — {_esc(r["status"])} · {_esc(r["count"])} assets '
         f'· <span style="color:var(--muted)">{_esc(r["permission"])}</span></li>'
         for r in rows)
     return f'<ul class="conn">{items}</ul>'
@@ -393,62 +397,166 @@ def _interactions_table(sample):
         f'<td>{_esc(i.get("user"))}</td><td><span class="c-tag">{_esc(i.get("direction"))}</span></td>'
         f'<td>{_tags(i.get("sits") or [])}</td></tr>'
         for i in sample]
-    return _table(["Zaman", "Uygulama", "Kullanıcı", "Yön", "Veri türü"], trs,
-                 "Purview'da hassas etkileşim yok (veya kaynak bağlı değil).")
+    return _table(["Time", "Application", "User", "Direction", "Data type"], trs,
+                 "No sensitive interactions in Purview (or the source is not connected).")
 
 
-# ---------- klasik dashboard'un (report.py) görsel dilini yeniden kullanan yardımcılar ----------
-def _donut(segments, size=170, stroke=26, center_label="Bulgu"):
-    import math
-    total = sum(v for _, v, _ in segments) or 1
-    r = (size - stroke) / 2
-    cx = cy = size / 2
-    circ = 2 * math.pi * r
-    offset = 0.0
-    arcs = []
-    for _, value, color in segments:
-        if value <= 0:
-            continue
-        dash = circ * (value / total)
-        arcs.append(
-            f'<circle cx="{cx}" cy="{cy}" r="{r:.2f}" fill="none" stroke="{color}" '
-            f'stroke-width="{stroke}" stroke-dasharray="{dash:.2f} {circ - dash:.2f}" '
-            f'stroke-dashoffset="{-offset:.2f}" transform="rotate(-90 {cx} {cy})"/>')
-        offset += dash
-    return (
-        f'<svg viewBox="0 0 {size} {size}" width="{size}" height="{size}" role="img" class="donut">'
-        f'<circle cx="{cx}" cy="{cy}" r="{r:.2f}" fill="none" stroke="var(--track)" stroke-width="{stroke}"/>'
-        f'{"".join(arcs)}'
-        f'<text x="{cx}" y="{cy - 4}" text-anchor="middle" class="donut-num">{total}</text>'
-        f'<text x="{cx}" y="{cy + 16}" text-anchor="middle" class="donut-cap">{_esc(center_label)}</text>'
-        f'</svg>')
+# ---------- helpers reusing the classic dashboard's (report.py) visual language ----------
+def _donut(segments, size=170, stroke=26, center_label="Finding"):
+    return charts.donut(segments, center_label=center_label, size=size, stroke=stroke)
 
 
-def _bars(rows, maxv):
-    """rows: [(label, sublabel, value, color)] → report.py ile aynı bar-row deseni."""
-    maxv = maxv or 1
-    out = []
-    for label, sub, value, color in rows:
-        pct = max(3, round(100 * value / maxv))
-        out.append(
-            f'<div class="bar-row"><div class="bar-label">{_esc(label)}'
-            f'<span class="bar-sub">{_esc(sub)}</span></div>'
-            f'<div class="bar-track"><div class="bar-fill" style="width:{pct}%;'
-            f'background:{color}"></div></div>'
-            f'<div class="bar-val">{value}</div></div>')
-    return "".join(out) or '<div class="empty">Veri yok</div>'
+def _bars(rows, maxv=None):
+    """rows: [(label, sublabel, value, color)] → ranked horizontal bars."""
+    return charts.hbar(rows)
+
+
+# ---------- analytical charts over the correlated estate ----------
+# Kept short enough to survive the bar chart's label column without being clipped.
+_DIRECTION_LABEL = {
+    "BLOCKED": "Blocked by DLP", "ALLOWED": "Allowed despite DLP",
+    "ACCESSED": "Accessed org data", "SHARED": "Shared to AI app",
+    "UPLOADED": "Uploaded", "GENERATED": "Generated", "OBSERVED": "Observed",
+    "UNKNOWN_DIRECTION": "Direction unknown",
+}
+# Direction is an outcome scale, not a set of peer categories: DLP blocking sensitive
+# content is the good end, DLP matching it and allowing it through is the bad end, and
+# data leaving the tenant sits between. So it takes the status palette rather than
+# categorical slots — which also avoids putting a categorical green ("Uploaded") right
+# beside the status green ("Blocked"), where the two read as the same outcome.
+_DIRECTION_COLOR = {
+    "BLOCKED": charts.SEVERITY["Low"],
+    "OBSERVED": "#6b7280",
+    "GENERATED": "#6b7280",
+    "ACCESSED": charts.SEVERITY["Medium"],
+    "UPLOADED": charts.SEVERITY["High"],
+    "SHARED": charts.SEVERITY["High"],
+    "ALLOWED": charts.SEVERITY["Critical"],
+    "UNKNOWN_DIRECTION": "#6b7280",
+}
+
+
+def _direction_chart(directions: dict) -> str:
+    """
+    What actually happened to sensitive data, worst outcome first — so the row that
+    needs attention is the one at the top, rather than whichever happens to be largest.
+    """
+    order = ["ALLOWED", "SHARED", "UPLOADED", "ACCESSED", "GENERATED", "OBSERVED",
+             "UNKNOWN_DIRECTION", "BLOCKED"]
+    rank = {d: i for i, d in enumerate(order)}
+    rows = [(_DIRECTION_LABEL.get(d, d), "", n, _DIRECTION_COLOR.get(d, "#6b7280"))
+            for d, n in sorted(directions.items(), key=lambda kv: (rank.get(kv[0], 99), -kv[1]))
+            if n]
+    if not rows:
+        return '<div class="empty">No interaction directions recorded yet.</div>'
+    return charts.hbar(rows, unit=" interactions")
+
+
+def _sit_chart(sit_distribution: dict, top: int = 8) -> str:
+    """Which sensitive information types are actually reaching AI apps."""
+    # Sorted here rather than trusting the caller: the fold only means "the small ones"
+    # if the list is actually in descending order.
+    ranked = sorted(((k, v) for k, v in sit_distribution.items() if v and v > 0),
+                    key=lambda kv: -kv[1])
+    if not ranked:
+        return '<div class="empty">No sensitive information types detected.</div>'
+    items = [(name, n, charts.cat(i)) for i, (name, n) in enumerate(ranked[:top])]
+    tail = sum(n for _, n in ranked[top:])
+    if tail:
+        items.append((f"Other ({len(ranked) - top} types)", tail, charts.cat(top)))
+    return charts.treemap(items, height=200)
+
+
+def _shadow_traffic_chart(apps, top: int = 8) -> str:
+    """Upload volume by discovered app — where data is actually leaving."""
+    ranked = sorted((a for a in apps if a.get("uploaded_bytes")),
+                    key=lambda a: -a["uploaded_bytes"])[:top]
+    if not ranked:
+        return '<div class="empty">No upload volume reported by Defender for Cloud Apps.</div>'
+    rows = [(a.get("display_name") or "—", _fmt_bytes(a["uploaded_bytes"]),
+             round(a["uploaded_bytes"] / 1_048_576, 1),
+             charts.severity_color(_mdca_risk_level(a.get("risk_score"))))
+            for a in ranked]
+    return charts.hbar(rows, unit=" MB")
+
+
+def _mdca_risk_level(score) -> str:
+    """
+    MDCA scores run 0-10 where LOW means risky — the inverse of every other score on
+    these pages. Converting here keeps the inversion in one place.
+    """
+    if not isinstance(score, int):
+        return "Low"
+    return ("Critical" if score <= 3 else "High" if score <= 5
+            else "Medium" if score <= 7 else "Low")
+
+
+def _shadow_risk_scatter(apps) -> str:
+    """
+    Discovered Shadow AI by reach against risk, the same triage read as the core
+    dashboard so both pages are looked at the same way. Dot size is upload volume,
+    because a widely-used app that also uploads is the one to look at first.
+    """
+    pts = []
+    for a in apps:
+        score = a.get("risk_score")
+        risk_0_100 = (10 - score) * 10 if isinstance(score, int) else 50
+        pts.append((a.get("display_name") or "—", risk_0_100, a.get("users", 0) or 0,
+                    _mdca_risk_level(score),
+                    max(1, round((a.get("uploaded_bytes") or 0) / 1_048_576))))
+    return charts.risk_scatter(pts)
+
+
+def _analysis_cards(a: dict, shadow_apps) -> str:
+    """
+    The four charts that summarise the correlated estate. Each one is dropped rather
+    than drawn empty when its source connector has no data, so a tenant without Purview
+    does not get a page of blank frames.
+    """
+    cards = []
+    directions = a.get("direction_analysis") or {}
+    if any(directions.values()):
+        cards.append(
+            '<div class="card"><h3>What happened to sensitive data</h3>'
+            f'{_direction_chart(directions)}'
+            '<p class="c-note">Blocked is the good outcome. Allowed means DLP matched '
+            'sensitive content and let it through.</p></div>')
+
+    sits = a.get("sit_distribution") or {}
+    if any(sits.values()):
+        cards.append('<div class="card"><h3>Sensitive information types reaching AI</h3>'
+                     f'{_sit_chart(sits)}</div>')
+
+    if any(x.get("uploaded_bytes") for x in shadow_apps):
+        cards.append('<div class="card"><h3>Upload volume by application</h3>'
+                     f'{_shadow_traffic_chart(shadow_apps)}</div>')
+
+    if shadow_apps:
+        cards.append(
+            '<div class="card"><h3>Shadow AI: reach against risk</h3>'
+            f'{_shadow_risk_scatter(shadow_apps)}'
+            f'{charts.legend([(lv, charts.severity_color(lv), None) for lv in charts.SEVERITY_ORDER], show_values=False)}'
+            '<p class="c-note">Defender scores 0–10 with low meaning risky; shown here '
+            'inverted so higher is worse, matching every other score in AI-SPM. '
+            'Dot size is upload volume.</p></div>')
+
+    if not cards:
+        return ""
+    rows = "".join(f'<div class="grid cols-2" style="margin-top:16px">{"".join(pair)}</div>'
+                   for pair in (cards[i:i + 2] for i in range(0, len(cards), 2)))
+    return rows
 
 
 def _flow_diagram(columns, flows, width=520, height=210, node_w=10):
     """
-    Bağımlılıksız (D3 yok), el yapımı "akış" (Sankey-tarzı) diyagram — Microsoft'un
-    Zero Trust Assessment aracındaki boru-temalı grafiklerle aynı fikir.
-    columns: [[(node_id, label, color, value), ...], ...] — bitişik kolonlar arası akış olur.
-    flows: [(from_id, to_id, value), ...] — yalnızca bitişik kolonlar arası desteklenir.
+    Dependency-free (no D3), hand-built "flow" (Sankey-style) diagram — same idea as the
+    pipe-themed charts in Microsoft's Zero Trust Assessment tool.
+    columns: [[(node_id, label, color, value), ...], ...] — flow occurs between adjacent columns.
+    flows: [(from_id, to_id, value), ...] — only adjacent columns are supported.
     """
     n_cols = len(columns)
     if n_cols < 2 or not any(columns):
-        return '<div class="empty">Veri yok</div>'
+        return '<div class="empty">No data</div>'
     col_gap = (width - node_w * n_cols) / max(1, n_cols - 1)
     pad_y, gap_between = 10, 6
     usable_h = height - 2 * pad_y
@@ -505,7 +613,7 @@ def _flow_diagram(columns, flows, width=520, height=210, node_w=10):
     return "".join(svg)
 
 
-# Gerçek Microsoft logosu (4 renkli kare) — inline SVG, harici kaynağa bağımlılık yok.
+# Real Microsoft logo (4-color square) — inline SVG, no external dependency.
 _MS_LOGO_SVG = """<svg width="21" height="21" viewBox="0 0 21 21" xmlns="http://www.w3.org/2000/svg">
 <rect x="1" y="1" width="9" height="9" fill="#F25022"/>
 <rect x="11" y="1" width="9" height="9" fill="#7FBA00"/>
@@ -515,12 +623,13 @@ _MS_LOGO_SVG = """<svg width="21" height="21" viewBox="0 0 21 21" xmlns="http://
 
 
 # ==================================================================================
-# "Assessment results" bileşeni — Microsoft Zero Trust Assessment aracındaki desen:
-# filtrelenebilir/aranabilir tablo (Ad | Risk | Status) + satıra tıklayınca açılan
-# yan panel (facts → Risk Skoru+gerekçe → Result → What was checked → Remediation).
-# Skor 0-100, `scoring.py`'nin "toplanan puan + gerekçe" felsefesiyle: her puan
-# bileşeni ayrı bir gerekçe cümlesiyle gelir, risk_label HER ZAMAN score'dan türetilir
-# (bkz. _risk_tier) — "45 diyorsa neye göre 45?" sorusunun cevabı panelde satır satır.
+# "Assessment results" component — the pattern from Microsoft's Zero Trust Assessment
+# tool: a filterable/searchable table (Name | Risk | Status) + a side panel that opens
+# on row click (facts → Risk Score+reasons → Result → What was checked → Remediation).
+# Score 0-100, following `scoring.py`'s "additive score + reason chain" philosophy: each
+# score component comes with its own reason sentence, risk_label is ALWAYS derived from
+# score (see _risk_tier) — the answer to "it says 45, based on what?" is spelled out line
+# by line in the panel.
 # ==================================================================================
 def _item(item_id, name, score, reasons, status_label, status_color,
          facts, result_line, what_checked, remediation, bucket=None):
@@ -541,65 +650,65 @@ def _agent365_items(packages):
     items = []
     for idx, p in enumerate(packages):
         name = p["display_name"]
-        build_type = p["build_type"] or "bilinmiyor"
-        deployed_to, available_to = p["deployed_to"] or "belirsiz", p["available_to"] or "belirsiz"
+        build_type = p["build_type"] or "unknown"
+        deployed_to, available_to = p["deployed_to"] or "unclear", p["available_to"] or "unclear"
         available_all = available_to.strip().lower() in ("everyone", "all", "alltenant", "organization")
         correlated = bool(p.get("entra_app_id"))
 
         reasons = []
         if p["blocked"]:
             score = 5
-            reasons.append((5, "Paket şu anda engellenmiş — aktif kullanılamıyor"))
-            status_label, status_c, result_line = "Blocked", _SEV["high"], "Paket engellenmiş durumda."
+            reasons.append((5, "Package is currently blocked — cannot be used actively"))
+            status_label, status_c, result_line = "Blocked", _SEV["high"], "Package is blocked."
         else:
             score = 0
             if available_all:
                 score += 35
-                reasons.append((35, "Deployment kapsamı 'everyone' — tüm organizasyona açık"))
+                reasons.append((35, "Deployment scope is 'everyone' — open to the entire organization"))
             if not correlated:
                 score += 30
-                reasons.append((30, "Entra Agent ID ile korele değil — kimlik/izin görünürlüğü yok"))
+                reasons.append((30, "Not correlated with Entra Agent ID — no identity/permission visibility"))
             if build_type == "custom":
                 score += 20
-                reasons.append((20, "Custom (özel geliştirilmiş) build — daha az denetimden geçmiş olabilir"))
+                reasons.append((20, "Custom (in-house built) build — may have had less review"))
             if not reasons:
-                reasons.append((0, "Belirgin bir risk sinyali yok"))
+                reasons.append((0, "No notable risk signal"))
             if available_all and not correlated:
                 status_label, status_c = "Investigate", _SEV["medium"]
-                result_line = "Herkese açık ve Entra kimliğiyle korele değil."
+                result_line = "Open to everyone and not correlated with an Entra identity."
             elif available_all:
                 status_label, status_c = "Investigate", _SEV["medium"]
-                result_line = "Herkese açık dağıtım."
+                result_line = "Open deployment."
             else:
                 status_label, status_c = "Passed", _SEV["low"]
-                result_line = "Kapsamı sınırlı, ek risk sinyali yok."
+                result_line = "Scope is limited, no additional risk signal."
 
         what_checked = (
-            f"{name}, Agent 365 kataloğunda kayıtlı bir {build_type} pakettir. "
-            f"{deployed_to} kapsamına deploy edilmiş ve {available_to} kullanıcılara açık. "
-            + ("Paket şu anda engellenmiş durumda. " if p["blocked"] else "Paket aktif ve engellenmemiş. ")
-            + (f"Entra uygulaması ile korele: {p['entra_app_id']}."
-               if correlated else "Herhangi bir Entra uygulamasıyla korele değil.")
+            f"{name} is a {build_type} package registered in the Agent 365 catalog. "
+            f"It is deployed to {deployed_to} scope and available to {available_to} users. "
+            + ("The package is currently blocked. " if p["blocked"] else "The package is active and not blocked. ")
+            + (f"Correlated with Entra application: {p['entra_app_id']}."
+               if correlated else "Not correlated with any Entra application.")
         )
         remediation = []
         if not p["blocked"] and available_all and not correlated:
-            remediation += ["Paketin kime açık olduğunu (deployment scope) daraltın.",
-                          "Entra Agent ID ile korelasyon için ilgili appId'yi doğrulayın."]
+            remediation += ["Narrow the deployment scope (who the package is available to).",
+                          "Verify the relevant appId for correlation with Entra Agent ID."]
         elif not p["blocked"] and available_all:
-            remediation.append("Dağıtım kapsamının iş gerekliliğiyle örtüştüğünü doğrulayın.")
+            remediation.append("Verify the deployment scope matches an actual business need.")
         elif p["blocked"]:
-            remediation.append("Engelleme nedenini yayıncı/sorumlu ekiple doğrulayın; gerekmiyorsa kaldırmayın.")
+            remediation.append("Verify the reason for blocking with the publisher/responsible team; don't remove it unless necessary.")
         else:
-            remediation.append("Ek aksiyon gerekmiyor; periyodik olarak gözden geçirin.")
+            remediation.append("No further action needed; review periodically.")
 
         facts = [("Build Type", build_type), ("Deployment", deployed_to),
-                ("Entra Korelasyonu", "Var" if correlated else "Yok"),
-                ("Kaynaklar", _sources_label(p.get("sources"))),
-                ("Korelasyon Güveni",
+                ("Entra Correlation", "Yes" if correlated else "No"),
+                ("Sources", _sources_label(p.get("sources"))),
+                ("Correlation Confidence",
                  f"{p['correlation_confidence']}/100" if p.get("correlation_confidence") is not None else "—")]
         items.append(_item(f"agent365-{idx}", name, score, reasons, status_label, status_c,
                           facts, result_line, what_checked, remediation,
-                          bucket="Blocked" if p["blocked"] else ("Everyone" if available_all else "Sınırlı")))
+                          bucket="Blocked" if p["blocked"] else ("Everyone" if available_all else "Limited")))
     return items
 
 
@@ -609,62 +718,62 @@ def _identity_items(identities):
         name = i["display_name"]
         has_owner, has_sponsor = bool(i["owners"]), bool(i["sponsors"])
         perm_type = ("app-only + delegated" if i["app_only_perms"] and i["delegated_perms"]
-                    else "yalnızca app-only" if i["app_only_perms"]
-                    else "yalnızca delegated" if i["delegated_perms"] else "izin yok")
+                    else "app-only only" if i["app_only_perms"]
+                    else "delegated only" if i["delegated_perms"] else "no permissions")
 
         reasons = []
         if not i["enabled"]:
             score = 5
-            reasons.append((5, "Devre dışı (disabled) — aktif erişim riski yok"))
-            status_label, status_c, result_line = "Disabled", _SEV["info"], "Devre dışı — aktif risk yok."
+            reasons.append((5, "Disabled — no active access risk"))
+            status_label, status_c, result_line = "Disabled", _SEV["info"], "Disabled — no active risk."
             bucket = "Disabled"
         else:
             score = 0
             if not has_owner:
                 score += 35
-                reasons.append((35, "Owner atanmamış"))
+                reasons.append((35, "No owner assigned"))
             if not has_sponsor:
                 score += 20
-                reasons.append((20, "Sponsor atanmamış"))
+                reasons.append((20, "No sponsor assigned"))
             if i["app_only_perms"] > 0:
                 score += 15
-                reasons.append((15, f"{i['app_only_perms']} app-only (kullanıcısız) izin var"))
+                reasons.append((15, f"{i['app_only_perms']} app-only (unattended) permissions"))
             if not i.get("blueprint_id"):
                 score += 10
-                reasons.append((10, "Herhangi bir blueprint'e bağlı değil"))
+                reasons.append((10, "Not linked to any blueprint"))
             if not reasons:
-                reasons.append((0, "Owner/sponsor/blueprint ataması tam"))
+                reasons.append((0, "Owner/sponsor/blueprint assignment complete"))
             if has_owner and has_sponsor:
-                status_label, status_c, result_line = "Passed", _SEV["low"], "Owner ve sponsor atanmış."
+                status_label, status_c, result_line = "Passed", _SEV["low"], "Owner and sponsor assigned."
             elif has_owner or has_sponsor:
-                status_label, status_c, result_line = "Investigate", _SEV["medium"], "Owner veya sponsor eksik."
+                status_label, status_c, result_line = "Investigate", _SEV["medium"], "Owner or sponsor missing."
             else:
-                status_label, status_c, result_line = "Failed", _SEV["high"], "Owner ve sponsor atanmamış."
-            bucket = "Tam" if (has_owner and has_sponsor) else ("Kısmi" if (has_owner or has_sponsor) else "Yok")
+                status_label, status_c, result_line = "Failed", _SEV["high"], "Owner and sponsor not assigned."
+            bucket = "Full" if (has_owner and has_sponsor) else ("Partial" if (has_owner or has_sponsor) else "None")
 
         app_only_names = _fmt_names(i.get("app_only_perm_names"))
         delegated_names = _fmt_names(i.get("delegated_perm_names"))
         what_checked = (
-            f"{name} " + ("etkin (enabled) durumda. " if i["enabled"] else "devre dışı (disabled) durumda. ")
-            + f"Owner: {', '.join(i['owners']) if has_owner else 'atanmamış'}. "
-            + f"Sponsor: {', '.join(i['sponsors']) if has_sponsor else 'atanmamış'}. "
-            + f"{i['app_only_perms']} app-only ({app_only_names}) ve {i['delegated_perms']} delegated "
-              f"({delegated_names}) izne sahip ({perm_type}). "
-            + (f"Blueprint: {i['blueprint_id']}." if i.get("blueprint_id") else "Herhangi bir blueprint'e bağlı değil.")
-            + f" Kaynaklar: {_sources_label(i.get('sources'))}."
+            f"{name} is " + ("enabled. " if i["enabled"] else "disabled. ")
+            + f"Owner: {', '.join(i['owners']) if has_owner else 'none assigned'}. "
+            + f"Sponsor: {', '.join(i['sponsors']) if has_sponsor else 'none assigned'}. "
+            + f"Has {i['app_only_perms']} app-only ({app_only_names}) and {i['delegated_perms']} delegated "
+              f"({delegated_names}) permissions ({perm_type}). "
+            + (f"Blueprint: {i['blueprint_id']}." if i.get("blueprint_id") else "Not linked to any blueprint.")
+            + f" Sources: {_sources_label(i.get('sources'))}."
         )
         remediation = []
         if i["enabled"] and not has_owner:
-            remediation.append("Bu agent identity'sine bir owner atayın — hesap verebilirlik için gereklidir.")
+            remediation.append("Assign an owner to this agent identity — required for accountability.")
         if i["enabled"] and not has_sponsor:
-            remediation.append("Bir sponsor atayın (özellikle app-only izinleri varsa).")
+            remediation.append("Assign a sponsor (especially if it has app-only permissions).")
         if not remediation:
-            remediation.append("Ek aksiyon gerekmiyor.")
+            remediation.append("No further action needed.")
 
         facts = [("Owner", ", ".join(i["owners"]) or "—"), ("Sponsor", ", ".join(i["sponsors"]) or "—"),
-                ("App-only İzinler", app_only_names), ("Delegated İzinler", delegated_names),
-                ("Kaynaklar", _sources_label(i.get("sources"))),
-                ("Korelasyon Güveni",
+                ("App-only Permissions", app_only_names), ("Delegated Permissions", delegated_names),
+                ("Sources", _sources_label(i.get("sources"))),
+                ("Correlation Confidence",
                  f"{i['correlation_confidence']}/100" if i.get("correlation_confidence") is not None else "—")]
         items.append(_item(f"identity-{idx}", name, score, reasons, status_label, status_c,
                           facts, result_line, what_checked, remediation, bucket=bucket))
@@ -681,62 +790,62 @@ def _shadow_items(apps, tenant_id=""):
         score = 0
         if state == "unsanctioned":
             score += 45
-            reasons.append((45, "Onaysız (unsanctioned) uygulama"))
+            reasons.append((45, "Unsanctioned application"))
         elif state == "unreviewed":
             score += 25
-            reasons.append((25, "Henüz gözden geçirilmedi (unreviewed)"))
+            reasons.append((25, "Not yet reviewed (unreviewed)"))
         elif state == "sanctioned":
-            reasons.append((0, "Kurumsal onaylı (sanctioned)"))
+            reasons.append((0, "Organizationally sanctioned"))
         else:
             score += 10
-            reasons.append((10, "Onay durumu bilinmiyor"))
+            reasons.append((10, "Sanction status unknown"))
         if isinstance(a.get("risk_score"), int):
             mdca_pts = round((10 - a["risk_score"]) / 10 * 25)
             if mdca_pts:
                 score += mdca_pts
-                reasons.append((mdca_pts, f"MDCA risk skoru {a['risk_score']}/10 (düşük skor = yüksek risk)"))
+                reasons.append((mdca_pts, f"MDCA risk score {a['risk_score']}/10 (lower score = higher risk)"))
         if a["users"] >= 20:
             score += 15
-            reasons.append((15, f"{a['users']} kullanıcı bu uygulamayı kullanıyor (geniş yayılım)"))
+            reasons.append((15, f"{a['users']} users are using this application (wide spread)"))
         elif a["users"] >= 5:
             score += 8
-            reasons.append((8, f"{a['users']} kullanıcı bu uygulamayı kullanıyor"))
+            reasons.append((8, f"{a['users']} users are using this application"))
         if a["uploaded_bytes"] >= 1_000_000:
             score += 10
-            reasons.append((10, f"{a['uploaded_bytes']:,} bayt veri yüklendi (30g)"))
+            reasons.append((10, f"{a['uploaded_bytes']:,} bytes uploaded (30d)"))
 
-        result_line = {"unsanctioned": "Onaysız uygulama.", "sanctioned": "Kurumsal onaylı.",
-                      "unreviewed": "Henüz gözden geçirilmedi."}.get(state, "Onay durumu belirsiz.")
+        result_line = {"unsanctioned": "Unsanctioned application.", "sanctioned": "Organizationally sanctioned.",
+                      "unreviewed": "Not yet reviewed."}.get(state, "Sanction status unclear.")
         status_label, status_c = {
             "unsanctioned": ("Unsanctioned", _SEV["high"]), "unreviewed": ("Unreviewed", _SEV["medium"]),
             "sanctioned": ("Sanctioned", _SEV["low"]),
         }.get(state, ("Unreviewed", _SEV["info"]))
 
         what_checked = (
-            f"{name}, Defender for Cloud Apps tarafından son 30 günde {a['users']} kullanıcı, "
-            f"{a['devices']} cihaz ve {a['ip_addresses']} farklı IP adresinden gelen trafikle keşfedildi: "
-            f"{a.get('transactions', 0):,} işlem, {a['uploaded_bytes']:,} bayt upload, "
-            f"{a.get('downloaded_bytes', 0):,} bayt download. Onay durumu: {state or 'bilinmiyor'}. "
-            + (f"MDCA risk skoru: {a['risk_score']}/10. " if a.get("risk_score") is not None else "")
-            + f"Hassaslık durumu: {a.get('data_sensitivity') or 'bilinmiyor'} "
-              "— Purview korelasyonu olmadan kesinleşmez. Not: bu sayılar TOPLAM'dır; MDCA "
-              "aggregatedAppsDetails API'si bireysel kullanıcı/cihaz/IP kimliği vermez."
+            f"{name} was discovered by Defender for Cloud Apps over the last 30 days with traffic "
+            f"from {a['users']} users, {a['devices']} devices, and {a['ip_addresses']} distinct IP "
+            f"addresses: {a.get('transactions', 0):,} transactions, {a['uploaded_bytes']:,} bytes "
+            f"uploaded, {a.get('downloaded_bytes', 0):,} bytes downloaded. Sanction status: {state or 'unknown'}. "
+            + (f"MDCA risk score: {a['risk_score']}/10. " if a.get("risk_score") is not None else "")
+            + f"Sensitivity status: {a.get('data_sensitivity') or 'unknown'} "
+              "— not conclusive without Purview correlation. Note: these numbers are TOTALS; the MDCA "
+              "aggregatedAppsDetails API does not provide individual user/device/IP identity."
         )
         remediation = []
         if state == "unsanctioned":
-            remediation += ["Uygulamayı Defender for Cloud Apps'te sanctioned veya blocked olarak işaretleyin.",
-                          "Kullanıcıları onaylı bir alternatife yönlendirin."]
+            remediation += ["Mark the application as sanctioned or blocked in Defender for Cloud Apps.",
+                          "Redirect users to an approved alternative."]
         elif state == "unreviewed":
-            remediation.append("Uygulamayı gözden geçirip sanctioned/unsanctioned olarak sınıflandırın.")
+            remediation.append("Review the application and classify it as sanctioned/unsanctioned.")
         else:
-            remediation.append("Ek aksiyon gerekmiyor; periyodik olarak trafiği izlemeye devam edin.")
+            remediation.append("No further action needed; continue monitoring traffic periodically.")
 
-        facts = [("Kullanıcı (30g)", a["users"]), ("Cihaz (30g)", a["devices"]),
-                ("IP Adresi (30g)", a["ip_addresses"])]
+        facts = [("Users (30d)", a["users"]), ("Devices (30d)", a["devices"]),
+                ("IP Addresses (30d)", a["ip_addresses"])]
         it = _item(f"shadow-{idx}", name, score, reasons, status_label, status_c,
-                  facts, result_line, what_checked, remediation, bucket=state or "Bilinmiyor")
-        # Defender for Cloud Apps "Discovered apps" grid ile aynı sütunlar (Risk score/Tag/
-        # Traffic/Upload/Transactions/Users/IP addresses/Devices/Last seen) için ham veri.
+                  facts, result_line, what_checked, remediation, bucket=state or "Unknown")
+        # Raw data for the same columns as Defender for Cloud Apps' "Discovered apps" grid
+        # (Risk score/Tag/Traffic/Upload/Transactions/Users/IP addresses/Devices/Last seen).
         it["traffic"] = {
             "vendor": a.get("vendor") or "", "category": a.get("category") or "",
             "sanctioned_state": state, "risk_score": a.get("risk_score"),
@@ -755,47 +864,47 @@ def _exposure_items(rows):
     for idx, p in enumerate(rows):
         s = p["sensitive_data_summary"]
         name = p["display_name"]
-        dirs = ", ".join(f"{k}:{v}" for k, v in p["directions"].items() if v) or "yok"
+        dirs = ", ".join(f"{k}:{v}" for k, v in p["directions"].items() if v) or "none"
 
         reasons = []
         score = 0
         if s["allowed"] > 0:
             score += 50
-            reasons.append((50, f"{s['allowed']} hassas etkileşim DLP'ye rağmen izin verildi"))
+            reasons.append((50, f"{s['allowed']} sensitive interactions were allowed despite DLP"))
         if s["blocked"] > 0:
             score += 10
-            reasons.append((10, f"{s['blocked']} hassas etkileşim engellendi (pozitif kontrol)"))
+            reasons.append((10, f"{s['blocked']} sensitive interactions were blocked (positive control)"))
         sit_pts = min(len(s["sit_types"]) * 8, 24)
         if sit_pts:
             score += sit_pts
-            reasons.append((sit_pts, f"{len(s['sit_types'])} farklı hassas veri türü: {', '.join(s['sit_types'])}"))
+            reasons.append((sit_pts, f"{len(s['sit_types'])} distinct sensitive data types: {', '.join(s['sit_types'])}"))
         user_pts = min(p["affected_user_count"] * 3, 15)
         if user_pts:
             score += user_pts
-            reasons.append((user_pts, f"{p['affected_user_count']} kullanıcı etkilendi"))
+            reasons.append((user_pts, f"{p['affected_user_count']} users affected"))
         if p.get("sanctioned_state") == "unsanctioned":
             score += 15
-            reasons.append((15, "Onaysız (unsanctioned) uygulama"))
+            reasons.append((15, "Unsanctioned application"))
         if not reasons:
-            reasons.append((0, "Belirgin bir risk sinyali yok"))
+            reasons.append((0, "No notable risk signal"))
 
         if s["allowed"] > 0:
-            status_label, status_c, result_line = "Failed", _SEV["high"], "DLP eşleşti ama izin verildi — inceleme gerekli."
+            status_label, status_c, result_line = "Failed", _SEV["high"], "DLP matched but access was allowed — needs review."
         elif s["blocked"] > 0:
-            status_label, status_c, result_line = "Passed", _SEV["low"], "Tüm hassas etkileşimler engellendi."
+            status_label, status_c, result_line = "Passed", _SEV["low"], "All sensitive interactions were blocked."
         else:
-            status_label, status_c, result_line = "Investigate", _SEV["medium"], "Erişim var ama DLP eşleşmesi/engeli yok."
+            status_label, status_c, result_line = "Investigate", _SEV["medium"], "Access exists but no DLP match/block occurred."
 
         what_checked = (
-            f"{name} son 30 günde {s['window_30d']['sensitive']}/{s['window_30d']['interactions']} "
-            f"hassas etkileşime sahip, {p['affected_user_count']} kullanıcıyı etkiliyor. "
-            f"Veri türleri: {', '.join(s['sit_types']) or 'yok'}. Yön dağılımı: {dirs}. "
-            f"{s['blocked']} engellendi, {s['allowed']} izin verildi."
+            f"{name} had {s['window_30d']['sensitive']}/{s['window_30d']['interactions']} "
+            f"sensitive interactions in the last 30 days, affecting {p['affected_user_count']} users. "
+            f"Data types: {', '.join(s['sit_types']) or 'none'}. Direction breakdown: {dirs}. "
+            f"{s['blocked']} blocked, {s['allowed']} allowed."
         )
-        remediation = [f["detail"] for f in p["findings"]] or ["Ek aksiyon gerekmiyor."]
-        facts = [("Etkilenen Kullanıcı", p["affected_user_count"]),
-                ("Hassas Etkileşim (30g)", s["window_30d"]["sensitive"]),
-                ("Veri Türü Sayısı", len(s["sit_types"]))]
+        remediation = [f["detail"] for f in p["findings"]] or ["No further action needed."]
+        facts = [("Affected Users", p["affected_user_count"]),
+                ("Sensitive Interactions (30d)", s["window_30d"]["sensitive"]),
+                ("Data Type Count", len(s["sit_types"]))]
         items.append(_item(f"exposure-{idx}", name, score, reasons, status_label, status_c,
                           facts, result_line, what_checked, remediation))
     return items
@@ -803,20 +912,19 @@ def _exposure_items(rows):
 
 _FINDING_REMEDIATION = {
     "SENSITIVE_DATA_SHARED_WITH_UNSANCTIONED_AI":
-        "Bu uygulamayı Defender for Cloud Apps'te sanctioned veya blocked olarak işaretleyin; "
-        "DLP politikasını bu uygulamayı da kapsayacak şekilde genişletin; kullanıcıları onaylı "
-        "bir alternatife yönlendirin.",
+        "Mark this application as sanctioned or blocked in Defender for Cloud Apps; expand the "
+        "DLP policy to also cover this application; redirect users to an approved alternative.",
     "SENSITIVE_DATA_BLOCKED_TO_AI":
-        "Pozitif kontrol — DLP politikası çalışıyor. Ek aksiyon gerekmez; politika kapsamını "
-        "periyodik olarak gözden geçirin.",
+        "Positive control — the DLP policy is working. No further action needed; review policy "
+        "coverage periodically.",
     "AI_APP_ACCESSING_LABELED_DATA":
-        "Bu uygulamanın etiketli veriye erişiminin iş gerekliliği olup olmadığını doğrulayın; "
-        "gerekirse ek bir DLP politikası tanımlayın.",
+        "Verify whether this application's access to labeled data reflects an actual business "
+        "need; define an additional DLP policy if necessary.",
     "UNSANCTIONED_AI_UPLOAD_UNDETERMINED":
-        "Purview Audit/DSPM bağlantısını etkinleştirerek bu uygulamanın gerçek veri hassaslığını "
-        "belirleyin; bağlanana kadar upload hacmini izlemeye devam edin.",
+        "Enable the Purview Audit/DSPM connection to determine this application's real data "
+        "sensitivity; keep monitoring upload volume until it's connected.",
 }
-_DEFAULT_REMEDIATION = "Bulgu detayını inceleyip ilgili ekiple bir aksiyon planı oluşturun."
+_DEFAULT_REMEDIATION = "Review the finding detail and build an action plan with the relevant team."
 _FINDING_SCORE = {"high": 80, "medium": 50, "low": 25, "info": 10}
 
 
@@ -827,8 +935,8 @@ def _finding_items(findings):
         score = _FINDING_SCORE[sev]
         reasons = [(score, f["detail"])]
         status_label, status_c = ("Passed", _SEV["low"]) if sev == "info" else ("Failed", _SEV[sev])
-        facts = [("Uygulama", f.get("app") or "—"), ("Etkilenen Kullanıcı", f.get("affected_users", "—")),
-                ("Kaynak", "MDCA / Purview")]
+        facts = [("Application", f.get("app") or "—"), ("Affected Users", f.get("affected_users", "—")),
+                ("Source", "MDCA / Purview")]
         items.append(_item(
             f"finding-{idx}", f["type"].replace("_", " ").title(), score, reasons,
             status_label, status_c, facts, f["detail"], f["detail"],
@@ -846,7 +954,7 @@ def _fmt_bytes(n):
 
 
 def _mdca_risk_bar(score):
-    """Defender for Cloud Apps'teki risk skoru barının aynısı — 0-10, 10=güvenli (yeşil)."""
+    """Same as the risk score bar in Defender for Cloud Apps — 0-10, 10=safe (green)."""
     if score is None:
         return '<span style="color:var(--muted)">—</span>'
     color = "#2e8b57" if score >= 7 else ("#b8860b" if score >= 4 else "#c0392b")
@@ -875,16 +983,16 @@ def _zt_toolbar(section_id, items):
         f'<button class="zt-chip" data-scope="{section_id}" data-key="status" data-val="{_esc(s)}" '
         f'onclick="ztChip(this)">{_esc(s)}</button>' for s in statuses)
     return (f'<div class="zt-toolbar">'
-           f'<input class="zt-search" data-scope="{section_id}" placeholder="Ara..." oninput="ztSearch(this)">'
+           f'<input class="zt-search" data-scope="{section_id}" placeholder="Search..." oninput="ztSearch(this)">'
            f'<div class="zt-chips"><span class="zt-chip-label">Risk</span>{risk_chips}</div>'
            f'<div class="zt-chips"><span class="zt-chip-label">Status</span>{status_chips}</div>'
            f'</div>')
 
 
 def _shadow_traffic_section(section_id, title, subtitle, items, empty_msg):
-    """Defender for Cloud Apps'ın 'Discovered apps' grid'iyle aynı sütunlar: Risk score/Tag/
-    Traffic/Upload/Transactions/Users/IP addresses/Devices/Last seen. Satıra tıklamak yine
-    aynı assessment detay panelini (skor+gerekçe+remediation) açar."""
+    """Same columns as Defender for Cloud Apps' 'Discovered apps' grid: Risk score/Tag/
+    Traffic/Upload/Transactions/Users/IP addresses/Devices/Last seen. Clicking a row still
+    opens the same assessment detail panel (score+reasons+remediation)."""
     if not items:
         return (f'<div class="card" id="{section_id}"><h3>{_esc(title)}</h3>'
                f'<div class="empty">{_esc(empty_msg)}</div></div>')
@@ -903,7 +1011,7 @@ def _shadow_traffic_section(section_id, title, subtitle, items, empty_msg):
             f'<td data-sort="{_esc(it["name"]).lower()}"><div class="c-name">{_esc(it["name"])}</div>'
             f'<div style="font-size:11px;color:var(--muted)">{_esc(t["category"] or t["vendor"] or "—")}'
             + (f' &middot; <a href="{_esc(t["defender_url"])}" target="_blank" rel="noopener" '
-               f'onclick="event.stopPropagation()" style="color:var(--accent)">Defender\'da aç ↗</a>'
+               f'onclick="event.stopPropagation()" style="color:var(--accent)">Open in Defender ↗</a>'
                if t.get("defender_url") else "")
             + '</div></td>'
             f'<td data-sort="{t["risk_score"] if t["risk_score"] is not None else -1}">'
@@ -920,7 +1028,7 @@ def _shadow_traffic_section(section_id, title, subtitle, items, empty_msg):
             f'{_esc(last_seen)}</td>'
             f"</tr>")
 
-    headers = ["Uygulama", "Risk Score", "Tag", "Traffic", "Upload", "Transactions",
+    headers = ["Application", "Risk Score", "Tag", "Traffic", "Upload", "Transactions",
               "Users", "IP Addresses", "Devices", "Last Seen"]
     ths = "".join(f"<th>{_esc(h)}</th>" for h in headers)
     return f"""
@@ -957,7 +1065,7 @@ def _zt_section(section_id, title, subtitle, items, empty_msg):
 <div class="c-subtitle">{_esc(subtitle)}</div>
 {_zt_toolbar(section_id, items)}
 <div class="zt-tbl-wrap"><table class="zt-table">
-<thead><tr><th>Ad</th><th>Skor</th><th>Risk</th><th>Status</th></tr></thead>
+<thead><tr><th>Name</th><th>Score</th><th>Risk</th><th>Status</th></tr></thead>
 <tbody>{"".join(rows)}</tbody></table></div>
 </div>"""
 
@@ -965,7 +1073,7 @@ def _zt_section(section_id, title, subtitle, items, empty_msg):
 def _top_risks_html(all_items, n=5):
     top = sorted(all_items, key=lambda x: x["score"], reverse=True)[:n]
     if not top:
-        return '<div class="empty">Madde yok.</div>'
+        return '<div class="empty">No items.</div>'
     rows = "".join(
         f'<div class="zt-toprow" data-detail-ref="{it["id"]}">'
         f'<span class="zt-pill" style="--pc:{it["risk_color"]}">{it["score"]}</span>'
@@ -985,6 +1093,7 @@ table.c-tbl thead th{text-align:left;font-size:11px;text-transform:uppercase;col
 table.c-tbl tbody td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
 table.c-tbl tbody tr:last-child td{border-bottom:none}
 .c-name{font-weight:600}
+.c-note{font-size:12px;color:var(--muted);margin:12px 0 0;line-height:1.5}
 .c-num{font-variant-numeric:tabular-nums}
 .c-tag{display:inline-block;font-size:11px;background:var(--track);color:var(--ink);
  padding:1px 7px;border-radius:5px;margin:1px 3px 1px 0}
@@ -1155,7 +1264,7 @@ def _shadow_flow(shadow_items):
         risk_by_bucket.setdefault(b, {})
         risk_by_bucket[b][it["risk_key"]] = risk_by_bucket[b].get(it["risk_key"], 0) + 1
 
-    col1 = [("src", "Keşfedilen Uygulamalar", "#5f6b7a", len(shadow_items))]
+    col1 = [("src", "Discovered Applications", "#5f6b7a", len(shadow_items))]
     col2 = [(f"b:{b}", b, bucket_color.get(b, "#5f6b7a"), c) for b, c in buckets.items()]
     risk_totals = {}
     for rc in risk_by_bucket.values():
@@ -1173,7 +1282,7 @@ def _shadow_flow(shadow_items):
 def _identity_flow(identity_items):
     if not identity_items:
         return None
-    bucket_color = {"Tam": "#2e8b57", "Kısmi": "#b8860b", "Yok": "#c0392b", "Disabled": "#6b7280"}
+    bucket_color = {"Full": "#2e8b57", "Partial": "#b8860b", "None": "#c0392b", "Disabled": "#6b7280"}
     buckets, risk_by_bucket = {}, {}
     for it in identity_items:
         b = it["bucket"]
@@ -1201,27 +1310,27 @@ def html_string(result: dict, tenant_id: str = "", now=None) -> str:
     exec_ = a["executive"]
     sev = exec_.get("findings_by_severity", {})
     donut = _donut([
-        ("Yüksek", sev.get("high", 0), _SEV["high"]),
-        ("Orta", sev.get("medium", 0), _SEV["medium"]),
-        ("Düşük", sev.get("low", 0), _SEV["low"]),
-        ("Bilgi", sev.get("info", 0), _SEV["info"]),
-    ], center_label="Bulgu")
+        ("High", sev.get("high", 0), _SEV["high"]),
+        ("Medium", sev.get("medium", 0), _SEV["medium"]),
+        ("Low", sev.get("low", 0), _SEV["low"]),
+        ("Info", sev.get("info", 0), _SEV["info"]),
+    ], center_label="Finding")
     legend = "".join(
         f'<div><span class="dot" style="background:{_SEV[k]}"></span>{lbl} '
         f'<b style="margin-left:auto">{sev.get(k, 0)}</b></div>'
-        for k, lbl in (("high", "Yüksek"), ("medium", "Orta"), ("low", "Düşük"), ("info", "Bilgi")))
+        for k, lbl in (("high", "High"), ("medium", "Medium"), ("low", "Low"), ("info", "Info")))
 
     tiles = "".join([
         f'<div class="card tile{" high" if exec_.get("apps_with_sensitive_data") else ""}">'
         f'<span class="n">{_esc(exec_.get("apps_with_sensitive_data", 0))}</span>'
-        f'<span class="l">Hassas veri paylaşan app</span></div>',
+        f'<span class="l">Apps sharing sensitive data</span></div>',
         f'<div class="card tile"><span class="n">{_esc(exec_.get("total_affected_users", 0))}</span>'
-        f'<span class="l">Etkilenen kullanıcı</span></div>',
+        f'<span class="l">Affected users</span></div>',
         f'<div class="card tile"><span class="n">{_esc(exec_.get("total_blocked", 0))}</span>'
-        f'<span class="l">Engellenen (DLP)</span></div>',
+        f'<span class="l">Blocked (DLP)</span></div>',
         f'<div class="card tile{" high" if exec_.get("high_severity_findings") else ""}">'
         f'<span class="n">{_esc(exec_.get("high_severity_findings", 0))}</span>'
-        f'<span class="l">Yüksek önem bulgu</span></div>',
+        f'<span class="l">High severity findings</span></div>',
     ])
 
     nav = "".join(
@@ -1238,14 +1347,17 @@ def html_string(result: dict, tenant_id: str = "", now=None) -> str:
 
     quick = "".join([
         f'<a class="card kpi" data-goto="agents"><span class="n">{exec_["connectors_connected"]}/{exec_["connectors_total"]}</span>'
-        f'<span class="l">Bağlı veri kaynağı</span></a>',
+        f'<span class="l">Connected data sources</span></a>',
         f'<a class="card kpi" data-goto="agents"><span class="n">{len(agent365_items) + len(identity_items)}</span>'
         f'<span class="l">Agent (365 + Identity)</span></a>',
         f'<a class="card kpi" data-goto="shadow"><span class="n">{len(shadow_items)}</span>'
-        f'<span class="l">Shadow AI uygulaması</span></a>',
+        f'<span class="l">Shadow AI applications</span></a>',
         f'<a class="card kpi high" data-goto="sensitive"><span class="n">{len(exposure_items)}</span>'
-        f'<span class="l">Hassas veri exposure</span></a>',
+        f'<span class="l">Sensitive data exposure</span></a>',
     ])
+
+    shadow_apps = a["shadow_ai_usage"]["applications"]
+    analysis_cards = _analysis_cards(a, shadow_apps)
 
     shadow_flow = _shadow_flow(shadow_items)
     identity_flow = _identity_flow(identity_items)
@@ -1253,10 +1365,10 @@ def html_string(result: dict, tenant_id: str = "", now=None) -> str:
     if shadow_flow or identity_flow:
         cells = []
         if shadow_flow:
-            cells.append(f'<div class="card"><h3>Shadow AI: Onay Durumu → Risk Akışı</h3>'
+            cells.append(f'<div class="card"><h3>Shadow AI: Sanction Status → Risk Flow</h3>'
                         f'<div class="flow-wrap">{shadow_flow}</div></div>')
         if identity_flow:
-            cells.append(f'<div class="card"><h3>Agent Identity: Owner/Sponsor → Risk Akışı</h3>'
+            cells.append(f'<div class="card"><h3>Agent Identity: Owner/Sponsor → Risk Flow</h3>'
                         f'<div class="flow-wrap">{identity_flow}</div></div>')
         flow_cards = f'<div class="grid cols-2" style="margin-top:16px">{"".join(cells)}</div>'
 
@@ -1265,63 +1377,64 @@ def html_string(result: dict, tenant_id: str = "", now=None) -> str:
     overview = f"""
 <div class="hero">
   <div class="card">
-    <h3>Kaynak Durumu</h3>
+    <h3>Source Status</h3>
     <div class="tenant-facts">
       <b>Tenant</b><span>{_esc(tenant_id) or "—"}</span>
-      <b>Bağlı kaynak</b><span>{exec_["connectors_connected"]}/{exec_["connectors_total"]}</span>
-      <b>Eşleşen varlık</b><span>{_esc(exec_.get("matched_to_inventory", 0))}/{_esc(exec_.get("total_apps", 0))}</span>
-      <b>Üretildi</b><span>{_esc(a["_generated_at"])[:19].replace("T", " ")} UTC</span>
+      <b>Connected sources</b><span>{exec_["connectors_connected"]}/{exec_["connectors_total"]}</span>
+      <b>Matched assets</b><span>{_esc(exec_.get("matched_to_inventory", 0))}/{_esc(exec_.get("total_apps", 0))}</span>
+      <b>Generated</b><span>{_esc(a["_generated_at"])[:19].replace("T", " ")} UTC</span>
     </div>
   </div>
   <div class="tiles">{tiles}</div>
   <div class="card">
-    <h3>Bulgu Dağılımı</h3>
+    <h3>Finding Distribution</h3>
     <div class="summary">{donut}<div class="legend">{legend}</div></div>
   </div>
 </div>
 <div class="kpi-grid" style="margin-top:16px">{quick}</div>
+{analysis_cards}
 {flow_cards}
-<div class="card" style="margin-top:16px"><h3>En Yüksek Riskli 5 Madde (tüm kaynaklar)</h3>
+<div class="card" style="margin-top:16px"><h3>Top 5 Highest-Risk Items (all sources)</h3>
 {top_risks}</div>
-<div class="card" style="margin-top:16px"><h3>Veri Kaynağı Coverage</h3>
+<div class="card" style="margin-top:16px"><h3>Data Source Coverage</h3>
 {_coverage_html(a["data_source_coverage"])}</div>"""
 
     agents_tab = (
         _zt_section("identities", "Entra Agent Identities",
-                   "Owner/sponsor/izin ataması — skor: eksik atama arttıkça yükselir",
-                   identity_items, "Entra Agent Identity keşfedilmedi.")
-        + _zt_section("agent365", "Agent 365 Paketleri",
-                     "Deployment kapsamı ve Entra korelasyonu — skor: geniş kapsam + korelasyon eksikliği",
-                     agent365_items, "Agent 365 paketi keşfedilmedi."))
+                   "Owner/sponsor/permission assignment — score rises as assignments are missing",
+                   identity_items, "No Entra Agent Identity discovered.")
+        + _zt_section("agent365", "Agent 365 Packages",
+                     "Deployment scope and Entra correlation — score: wide scope + lack of correlation",
+                     agent365_items, "No Agent 365 package discovered."))
 
     shadow_tab = _shadow_traffic_section(
         "shadow", "Shadow AI — Discovered Apps",
-        "Defender for Cloud Apps 'Discovered apps' görünümüyle aynı sütunlar — "
-        "kullanıcı/cihaz/IP SAYILARI (bireysel kimlik listesi API'de yok — bkz. Gaps). "
-        "Satıra tıklayınca risk skoru + gerekçesi + remediation paneli açılır.",
-        shadow_items, "Shadow AI uygulaması keşfedilmedi (veya kaynak bağlı değil).")
+        "Same columns as Defender for Cloud Apps' 'Discovered apps' view — user/device/IP "
+        "COUNTS (individual identity lists are not in the API — see Gaps). "
+        "Click a row to open the risk score + reasons + remediation panel.",
+        shadow_items, "No Shadow AI application discovered (or the source is not connected).")
 
     sensitive_tab = (
         _zt_section("exposure", "Applications with Sensitive Data Exposure",
-                   "DLP sonucu (engellendi/izin verildi) ve veri türü çeşitliliği skoru belirler",
-                   exposure_items, "Hassas veri paylaşımı tespit edilmedi (veya kaynaklar bağlı değil).")
-        + f'<div class="card" style="margin-top:16px"><h3>Purview — Son Hassas Etkileşimler</h3>'
+                   "DLP outcome (blocked/allowed) and data-type diversity determine the score",
+                   exposure_items, "No sensitive data sharing detected (or the sources are not connected).")
+        + f'<div class="card" style="margin-top:16px"><h3>Purview — Recent Sensitive Interactions</h3>'
           f'{_interactions_table(a["sensitive_interactions"]["sample"])}</div>')
 
-    findings_tab = _zt_section("findings", "Bulgular",
-                              "Her bulgu bir başarısız (failed) assessment kontrolü olarak listelenir",
-                              finding_items, "Bulgu yok.")
+    findings_tab = _zt_section("findings", "Findings",
+                              "Each finding is listed as a failed assessment check",
+                              finding_items, "No findings.")
 
-    gaps_tab = (f'<div class="card"><h3>Bilinen Eksikler / API Sınırları</h3>'
+    gaps_tab = (f'<div class="card"><h3>Known Gaps / API Limitations</h3>'
               f'<ul class="na">{"".join(f"<li>{_esc(g)}</li>" for g in a["known_gaps"])}</ul></div>')
 
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <title>AI-SPM — Microsoft AI Data Sources Assessment</title>
-<style>{CSS}{_ZT_CSS}</style></head><body>
+<style>{CSS}{charts.CSS}{_ZT_CSS}</style></head><body>
 <header>{_MS_LOGO_SVG}<h1>AI-SPM</h1>
 <nav class="tabs">{nav}</nav>
 <div class="spacer"></div><div class="tenant">{_esc(tenant_id)}</div>
-<a id="coreDashboardLink" class="themebtn" href="#" style="display:inline-block;text-decoration:none;margin-left:10px" title="Core (OAuth-consent) dashboard'a git">&#8592; Core Dashboard</a>
+<a id="coreDashboardLink" class="themebtn" href="#" style="display:inline-block;text-decoration:none;margin-left:10px" title="Go to the Core (OAuth-consent) dashboard">&#8592; Core Dashboard</a>
 </header>
 <main>
 <section class="tab active" data-tab="overview">{overview}</section>
@@ -1334,14 +1447,14 @@ def html_string(result: dict, tenant_id: str = "", now=None) -> str:
 </main>
 
 <div class="zt-overlay" id="zt-overlay" onclick="ztClose()"></div>
-<aside class="zt-panel" id="zt-panel" role="dialog" aria-label="Detay">
-  <button class="zt-panel-close" onclick="ztClose()" aria-label="Kapat">&times;</button>
+<aside class="zt-panel" id="zt-panel" role="dialog" aria-label="Detail">
+  <button class="zt-panel-close" onclick="ztClose()" aria-label="Close">&times;</button>
   <h2 id="zt-title"></h2>
   <div class="zt-facts" id="zt-facts"></div>
-  <h4>Risk Skoru</h4>
+  <h4>Risk Score</h4>
   <div class="zt-score"><span class="zt-score-num" id="zt-score-num"></span>
   <div class="zt-score-bar"><div class="zt-score-fill" id="zt-score-fill"></div></div></div>
-  <h4>Neden bu skor?</h4>
+  <h4>Why this score?</h4>
   <ul id="zt-reasons"></ul>
   <div class="zt-result">
     <span>Test result →</span>

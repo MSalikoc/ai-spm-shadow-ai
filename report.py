@@ -1,29 +1,33 @@
-"""JSON + tek-dosya HTML dashboard (bağımlılıksız, light/dark)."""
+"""JSON + single-file HTML dashboard (no dependencies, light/dark)."""
 import html
 import json
 import math
 from datetime import datetime, timezone
 
+import charts
 from config import (SENSITIVE_SCOPES, SCOPE_HEURISTICS,
                     LIFECYCLE_STATUSES, CRITICALITY, ENVIRONMENTS,
                     AI_CATEGORIES, OWNERSHIP_CLASSES, FINDING_STATUSES)
 
-_SEV_COLOR = {"Critical": "#c0392b", "High": "#d35400", "Medium": "#b8860b", "Low": "#2e8b57"}
-_FSTATUS_COLOR = {"Open": "#c0392b", "Assigned": "#d35400", "In Progress": "#0f6cbd",
-                  "Pending Review": "#b8860b", "Resolved": "#2e8b57", "Accepted": "#4b5563",
-                  "False Positive": "#6b7280", "Reopened": "#c0392b"}
+# Severity is a status scale, so it uses the one validated status palette everywhere —
+# chips, rows, and charts alike. See charts.SEVERITY.
+_SEV_COLOR = dict(charts.SEVERITY)
+_FSTATUS_COLOR = {"Open": charts.SEVERITY["Critical"], "Assigned": charts.SEVERITY["High"],
+                  "In Progress": charts.CATEGORICAL_LIGHT[0],
+                  "Pending Review": charts.SEVERITY["Medium"],
+                  "Resolved": charts.SEVERITY["Low"], "Accepted": "#4b5563",
+                  "False Positive": "#6b7280", "Reopened": charts.SEVERITY["Critical"]}
 
-_LIFECYCLE_COLOR = {"Discovered": "#6b7280", "Under Review": "#b8860b", "Pilot": "#0f6cbd",
-                    "Approved": "#2e8b57", "Restricted": "#d35400", "Blocked": "#c0392b",
+_LIFECYCLE_COLOR = {"Discovered": "#6b7280", "Under Review": charts.SEVERITY["Medium"],
+                    "Pilot": charts.CATEGORICAL_LIGHT[0], "Approved": charts.SEVERITY["Low"],
+                    "Restricted": charts.SEVERITY["High"], "Blocked": charts.SEVERITY["Critical"],
                     "Retired": "#4b5563", "Unknown": "#6b7280"}
 
-_CAT_COLOR = {"Microsoft First-Party AI": "#0f6cbd", "Approved Enterprise AI": "#2e8b57",
-              "Unapproved Enterprise AI": "#d35400", "Third-Party Shadow AI": "#c0392b",
-              "Internal Custom AI": "#7c3aed", "Personal AI Usage": "#b8860b",
-              "Unknown AI": "#6b7280", "Retired AI": "#4b5563"}
+# Classification is identity, not severity — categorical slots, in fixed order so a
+# category keeps its color as counts change.
+_CAT_COLOR = {c: charts.cat(i) for i, c in enumerate(AI_CATEGORIES)}
 
-_IMP_COLOR = {"Critical": "#c0392b", "High": "#d35400", "Medium": "#b8860b",
-              "Low": "#2e8b57", "Info": "#6b7280"}
+_IMP_COLOR = {**charts.SEVERITY, "Info": "#6b7280"}
 
 
 def _finding_editor(rec):
@@ -35,7 +39,7 @@ def _finding_editor(rec):
         return f'<label>{label}<input name="{name}" value="{html.escape(val or "")}"></label>'
 
     return (
-        '<details class="editor"><summary>Finding düzenle</summary>'
+        '<details class="editor"><summary>Edit finding</summary>'
         f'<div class="fform" data-finding="{fid}">'
         f'<label>Status<select name="status">{opts}</select></label>'
         f'{fld("Owner", "owner", rec.get("owner"))}'
@@ -43,7 +47,7 @@ def _finding_editor(rec):
         f'<label>Due date<input name="due_date" type="date" value="{html.escape((rec.get("due_date") or "")[:10])}"></label>'
         f'{fld("Ticket ref", "ticket_reference", rec.get("ticket_reference"))}'
         f'<label>Resolution note<textarea name="resolution_note">{html.escape(rec.get("resolution_note", "") or "")}</textarea></label>'
-        '<button type="button" class="fsave">Kaydet</button><span class="mstatus"></span>'
+        '<button type="button" class="fsave">Save</button><span class="mstatus"></span>'
         '</div></details>')
 
 
@@ -60,7 +64,7 @@ def _finding_record_row(rec, now):
             if dd.tzinfo is None:
                 dd = dd.replace(tzinfo=timezone.utc)
             if dd < now:
-                od = ' <span style="color:#c0392b;font-weight:600">(gecikmiş)</span>'
+                od = ' <span style="color:#c0392b;font-weight:600">(overdue)</span>'
         except (ValueError, AttributeError):
             pass
     owner = html.escape(rec.get("owner") or "—")
@@ -74,12 +78,12 @@ def _finding_record_row(rec, now):
         f'<span class="f-meta">owner: {owner} · due: {html.escape(due) or "—"}{od}</span>'
         f'</summary>'
         f'<div class="f-body">'
-        f'<div class="f-col"><h4>Açıklama</h4><p>{html.escape(rec.get("description",""))}</p>'
-        f'<h4 style="margin-top:8px">İş etkisi</h4><p>{html.escape(rec.get("business_impact",""))}</p></div>'
-        f'<div class="f-col"><h4>Önerilen aksiyon</h4><p>{html.escape(rec.get("recommended_action",""))}</p>'
-        f'<h4 style="margin-top:8px">Kayıt</h4><ul>'
+        f'<div class="f-col"><h4>Description</h4><p>{html.escape(rec.get("description",""))}</p>'
+        f'<h4 style="margin-top:8px">Business impact</h4><p>{html.escape(rec.get("business_impact",""))}</p></div>'
+        f'<div class="f-col"><h4>Recommended action</h4><p>{html.escape(rec.get("recommended_action",""))}</p>'
+        f'<h4 style="margin-top:8px">Record</h4><ul>'
         f'<li>Finding ID: <code>{html.escape(rec.get("finding_id",""))}</code></li>'
-        f'<li>İlk görülme: {html.escape(rec.get("first_seen",""))} · Son: {html.escape(rec.get("last_seen",""))}</li>'
+        f'<li>First seen: {html.escape(rec.get("first_seen",""))} · Last: {html.escape(rec.get("last_seen",""))}</li>'
         f'<li>Ticket: {html.escape(rec.get("ticket_reference") or "—")}</li></ul></div>'
         f'<div class="f-col">{_finding_editor(rec)}</div>'
         f'</div></details>')
@@ -114,31 +118,31 @@ def _findings_section(findings):
     overdue_list = "".join(
         f'<li><b>{html.escape(f.get("title",""))}</b> — {html.escape(f.get("asset_name",""))} · '
         f'due {html.escape(f.get("due_date") or "")} · owner {html.escape(f.get("owner") or "—")}</li>'
-        for f in overdue) or '<li class="governed">Gecikmiş finding yok.</li>'
+        for f in overdue) or '<li class="governed">No overdue findings.</li>'
 
-    # owner bazında (açık)
+    # owner-based (open)
     owners = {}
     for f in active:
-        owners[f.get("owner") or "Atanmamış"] = owners.get(f.get("owner") or "Atanmamış", 0) + 1
+        owners[f.get("owner") or "Unassigned"] = owners.get(f.get("owner") or "Unassigned", 0) + 1
     owner_bars = _bars([(o, "", n, "#0f6cbd") for o, n in
                         sorted(owners.items(), key=lambda kv: -kv[1])[:8]],
                        max(owners.values(), default=1))
 
     rows = "".join(_finding_record_row(f, now) for f in active) or \
-        '<div class="empty">Açık finding yok. 👍</div>'
+        '<div class="empty">No open findings. 👍</div>'
     return f"""
-  <h3 style="margin:22px 4px 10px;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)">Findings — yönetilebilir kayıtlar</h3>
+  <h3 style="margin:22px 4px 10px;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)">Findings — manageable records</h3>
   <div class="grid cols-4">
-    <div class="card kpi crit"><span class="n">{open_n}</span><span class="l">Açık / yeniden açık</span></div>
-    <div class="card kpi med"><span class="n">{prog_n}</span><span class="l">İşlemde / review</span></div>
-    <div class="card kpi high"><span class="n">{len(overdue)}</span><span class="l">Gecikmiş (overdue)</span></div>
-    <div class="card kpi low"><span class="n">{resolved_n}</span><span class="l">Çözülmüş</span></div>
+    <div class="card kpi crit"><span class="n">{open_n}</span><span class="l">Open / reopened</span></div>
+    <div class="card kpi med"><span class="n">{prog_n}</span><span class="l">In progress / review</span></div>
+    <div class="card kpi high"><span class="n">{len(overdue)}</span><span class="l">Overdue</span></div>
+    <div class="card kpi low"><span class="n">{resolved_n}</span><span class="l">Resolved</span></div>
   </div>
   <div class="grid cols-2" style="margin-top:16px">
-    <div class="card"><h3>Gecikmiş finding'ler</h3><ul>{overdue_list}</ul></div>
-    <div class="card"><h3>Owner bazında açık finding</h3>{owner_bars}</div>
+    <div class="card"><h3>Overdue findings</h3><ul>{overdue_list}</ul></div>
+    <div class="card"><h3>Open findings by owner</h3>{owner_bars}</div>
   </div>
-  <div class="card" style="margin-top:16px"><h3>Açık finding'ler ({len(active)})</h3>
+  <div class="card" style="margin-top:16px"><h3>Open findings ({len(active)})</h3>
     <div class="findings">{rows}</div></div>
 """
 
@@ -159,7 +163,7 @@ def _executive_section(apps, changes, findings):
         (m["local_agents"], "Local AI Agents", "governance", "muted"),
         (m["mcp_servers"], "MCP Servers", "governance", "muted"),
         (m["ai_models"], "AI Models", "governance", "muted"),
-        (m["new_this_week"], "New Assets (7g)", "changes", ""),
+        (m["new_this_week"], "New Assets (7d)", "changes", ""),
         (m["unknown_assets"], "Unknown Assets", "apps", "crit"),
         (m["apps_without_owner"], "Apps w/o Owner", "governance", "high"),
         (m["agents_without_purpose"], "Agents w/o Purpose", "governance", "high"),
@@ -172,26 +176,26 @@ def _executive_section(apps, changes, findings):
         f'<span class="l">{html.escape(lbl)}</span></a>' for v, lbl, goto, cls in cards)
 
     na_html = "".join(f"<li>{html.escape(x)}</li>" for x in na) or \
-        "<li>Dikkat gerektiren belirgin bir durum yok.</li>"
+        "<li>Nothing significant needs attention.</li>"
     tc_html = "".join(
         f'<li><b>{html.escape(e.get("change_type",""))}</b> {html.escape(e.get("asset_name",""))} '
         f'— {html.escape(e.get("description",""))}</li>' for e in tc) or \
-        '<li class="governed">Bu dönem önemli değişiklik yok.</li>'
+        '<li class="governed">No significant changes this period.</li>'
 
     aa_bars = _bars([("Application", "", m["total_applications"], "#0f6cbd"),
                      ("Agent", "", m["total_agents"], "#7c3aed")],
                     max(m["total_applications"], m["total_agents"], 1))
     surf_bars = _bars([("Enterprise (admin-sanctioned)", "", surface["enterprise"], "#2e8b57"),
                        ("Web (user-consent)", "", surface["web"], "#b8860b"),
-                       ("Local (connector gerekli)", "", surface["local"], "#6b7280")],
+                       ("Local (connector required)", "", surface["local"], "#6b7280")],
                       max(surface["enterprise"], surface["web"], 1))
     return f"""
   <div class="kpi-grid">{kpi}</div>
   <div class="grid cols-2" style="margin-top:16px">
     <div class="card"><h3>Needs Attention</h3><ul class="na">{na_html}</ul></div>
-    <div class="card"><h3>En önemli 5 değişiklik</h3><ul>{tc_html}</ul></div>
+    <div class="card"><h3>Top 5 changes</h3><ul>{tc_html}</ul></div>
   </div>
-  <div class="card" style="margin-top:16px"><h3>Application vs Agent · kullanım yüzeyi</h3>
+  <div class="card" style="margin-top:16px"><h3>Application vs Agent · usage surface</h3>
     <div class="grid cols-2"><div>{aa_bars}</div><div>{surf_bars}</div></div></div>
 """
 
@@ -201,14 +205,14 @@ def _coverage_section(apps):
     cov = executive.coverage(apps)
     conn_html = "".join(
         f'<li><span class="dot" style="background:{"#2e8b57" if ok else "#c0392b"}"></span>'
-        f'{html.escape(name)} — {"bağlı" if ok else "<b>bağlı değil</b>"} '
+        f'{html.escape(name)} — {"connected" if ok else "<b>not connected</b>"} '
         f'<span class="governed">({html.escape(purpose)})</span></li>'
         for name, ok, purpose in cov["connectors"])
     own_bar = _bars([("Owner coverage", f"{cov['owner_coverage']}%", cov["owner_coverage"], "#0f6cbd"),
                      ("Agent purpose coverage", f"{cov['purpose_coverage']}%", cov["purpose_coverage"], "#7c3aed")],
                     100)
     return (f'<div class="card" style="margin-top:16px"><h3>Coverage Overview</h3>{own_bar}'
-            f'<h3 style="margin-top:14px">Veri kaynağı / connector durumu</h3>'
+            f'<h3 style="margin-top:14px">Data source / connector status</h3>'
             f'<ul class="conn">{conn_html}</ul></div>')
 
 
@@ -216,9 +220,9 @@ def _timeline_section(changes):
     if changes is None:
         return ""
     if not changes:
-        return ('<div class="card" style="margin-top:16px"><h3>Değişiklikler</h3>'
-                '<p class="governed">Önceki taramaya göre değişiklik yok '
-                '(ya da bu ilk taramadır — baseline).</p></div>')
+        return ('<div class="card" style="margin-top:16px"><h3>Changes</h3>'
+                '<p class="governed">No changes since the previous scan '
+                '(or this is the first scan — baseline).</p></div>')
     rows = ""
     for e in changes[:60]:
         imp = e.get("importance", "Info")
@@ -230,11 +234,11 @@ def _timeline_section(changes):
             f'<span class="tl-name">{html.escape(e.get("asset_name",""))}</span>'
             f'<span class="tl-desc">{html.escape(e.get("description",""))}</span>'
             f'<span class="tl-ts">{ts}</span></div>')
-    return (f'<div class="card" style="margin-top:16px"><h3>Değişiklikler — zaman çizelgesi '
+    return (f'<div class="card" style="margin-top:16px"><h3>Changes — timeline '
             f'({len(changes)})</h3><div class="timeline">{rows}</div></div>')
 
-LEVELS = ["Kritik", "Yüksek", "Orta", "Düşük"]
-LEVEL_COLORS = {"Kritik": "#c0392b", "Yüksek": "#d35400", "Orta": "#b8860b", "Düşük": "#2e8b57"}
+LEVELS = charts.SEVERITY_ORDER
+LEVEL_COLORS = _SEV_COLOR
 
 
 # ---------------------------------------------------------------- JSON
@@ -261,44 +265,123 @@ def _scope_weight(scope: str) -> int:
 
 def _donut(segments, size=180, stroke=28):
     """segments: [(label, value, color)] → SVG donut string."""
-    total = sum(v for _, v, _ in segments) or 1
-    r = (size - stroke) / 2
-    cx = cy = size / 2
-    circ = 2 * math.pi * r
-    offset = 0.0
-    arcs = []
-    for _, value, color in segments:
-        if value <= 0:
-            continue
-        dash = circ * (value / total)
-        arcs.append(
-            f'<circle cx="{cx}" cy="{cy}" r="{r:.2f}" fill="none" stroke="{color}" '
-            f'stroke-width="{stroke}" stroke-dasharray="{dash:.2f} {circ - dash:.2f}" '
-            f'stroke-dashoffset="{-offset:.2f}" transform="rotate(-90 {cx} {cy})"/>')
-        offset += dash
-    return (
-        f'<svg viewBox="0 0 {size} {size}" width="{size}" height="{size}" '
-        f'role="img" class="donut">'
-        f'<circle cx="{cx}" cy="{cy}" r="{r:.2f}" fill="none" stroke="var(--track)" '
-        f'stroke-width="{stroke}"/>{"".join(arcs)}'
-        f'<text x="{cx}" y="{cy - 4}" text-anchor="middle" class="donut-num">{total}</text>'
-        f'<text x="{cx}" y="{cy + 16}" text-anchor="middle" class="donut-cap">Shadow AI</text>'
-        f'</svg>')
+    return charts.donut(segments, center_label="Shadow AI", size=size, stroke=stroke)
 
 
-def _bars(rows, maxv):
-    """rows: [(label, sublabel, value, color)] → HTML bar list."""
-    maxv = maxv or 1
-    out = []
-    for label, sub, value, color in rows:
-        pct = max(3, round(100 * value / maxv))
-        out.append(
-            f'<div class="bar-row"><div class="bar-label">{html.escape(label)}'
-            f'<span class="bar-sub">{html.escape(sub)}</span></div>'
-            f'<div class="bar-track"><div class="bar-fill" style="width:{pct}%;'
-            f'background:{color}"></div></div>'
-            f'<div class="bar-val">{value}</div></div>')
-    return "".join(out) or '<div class="empty">Veri yok</div>'
+def _bars(rows, maxv=None):
+    """rows: [(label, sublabel, value, color)] → ranked horizontal bars."""
+    return charts.hbar(rows)
+
+
+_POSTURE_WEIGHTS = {"Critical": 14, "High": 7, "Medium": 2, "Low": 0.5,
+                    "admin_consent": 3, "app_only": 4}
+_POSTURE_SCALE = 120.0
+
+
+def _posture_points(shadow, counts) -> list[tuple[str, int, float]]:
+    """The (label, count, weight) rows the posture score is built from."""
+    admin = sum(1 for a in shadow if a.get("consent_type") == "AllPrincipals")
+    apponly = sum(1 for a in shadow
+                  if any(_scope_weight((p.get("permission") or "").lower()) >= 8
+                         for p in a.get("application_permissions", [])))
+    w = _POSTURE_WEIGHTS
+    return [("Critical findings", counts["Critical"], w["Critical"]),
+            ("High findings", counts["High"], w["High"]),
+            ("Medium findings", counts["Medium"], w["Medium"]),
+            ("Low findings", counts["Low"], w["Low"]),
+            ("Org-wide admin consent", admin, w["admin_consent"]),
+            ("High-privilege app-only", apponly, w["app_only"])]
+
+
+def _posture_score(shadow, counts) -> int:
+    """
+    One number for the tenant's AI exposure, 0 (clean) to 100 (severe).
+
+    Deliberately not an average of risk scores: twenty Low-risk apps should not dilute
+    two Criticals into a comfortable-looking number. Each severity band contributes a
+    fixed weight, and the total is put through a saturating curve rather than simply
+    clipped — a straight sum pins a mid-sized estate at exactly 100 and then stops
+    moving, so getting worse and getting better both look identical.
+    """
+    if not shadow:
+        return 0
+    raw = sum(n * w for _label, n, w in _posture_points(shadow, counts))
+    return round(100 * (1 - math.exp(-raw / _POSTURE_SCALE)))
+
+
+def _posture_breakdown(shadow, counts) -> str:
+    """Shows what the posture number is actually made of, so it isn't a black box."""
+    rows = _posture_points(shadow, counts)
+    items = "".join(
+        f'<li><span>{html.escape(label)}</span>'
+        f'<b>{n} &times; {w:g} = {n * w:g}</b></li>' for label, n, w in rows if n)
+    if not items:
+        return '<p class="governed">Nothing contributing to the score.</p>'
+    total = sum(n * w for _label, n, w in rows)
+    return (f'<ul class="posture-parts">{items}'
+            f'<li><span>Exposure points</span><b>{total:g}</b></li></ul>')
+
+
+def _triage_chart(shadow) -> str:
+    """Risk against blast radius — which finding to work on first."""
+    pts = [(a.get("display_name") or "—", a.get("risk_score", 0),
+            a.get("user_count", 0), a.get("risk_level", "Low"),
+            len(a.get("scopes", [])) + len(a.get("application_permissions", [])))
+           for a in shadow]
+    return charts.risk_scatter(pts)
+
+
+def _permission_heatmap(shadow, top_apps=8, top_perms=7) -> str:
+    """
+    Where sensitive access piles up: the riskiest apps against the permissions most
+    often granted to them, shaded by how sensitive each permission is.
+    """
+    counted = {}
+    for a in shadow:
+        for s in a.get("scopes", []):
+            if _scope_weight(s) >= 5:
+                counted[s] = counted.get(s, 0) + 1
+    perms = [p for p, _ in sorted(counted.items(),
+                                  key=lambda kv: (-kv[1], -_scope_weight(kv[0])))][:top_perms]
+    apps = [a for a in shadow if any(s in perms for s in a.get("scopes", []))][:top_apps]
+    if not apps or not perms:
+        return charts._empty("No overlapping sensitive permissions to chart")
+    values = [[_scope_weight(p) if p in set(a.get("scopes", [])) else 0 for p in perms]
+              for a in apps]
+    return charts.heatmap([a.get("display_name") or "—" for a in apps], perms, values,
+                          legend_title="Permission sensitivity")
+
+
+def _vendor_treemap(shadow, top=7) -> str:
+    """
+    Share of the estate by vendor.
+
+    A treemap only says something when a few vendors dominate. Estates where every
+    vendor has one or two apps are common, and there the folded "Other" tile becomes the
+    biggest thing on screen — which tells the reader nothing except that the form was
+    wrong. In that case this falls back to ranked bars, which read fine flat. Either
+    way the tail folds rather than generating a ninth hue.
+    """
+    by_vendor = {}
+    for a in shadow:
+        vendor = a.get("vendor") or "Unknown"
+        by_vendor[vendor] = by_vendor.get(vendor, 0) + 1
+    ranked = sorted(by_vendor.items(), key=lambda kv: -kv[1])
+    if not ranked:
+        return charts._empty("No applications to chart")
+
+    tail = sum(n for _, n in ranked[top:])
+    if tail > ranked[0][1]:
+        rows = [(v, f"{n} app{'s' if n != 1 else ''}", n, charts.cat(i))
+                for i, (v, n) in enumerate(ranked[:charts.CATEGORICAL_SLOTS])]
+        return charts.hbar(rows) + (
+            f'<p class="governed">{len(ranked)} vendors, none dominant — shown ranked '
+            f'rather than as shares.</p>' if len(ranked) > charts.CATEGORICAL_SLOTS else "")
+
+    items = [(v, n, charts.cat(i)) for i, (v, n) in enumerate(ranked[:top])]
+    if tail:
+        items.append((f"Other ({len(ranked) - top} vendors)", tail, charts.cat(top)))
+    return charts.treemap(items)
 
 
 def _perm_type(app):
@@ -316,10 +399,10 @@ def _perm_type(app):
 _PERM_CHIP = {"both": ("delegated + app-only", "#7c3aed"),
               "apponly": ("app-only", "#b45309"),
               "delegated": ("delegated", "#0f6cbd"),
-              "none": ("izin yok", "#6b7280")}
+              "none": ("no permissions", "#6b7280")}
 
-_USAGE_CHIP = {"active": ("aktif", "#2e8b57"), "inactive": ("30g+ pasif", "#b45309"),
-               "unused": ("hiç kullanılmamış", "#c0392b"), "unknown": ("aktivite yok", "#6b7280")}
+_USAGE_CHIP = {"active": ("active", "#2e8b57"), "inactive": ("inactive 30d+", "#b45309"),
+               "unused": ("never used", "#c0392b"), "unknown": ("no activity", "#6b7280")}
 
 
 def _usage_type(app):
@@ -344,45 +427,37 @@ def _days_ago(iso):
     return (datetime.now(timezone.utc) - dt).days
 
 
-def _trend_svg(values, width=680, height=84):
+def _trend_svg(values, width=680, height=150):
     if not values or max(values) == 0:
-        return '<div class="empty">Aktivite verisi yok (Entra ID P1 gerekir)</div>'
+        return '<div class="empty">No activity data (requires Entra ID P1)</div>'
     n = len(values)
-    maxv = max(values) or 1
-    dx = width / (n - 1) if n > 1 else width
-    pts = [(i * dx, height - (v / maxv) * (height - 16) - 8) for i, v in enumerate(values)]
-    line = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
-    area = f"0,{height} {line} {width},{height}"
-    lx, ly = pts[-1]
-    return (f'<svg viewBox="0 0 {width} {height}" width="100%" height="{height}" '
-            f'preserveAspectRatio="none" class="trend" role="img">'
-            f'<polygon points="{area}" fill="var(--accent)" opacity="0.12"/>'
-            f'<polyline points="{line}" fill="none" stroke="var(--accent)" stroke-width="2"/>'
-            f'<circle cx="{lx:.1f}" cy="{ly:.1f}" r="3.5" fill="var(--accent)"/></svg>')
+    labels = [f"{n - i} days ago" if i < n - 1 else "today" for i in range(n)]
+    return charts.timeseries(values, labels=labels, width=width, height=height,
+                             unit=" users")
 
 
 def _usage_block(app):
     u = app.get("usage")
     if not u or not u.get("available"):
-        return '<h4>Kullanım</h4><p class="f-pub">Aktivite verisi yok (Entra ID P1)</p>'
+        return '<h4>Usage</h4><p class="f-pub">No activity data (Entra ID P1)</p>'
     if u.get("never_used"):
-        last = "hiç kullanılmamış"
+        last = "never used"
     else:
         d = _days_ago(u.get("last_used_date"))
-        last = f"{d} gün önce" if d is not None else "—"
+        last = f"{d} days ago" if d is not None else "—"
     sp = ""
     if app.get("has_app_only_access") and u.get("last_service_principal_signin"):
         dsp = _days_ago(u["last_service_principal_signin"])
-        sp = f'<li>Son SP (app-only) sign-in: {dsp} gün önce</li>' if dsp is not None else ""
+        sp = f'<li>Last SP (app-only) sign-in: {dsp} days ago</li>' if dsp is not None else ""
     return (
-        '<h4>Kullanım</h4><ul>'
-        f'<li>Son kullanım: <b>{html.escape(last)}</b></li>'
-        f'<li>Aktif kullanıcı: {u.get("active_users_7d",0)} (7g) · '
-        f'{u.get("active_users_30d",0)} (30g) · {u.get("active_users_90d",0)} (90g)</li>'
-        f'<li>Consent: {u.get("consent_user_count",0)} kullanıcı</li>'
-        f'<li>Sign-in (30g): {u.get("successful_signins_30d",0)} başarılı / '
-        f'{u.get("failed_signins_30d",0)} başarısız</li>'
-        f'<li>{u.get("unique_ip_count",0)} IP · {u.get("country_count",0)} ülke</li>'
+        '<h4>Usage</h4><ul>'
+        f'<li>Last used: <b>{html.escape(last)}</b></li>'
+        f'<li>Active users: {u.get("active_users_7d",0)} (7d) · '
+        f'{u.get("active_users_30d",0)} (30d) · {u.get("active_users_90d",0)} (90d)</li>'
+        f'<li>Consent: {u.get("consent_user_count",0)} users</li>'
+        f'<li>Sign-ins (30d): {u.get("successful_signins_30d",0)} successful / '
+        f'{u.get("failed_signins_30d",0)} failed</li>'
+        f'<li>{u.get("unique_ip_count",0)} IP · {u.get("country_count",0)} countries</li>'
         f'{sp}</ul>')
 
 
@@ -418,18 +493,18 @@ def _governance_block(app):
     cred_exp = ti.get("credential_next_expiry")
     cred = f'{ti.get("credential_count", 0)} credential'
     if cred_exp:
-        cred += f' · en yakın bitiş {html.escape(cred_exp[:10])}'
+        cred += f' · nearest expiry {html.escape(cred_exp[:10])}'
     review = lc.get("next_review_date")
     return (
-        '<h4>Sahiplik & Lifecycle</h4><ul>'
-        f'<li>Teknik owner (SP): {sp_owners}</li>'
+        '<h4>Ownership & Lifecycle</h4><ul>'
+        f'<li>Technical owner (SP): {sp_owners}</li>'
         f'<li>Business owner: {val(own.get("business_owner"))}'
         f' · Technical: {val(own.get("technical_owner"))}</li>'
         f'<li>Sponsor: {val(own.get("sponsor"))}</li>'
-        f'<li>Birim: {val(bc.get("business_unit"))} · {val(bc.get("subsidiary"))}</li>'
-        f'<li>Amaç: {val(bc.get("purpose"))}</li>'
-        f'<li>Kritiklik: {val(bc.get("criticality"))} · Ortam: {val(bc.get("environment"))}</li>'
-        f'<li>Sonraki review: {val(review)}</li>'
+        f'<li>Business unit: {val(bc.get("business_unit"))} · {val(bc.get("subsidiary"))}</li>'
+        f'<li>Purpose: {val(bc.get("purpose"))}</li>'
+        f'<li>Criticality: {val(bc.get("criticality"))} · Environment: {val(bc.get("environment"))}</li>'
+        f'<li>Next review: {val(review)}</li>'
         f'<li>{cred}</li></ul>')
 
 
@@ -441,12 +516,12 @@ def _classification(app):
 def _classification_block(app):
     c = _classification(app)
     reasons = "".join(f"<li>{html.escape(r)}</li>" for r in c.get("reasons", []))
-    ov = ' · <b>manuel override</b>' if c.get("manual_override") else ""
+    ov = ' · <b>manual override</b>' if c.get("manual_override") else ""
     return (
-        '<h4>Sınıflandırma</h4><ul>'
-        f'<li>Kategori: <b>{html.escape(c.get("category", "Unknown AI"))}</b>{ov}</li>'
-        f'<li>Sahiplik: {html.escape(c.get("ownership", "Unknown"))} · Güven: {c.get("confidence", 0)}%</li>'
-        f'</ul><h4 style="margin-top:6px">Sınıflandırma nedeni</h4><ul>{reasons}</ul>')
+        '<h4>Classification</h4><ul>'
+        f'<li>Category: <b>{html.escape(c.get("category", "Unknown AI"))}</b>{ov}</li>'
+        f'<li>Ownership: {html.escape(c.get("ownership", "Unknown"))} · Confidence: {c.get("confidence", 0)}%</li>'
+        f'</ul><h4 style="margin-top:6px">Classification reason</h4><ul>{reasons}</ul>')
 
 
 def _editor_form(app):
@@ -463,22 +538,22 @@ def _editor_form(app):
 
     review = (lc.get("next_review_date") or "")[:10]
     return (
-        '<details class="editor"><summary>Metadata düzenle</summary>'
+        '<details class="editor"><summary>Edit metadata</summary>'
         f'<div class="mform" data-app="{html.escape(app.get("app_id", ""))}">'
-        f'<label>Sınıf (override)<select name="class_category">{opts([""] + AI_CATEGORIES, (app.get("classification_override") or {}).get("category") or "")}</select></label>'
-        f'<label>Sahiplik (override)<select name="class_ownership">{opts([""] + OWNERSHIP_CLASSES, (app.get("classification_override") or {}).get("ownership") or "")}</select></label>'
+        f'<label>Class (override)<select name="class_category">{opts([""] + AI_CATEGORIES, (app.get("classification_override") or {}).get("category") or "")}</select></label>'
+        f'<label>Ownership (override)<select name="class_ownership">{opts([""] + OWNERSHIP_CLASSES, (app.get("classification_override") or {}).get("ownership") or "")}</select></label>'
         f'<label>Lifecycle<select name="status">{opts(LIFECYCLE_STATUSES, _lifecycle_status(app))}</select></label>'
         f'{field("Business owner", "business_owner", own.get("business_owner"))}'
         f'{field("Technical owner", "technical_owner", own.get("technical_owner"))}'
         f'{field("Sponsor", "sponsor", own.get("sponsor"))}'
         f'{field("Business unit", "business_unit", bc.get("business_unit"))}'
         f'{field("Subsidiary", "subsidiary", bc.get("subsidiary"))}'
-        f'{field("Amaç", "purpose", bc.get("purpose"))}'
-        f'<label>Kritiklik<select name="criticality">{opts(CRITICALITY, bc.get("criticality") or "")}</select></label>'
-        f'<label>Ortam<select name="environment">{opts(ENVIRONMENTS, bc.get("environment") or "")}</select></label>'
-        f'<label>Sonraki review<input name="next_review_date" type="date" value="{html.escape(review)}"></label>'
-        f'<label>Notlar<textarea name="notes">{html.escape(app.get("notes", "") or "")}</textarea></label>'
-        '<button type="button" class="msave">Kaydet</button><span class="mstatus"></span>'
+        f'{field("Purpose", "purpose", bc.get("purpose"))}'
+        f'<label>Criticality<select name="criticality">{opts(CRITICALITY, bc.get("criticality") or "")}</select></label>'
+        f'<label>Environment<select name="environment">{opts(ENVIRONMENTS, bc.get("environment") or "")}</select></label>'
+        f'<label>Next review<input name="next_review_date" type="date" value="{html.escape(review)}"></label>'
+        f'<label>Notes<textarea name="notes">{html.escape(app.get("notes", "") or "")}</textarea></label>'
+        '<button type="button" class="msave">Save</button><span class="mstatus"></span>'
         '</div></details>')
 
 
@@ -487,9 +562,9 @@ def _finding_row(app):
     scopes = ", ".join(html.escape(s) for s in app.get("scopes", [])) or "—"
     reasons = "".join(f"<li>{html.escape(r)}</li>" for r in app.get("reasons", []))
     remed = "".join(f"<li>{html.escape(r)}</li>" for r in app.get("remediation", []))
-    consent = app.get("consent_type") or "consent yok"
-    tag = "3. parti" if app.get("third_party") else "iç/first-party"
-    ver = "✓ doğrulanmış" if app.get("verified_publisher") else "⚠ doğrulanmamış"
+    consent = app.get("consent_type") or "no consent"
+    tag = "3rd-party" if app.get("third_party") else "internal/first-party"
+    ver = "✓ verified" if app.get("verified_publisher") else "⚠ unverified"
     ptype = _perm_type(app)
     chip_label, chip_color = _PERM_CHIP[ptype]
     utype = _usage_type(app)
@@ -509,7 +584,7 @@ def _finding_row(app):
             f'<li><b>{html.escape(p.get("permission",""))}</b> '
             f'<span class="res">({html.escape(p.get("resource",""))})</span></li>'
             for p in app_perms)
-        app_block = (f'<h4>App-only izinler (kullanıcısız)</h4><ul class="apperms">{rows}</ul>')
+        app_block = (f'<h4>App-only permissions (unattended)</h4><ul class="apperms">{rows}</ul>')
     else:
         app_block = ""
 
@@ -524,17 +599,17 @@ def _finding_row(app):
         f'<span class="ptype" style="background:{chip_color}">{chip_label}</span>'
         f'<span class="ptype" style="background:{u_color}">{u_label}</span>'
         f'<span class="ptype" style="background:{lc_color}">{html.escape(status)}</span>'
-        f'<span class="f-meta">{tag} · {html.escape(consent)} · {app.get("user_count",0)} kullanıcı</span>'
+        f'<span class="f-meta">{tag} · {html.escape(consent)} · {app.get("user_count",0)} users</span>'
         f'<span class="f-level" style="color:{color}">{html.escape(app["risk_level"])}</span>'
         f'</summary>'
         f'<div class="f-body">'
         f'<div class="f-col">{_classification_block(app)}</div>'
-        f'<div class="f-col"><h4>Delegated izinler</h4><code>{scopes}</code>'
+        f'<div class="f-col"><h4>Delegated permissions</h4><code>{scopes}</code>'
         f'{app_block}<p class="f-pub">{ver}</p></div>'
         f'<div class="f-col">{_usage_block(app)}</div>'
         f'<div class="f-col">{_governance_block(app)}</div>'
-        f'<div class="f-col"><h4>Neden riskli</h4><ul>{reasons}</ul></div>'
-        f'<div class="f-col"><h4>Öneri</h4><ul>{remed}</ul></div>'
+        f'<div class="f-col"><h4>Why risky</h4><ul>{reasons}</ul></div>'
+        f'<div class="f-col"><h4>Remediation</h4><ul>{remed}</ul></div>'
         f'</div>{_editor_form(app)}</details>')
 
 
@@ -594,6 +669,10 @@ a.card:hover{border-color:var(--accent)}
 a.card .n{font-size:24px}
 .kpi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
 .na li{margin:5px 0}
+.posture-parts{list-style:none;margin:14px 0 0;padding:0;font-size:12px}
+.posture-parts li{display:flex;justify-content:space-between;gap:12px;padding:5px 0;
+ border-top:1px solid var(--line);color:var(--muted)}
+.posture-parts b{color:var(--ink);font-variant-numeric:tabular-nums}
 .conn{margin:8px 0 0;padding:0}
 .conn li{list-style:none;display:flex;align-items:center;gap:8px;font-size:13px;margin:5px 0}
 .summary{display:flex;gap:26px;align-items:center;flex-wrap:wrap}
@@ -703,14 +782,14 @@ document.querySelectorAll('.msave').forEach(function(btn){btn.onclick=function()
  var box=btn.closest('.mform'),app=box.getAttribute('data-app');
  function v(n){var e=box.querySelector('[name="'+n+'"]');return e?e.value:'';}
  var body={app_id:app,ownership:{business_owner:v('business_owner'),technical_owner:v('technical_owner'),sponsor:v('sponsor')},business_context:{business_unit:v('business_unit'),subsidiary:v('subsidiary'),purpose:v('purpose'),criticality:v('criticality'),environment:v('environment')},lifecycle:{status:v('status'),next_review_date:v('next_review_date')||null},classification:{category:v('class_category')||null,ownership:v('class_ownership')||null},notes:v('notes')};
- var st=box.querySelector('.mstatus');st.textContent='Kaydediliyor...';
- fetch('/api/metadata?code='+encodeURIComponent(code),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.ok?r.json():Promise.reject(r.status);}).then(function(){st.textContent='\\u2713 Kaydedildi (sonraki taramada islenir)';}).catch(function(e){st.textContent='Hata: '+e;});};});
+ var st=box.querySelector('.mstatus');st.textContent='Saving...';
+ fetch('/api/metadata?code='+encodeURIComponent(code),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.ok?r.json():Promise.reject(r.status);}).then(function(){st.textContent='\\u2713 Saved (applied on next scan)';}).catch(function(e){st.textContent='Error: '+e;});};});
 document.querySelectorAll('.fsave').forEach(function(btn){btn.onclick=function(){
  var box=btn.closest('.fform'),fid=box.getAttribute('data-finding');
  function v(n){var e=box.querySelector('[name="'+n+'"]');return e?e.value:'';}
  var body={finding_id:fid,status:v('status'),owner:v('owner'),responsible_team:v('responsible_team'),due_date:v('due_date')||null,ticket_reference:v('ticket_reference'),resolution_note:v('resolution_note')};
- var st=box.querySelector('.mstatus');st.textContent='Kaydediliyor...';
- fetch('/api/finding?code='+encodeURIComponent(code),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.ok?r.json():Promise.reject(r.status);}).then(function(){st.textContent='\\u2713 Kaydedildi';}).catch(function(e){st.textContent='Hata: '+e;});};});
+ var st=box.querySelector('.mstatus');st.textContent='Saving...';
+ fetch('/api/finding?code='+encodeURIComponent(code),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.ok?r.json():Promise.reject(r.status);}).then(function(){st.textContent='\\u2713 Saved';}).catch(function(e){st.textContent='Error: '+e;});};});
 })();
 """
 
@@ -733,6 +812,13 @@ def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None) -
                  LEVEL_COLORS.get(a["risk_level"], "#555")) for a in shadow[:8]]
     top_bars = _bars(top_rows, max((a["risk_score"] for a in shadow), default=1))
 
+    posture = _posture_score(shadow, counts)
+    triage_chart = _triage_chart(shadow)
+    permission_heatmap = _permission_heatmap(shadow)
+    vendor_treemap = _vendor_treemap(shadow)
+    severity_legend = charts.legend(
+        [(lv, LEVEL_COLORS[lv], counts[lv]) for lv in LEVELS])
+
     scope_count = {}
     for a in shadow:
         for s in a.get("scopes", []):
@@ -740,14 +826,14 @@ def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None) -
                 scope_count[s] = scope_count.get(s, 0) + 1
     scope_rows = sorted(scope_count.items(), key=lambda kv: (-kv[1], -_scope_weight(kv[0])))[:8]
     scope_bars = _bars(
-        [(s, f"hassasiyet {_scope_weight(s)}/10", c, "#0f6cbd") for s, c in scope_rows],
+        [(s, f"sensitivity {_scope_weight(s)}/10", c, "#0f6cbd") for s, c in scope_rows],
         max((c for _, c in scope_rows), default=1))
 
     admin = sum(1 for a in shadow if a.get("consent_type") == "AllPrincipals")
     persist = sum(1 for a in shadow if "offline_access" in a.get("scopes", []))
     unverified = sum(1 for a in shadow if not a.get("verified_publisher"))
 
-    # Permission-type dağılımı (delegated / app-only / both)
+    # Permission-type distribution (delegated / app-only / both)
     delegated_n = sum(1 for a in shadow if a.get("delegated_permissions") or a.get("scopes"))
     apponly_n = sum(1 for a in shadow if a.get("has_app_only_access"))
     both_n = sum(1 for a in shadow
@@ -757,7 +843,7 @@ def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None) -
         if any(_scope_weight(p["permission"].lower()) >= 8
                for p in a.get("application_permissions", [])))
 
-    # Kullanım / aktivite (Entra ID P1 — yoksa graceful)
+    # Usage / activity (Entra ID P1 — graceful if unavailable)
     activity_available = any((a.get("usage") or {}).get("available") for a in shadow)
     active_users_30d = sum((a.get("usage") or {}).get("active_users_30d", 0) for a in shadow)
     inactive_apps = sum(1 for a in shadow if (a.get("usage") or {}).get("inactive_30d"))
@@ -765,7 +851,7 @@ def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None) -
         1 for a in shadow if a.get("has_app_only_access")
         and (a.get("usage") or {}).get("last_service_principal_signin")
         and not (a.get("usage") or {}).get("inactive_30d"))
-    # aggregate günlük aktif kullanıcı trendi (30g)
+    # aggregate daily active-user trend (30d)
     trend = [0] * 30
     for a in shadow:
         d = (a.get("usage") or {}).get("daily_active_30d") or []
@@ -781,12 +867,12 @@ def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None) -
                              (a.get("usage") or {}).get("active_users_30d", 0), "#2e8b57")
                             for a in most_used], max(((a.get("usage") or {}).get("active_users_30d", 0)
                                                       for a in most_used), default=1))
-    growing_bars = _bars([(a.get("display_name") or "—", "son 7g artış",
+    growing_bars = _bars([(a.get("display_name") or "—", "7d growth",
                            (a.get("usage") or {}).get("growth_7d", 0), "#7c3aed")
                           for a in growing], max(((a.get("usage") or {}).get("growth_7d", 0)
                                                   for a in growing), default=1))
 
-    # Yeni AI uygulamaları — business unit bazında (kriter 8)
+    # New AI applications — by business unit (criterion 8)
     new_ids = {e["asset_id"] for e in (changes or []) if e.get("change_type") == "NEW_APPLICATION"}
     new_bu_section = ""
     if new_ids:
@@ -794,35 +880,35 @@ def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None) -
         by_bu = {}
         for aid in new_ids:
             a = id_map.get(aid) or {}
-            bu = (a.get("business_context") or {}).get("business_unit") or "Atanmamış"
+            bu = (a.get("business_context") or {}).get("business_unit") or "Unassigned"
             by_bu.setdefault(bu, []).append(a.get("display_name") or aid)
         rows = "".join(f'<li><b>{html.escape(bu)}</b>: {html.escape(", ".join(sorted(n)))}</li>'
                        for bu, n in sorted(by_bu.items()))
         new_bu_section = (f'<div class="card" style="margin-top:16px">'
-                          f'<h3>Yeni AI uygulamaları — business unit bazında ({len(new_ids)})</h3>'
+                          f'<h3>New AI applications — by business unit ({len(new_ids)})</h3>'
                           f'<ul>{rows}</ul></div>')
 
     if activity_available:
         usage_section = f"""
-  <h3 style="margin:22px 4px 10px;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)">Kullanım & Aktivite (gerçek sign-in)</h3>
+  <h3 style="margin:22px 4px 10px;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)">Usage & Activity (real sign-in)</h3>
   <div class="grid cols-4">
-    <div class="card kpi"><span class="n">{active_users_30d}</span><span class="l">Aktif AI kullanımı (30g)</span></div>
-    <div class="card kpi crit"><span class="n">{inactive_apps}</span><span class="l">Kullanılmayan uygulama (30g+)</span></div>
-    <div class="card kpi"><span class="n">{apponly_active}</span><span class="l">App-only aktif uygulama</span></div>
-    <div class="card kpi"><span class="n">{len(growing)}</span><span class="l">Yükselen uygulama</span></div>
+    <div class="card kpi"><span class="n">{active_users_30d}</span><span class="l">Active AI usage (30d)</span></div>
+    <div class="card kpi crit"><span class="n">{inactive_apps}</span><span class="l">Unused apps (30d+)</span></div>
+    <div class="card kpi"><span class="n">{apponly_active}</span><span class="l">App-only active apps</span></div>
+    <div class="card kpi"><span class="n">{len(growing)}</span><span class="l">Growing apps</span></div>
   </div>
   <div class="grid cols-2" style="margin-top:16px">
-    <div class="card"><h3>Aktif kullanıcı trendi (son 30 gün)</h3>{_trend_svg(trend)}</div>
-    <div class="card"><h3>En çok kullanılan uygulamalar</h3>{most_used_bars}</div>
+    <div class="card"><h3>Active user trend (last 30 days)</h3>{_trend_svg(trend)}</div>
+    <div class="card"><h3>Most used applications</h3>{most_used_bars}</div>
   </div>
-  <div class="card" style="margin-top:16px"><h3>En hızlı büyüyen uygulamalar (7g)</h3>{growing_bars}</div>
+  <div class="card" style="margin-top:16px"><h3>Fastest-growing applications (7d)</h3>{growing_bars}</div>
 """
     else:
         usage_section = ('<div class="card" style="margin-top:16px">'
-                         '<h3>Kullanım & Aktivite</h3>'
-                         '<p class="governed">Sign-in aktivitesi alınamadı — gerçek kullanım '
-                         'metrikleri için <b>Entra ID P1/P2</b> lisansı gerekir. '
-                         'Assessment kesintisiz devam ediyor; consent/permission bulguları geçerli.</p></div>')
+                         '<h3>Usage & Activity</h3>'
+                         '<p class="governed">Sign-in activity unavailable — real usage '
+                         'metrics require an <b>Entra ID P1/P2</b> license. '
+                         'The assessment continues uninterrupted; consent/permission findings remain valid.</p></div>')
 
     # Governance (ownership + lifecycle)
     lc_counts = {s: sum(1 for a in shadow if _lifecycle_status(a) == s) for s in LIFECYCLE_STATUSES}
@@ -835,8 +921,8 @@ def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None) -
     reviews_list = "".join(
         f'<li><b>{html.escape(a.get("display_name") or "—")}</b> — '
         f'{html.escape((a.get("lifecycle") or {}).get("next_review_date") or "")}'
-        f' ({"gecikmiş" if d < 0 else str(d) + " gün"}) · {html.escape(_lifecycle_status(a))}</li>'
-        for d, a in review_due) or '<li class="governed">Yaklaşan review yok.</li>'
+        f' ({"overdue" if d < 0 else str(d) + " days"}) · {html.escape(_lifecycle_status(a))}</li>'
+        for d, a in review_due) or '<li class="governed">No upcoming reviews.</li>'
 
     bus = sorted({(a.get("business_context") or {}).get("business_unit") for a in shadow
                   if (a.get("business_context") or {}).get("business_unit")})
@@ -846,17 +932,17 @@ def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None) -
     sub_opts = "".join(f'<option value="{html.escape(s)}">{html.escape(s)}</option>' for s in subs)
 
     governance_section = f"""
-  <h3 style="margin:22px 4px 10px;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)">Yönetişim (ownership & lifecycle)</h3>
+  <h3 style="margin:22px 4px 10px;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)">Governance (ownership & lifecycle)</h3>
   <div class="grid cols-4">
     <div class="card kpi low"><span class="n">{approved}</span><span class="l">Approved</span></div>
     <div class="card kpi med"><span class="n">{under_review}</span><span class="l">Under Review</span></div>
     <div class="card kpi crit"><span class="n">{blocked}</span><span class="l">Blocked / Restricted</span></div>
-    <div class="card kpi high"><span class="n">{len(review_due)}</span><span class="l">Review yaklaşan/geçmiş</span></div>
+    <div class="card kpi high"><span class="n">{len(review_due)}</span><span class="l">Reviews due/overdue</span></div>
   </div>
-  <div class="card" style="margin-top:16px"><h3>Yaklaşan / geçmiş review'lar</h3><ul>{reviews_list}</ul></div>
+  <div class="card" style="margin-top:16px"><h3>Upcoming / overdue reviews</h3><ul>{reviews_list}</ul></div>
 """
 
-    # --- Sınıflandırma (TÜM app'ler üzerinde — Microsoft dahil, kriter 9) ----
+    # --- Classification (across ALL apps — including Microsoft, criterion 9) ----
     all_apps = sorted(apps, key=lambda a: a["risk_score"], reverse=True)
     cat_counts = {c: sum(1 for a in all_apps if _classification(a).get("category") == c)
                   for c in AI_CATEGORIES}
@@ -874,33 +960,33 @@ def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None) -
     unknown_apps = [a for a in all_apps if _classification(a).get("category") == "Unknown AI"]
     unknown_list = "".join(
         f'<li><b>{html.escape(a.get("display_name") or "—")}</b> — '
-        f'{html.escape(a.get("vendor", ""))} · güven {_classification(a).get("confidence", 0)}%</li>'
-        for a in unknown_apps) or '<li class="governed">Unknown AI yok.</li>'
+        f'{html.escape(a.get("vendor", ""))} · confidence {_classification(a).get("confidence", 0)}%</li>'
+        for a in unknown_apps) or '<li class="governed">No Unknown AI.</li>'
 
     cats_present = [c for c in AI_CATEGORIES if cat_counts[c]]
     cat_opts = "".join(f'<option value="{html.escape(c)}">{html.escape(c)} ({cat_counts[c]})</option>'
                        for c in cats_present)
 
     classification_section = f"""
-  <h3 style="margin:22px 4px 10px;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)">Sınıflandırma</h3>
+  <h3 style="margin:22px 4px 10px;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)">Classification</h3>
   <div class="grid cols-4">
-    <div class="card kpi crit"><span class="n">{unknown_n}</span><span class="l">Unknown AI (inceleme)</span></div>
+    <div class="card kpi crit"><span class="n">{unknown_n}</span><span class="l">Unknown AI (needs review)</span></div>
     <div class="card kpi low"><span class="n">{approved_n}</span><span class="l">Approved Enterprise</span></div>
     <div class="card kpi high"><span class="n">{unapproved_n}</span><span class="l">Unapproved Enterprise</span></div>
-    <div class="card kpi"><span class="n">{avg_conf}%</span><span class="l">Ortalama güven</span></div>
+    <div class="card kpi"><span class="n">{avg_conf}%</span><span class="l">Average confidence</span></div>
   </div>
   <div class="grid cols-2" style="margin-top:16px">
-    <div class="card"><h3>Kategoriye göre uygulamalar</h3>{cat_bars}</div>
+    <div class="card"><h3>Applications by category</h3>{cat_bars}</div>
     <div class="card"><h3>Internal vs External</h3>
       <div class="bar-row"><div class="bar-label">Internal</div><div class="bar-track"><div class="bar-fill" style="width:{round(100*internal_n/max(internal_n+external_n,1))}%;background:#7c3aed"></div></div><div class="bar-val">{internal_n}</div></div>
       <div class="bar-row"><div class="bar-label">External</div><div class="bar-track"><div class="bar-fill" style="width:{round(100*external_n/max(internal_n+external_n,1))}%;background:#c0392b"></div></div><div class="bar-val">{external_n}</div></div>
     </div>
   </div>
-  <div class="card" style="margin-top:16px"><h3>Unknown AI — inceleme kuyruğu</h3><ul>{unknown_list}</ul></div>
+  <div class="card" style="margin-top:16px"><h3>Unknown AI — review queue</h3><ul>{unknown_list}</ul></div>
 """
 
     findings_html = "".join(_finding_row(a) for a in all_apps) or \
-        '<div class="empty">AI uygulaması bulunamadı.</div>'
+        '<div class="empty">No AI applications found.</div>'
 
     import executive
     estate = executive.estate_metrics(apps, changes, findings)
@@ -925,8 +1011,8 @@ def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None) -
   </nav>
   <span class="spacer"></span>
   <span class="tenant">{html.escape(tenant_id)}</span>
-  <a id="aiDataSourcesLink" class="themebtn" href="#" style="display:inline-block;text-decoration:none" title="Microsoft AI Data Sources dashboard'una git">AI Data Sources &#8594;</a>
-  <button id="tg" class="themebtn" title="Tema">&#9790;</button>
+  <a id="aiDataSourcesLink" class="themebtn" href="#" style="display:inline-block;text-decoration:none" title="Go to the Microsoft AI Data Sources dashboard">AI Data Sources &#8594;</a>
+  <button id="tg" class="themebtn" title="Theme">&#9790;</button>
 </header>
 <main>
   <section class="tab active" data-tab="overview">
@@ -935,10 +1021,10 @@ def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None) -
         <h3>Tenant</h3>
         <div class="tenant-facts">
           <b>Tenant ID</b><span>{html.escape(tenant_id)}</span>
-          <b>Toplam AI</b><span>{len(apps)}</span>
+          <b>Total AI</b><span>{len(apps)}</span>
           <b>Shadow AI</b><span>{len(shadow)}</span>
           <b>Microsoft 1st-party</b><span>{len(microsoft)}</span>
-          <b>Tarama</b><span>{ts}</span>
+          <b>Scan</b><span>{ts}</span>
         </div>
       </div>
       <div class="tiles">
@@ -948,56 +1034,81 @@ def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None) -
         <div class="card tile high"><span class="n">{estate['unapproved']}</span><span class="l">Unapproved AI</span></div>
       </div>
       <div class="card hero-donut">
-        <h3>Assessment · risk dağılımı</h3>
+        <h3>Assessment · risk distribution</h3>
         <div class="summary">{donut}<div class="legend">{legend}</div></div>
       </div>
     </div>
     <div class="grid cols-4" style="margin-top:16px">
       <div class="card kpi"><span class="n">{len(shadow)}</span><span class="l">Shadow AI</span></div>
-      <div class="card kpi crit"><span class="n">{counts['Kritik']}</span><span class="l">Kritik</span></div>
-      <div class="card kpi high"><span class="n">{counts['Yüksek']}</span><span class="l">Yüksek</span></div>
-      <div class="card kpi med"><span class="n">{counts['Orta']}</span><span class="l">Orta</span></div>
+      <div class="card kpi crit"><span class="n">{counts['Critical']}</span><span class="l">Critical</span></div>
+      <div class="card kpi high"><span class="n">{counts['High']}</span><span class="l">High</span></div>
+      <div class="card kpi med"><span class="n">{counts['Medium']}</span><span class="l">Medium</span></div>
+    </div>
+    <div class="grid cols-2" style="margin-top:16px">
+      <div class="card">
+        <h3>Where to start</h3>
+        {triage_chart}{severity_legend}
+        <p class="governed">Up and to the right is urgent: a high score reaching many
+        users. Dot size is the number of permissions the app holds.</p>
+      </div>
+      <div class="card">
+        <h3>Tenant AI posture</h3>
+        <div style="display:flex;justify-content:center">{charts.gauge(posture, "Tenant AI posture")}</div>
+        <p class="governed">Weighted by severity rather than averaged, so a handful of
+        Critical findings is not diluted by a long tail of Low ones.</p>
+        {_posture_breakdown(shadow, counts)}
+      </div>
     </div>
     {_executive_section(apps, changes, findings)}
   </section>
 
   <section class="tab" data-tab="apps">
     <div class="grid cols-2">
-      <div class="card"><h3>En riskli uygulamalar</h3>{top_bars}</div>
-      <div class="card"><h3>En çok verilen hassas izinler</h3>{scope_bars}</div>
+      <div class="card"><h3>Riskiest applications</h3>{top_bars}</div>
+      <div class="card"><h3>Most granted sensitive permissions</h3>{scope_bars}</div>
+    </div>
+    <div class="grid cols-2" style="margin-top:16px">
+      <div class="card">
+        <h3>Sensitive permission concentration</h3>
+        {permission_heatmap}
+      </div>
+      <div class="card">
+        <h3>Estate share by vendor</h3>
+        {vendor_treemap}
+      </div>
     </div>
     <div class="grid cols-4" style="margin-top:16px">
-      <div class="card kpi"><span class="n">{admin}</span><span class="l">Admin (tüm org) onayı</span></div>
-      <div class="card kpi"><span class="n">{third}</span><span class="l">Dış 3. parti</span></div>
-      <div class="card kpi"><span class="n">{persist}</span><span class="l">Kalıcı erişim (offline)</span></div>
-      <div class="card kpi"><span class="n">{unverified}</span><span class="l">Doğrulanmamış publisher</span></div>
+      <div class="card kpi"><span class="n">{admin}</span><span class="l">Admin (org-wide) consent</span></div>
+      <div class="card kpi"><span class="n">{third}</span><span class="l">External 3rd-party</span></div>
+      <div class="card kpi"><span class="n">{persist}</span><span class="l">Persistent access (offline)</span></div>
+      <div class="card kpi"><span class="n">{unverified}</span><span class="l">Unverified publisher</span></div>
     </div>
-    <h3 style="margin:20px 4px 10px;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)">Erişim tipi</h3>
+    <h3 style="margin:20px 4px 10px;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)">Access type</h3>
     <div class="grid cols-4">
-      <div class="card kpi"><span class="n">{delegated_n}</span><span class="l">Delegated erişim</span></div>
-      <div class="card kpi high"><span class="n">{apponly_n}</span><span class="l">App-only (kullanıcısız)</span></div>
-      <div class="card kpi"><span class="n">{both_n}</span><span class="l">Her iki erişim tipi</span></div>
-      <div class="card kpi crit"><span class="n">{highpriv_apponly}</span><span class="l">Yüksek ayrıcalıklı app-only</span></div>
+      <div class="card kpi"><span class="n">{delegated_n}</span><span class="l">Delegated access</span></div>
+      <div class="card kpi high"><span class="n">{apponly_n}</span><span class="l">App-only (unattended)</span></div>
+      <div class="card kpi"><span class="n">{both_n}</span><span class="l">Both access types</span></div>
+      <div class="card kpi crit"><span class="n">{highpriv_apponly}</span><span class="l">High-privilege app-only</span></div>
     </div>
     {classification_section}
     <div class="card" style="margin-top:16px">
-      <h3>Envanter ({len(all_apps)} uygulama · {len(shadow)} shadow · {len(microsoft)} Microsoft first-party)</h3>
+      <h3>Inventory ({len(all_apps)} apps · {len(shadow)} shadow · {len(microsoft)} Microsoft first-party)</h3>
       <div class="filters">
-        <button data-group="perm" data-value="all" class="active">İzin: Tümü</button>
+        <button data-group="perm" data-value="all" class="active">Permission: All</button>
         <button data-group="perm" data-value="delegated">Delegated</button>
         <button data-group="perm" data-value="apponly">App-only</button>
-        <button data-group="perm" data-value="both">Her ikisi</button>
+        <button data-group="perm" data-value="both">Both</button>
       </div>
       <div class="filters">
-        <button data-group="usage" data-value="all" class="active">Kullanım: Tümü</button>
-        <button data-group="usage" data-value="active">Aktif</button>
-        <button data-group="usage" data-value="inactive">Pasif (30g+)</button>
-        <button data-group="usage" data-value="unused">Hiç kullanılmamış</button>
+        <button data-group="usage" data-value="all" class="active">Usage: All</button>
+        <button data-group="usage" data-value="active">Active</button>
+        <button data-group="usage" data-value="inactive">Inactive (30d+)</button>
+        <button data-group="usage" data-value="unused">Never used</button>
       </div>
       <div class="filters">
-        <label>Kategori <select data-group="cat"><option value="all">Tümü</option>{cat_opts}</select></label>
-        <label>Birim <select data-group="bu"><option value="all">Tümü</option>{bu_opts}</select></label>
-        <label>Subsidiary <select data-group="sub"><option value="all">Tümü</option>{sub_opts}</select></label>
+        <label>Category <select data-group="cat"><option value="all">All</option>{cat_opts}</select></label>
+        <label>Business unit <select data-group="bu"><option value="all">All</option>{bu_opts}</select></label>
+        <label>Subsidiary <select data-group="sub"><option value="all">All</option>{sub_opts}</select></label>
       </div>
       <div class="findings">{findings_html}</div>
     </div>
@@ -1008,13 +1119,14 @@ def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None) -
   <section class="tab" data-tab="findings">{_findings_section(findings)}</section>
   <section class="tab" data-tab="changes">{_timeline_section(changes)}{new_bu_section}</section>
 
-  <div class="foot">AI-SPM · read-only Entra/Graph taraması · {ts}</div>
+  <div class="foot">AI-SPM · read-only Entra/Graph scan · {ts}</div>
 </main>
 <script>{THEME_JS}</script>
 """
-    return ("<!doctype html><html lang=\"tr\"><head><meta charset=\"utf-8\">"
+    return ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
             "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-            f"<title>AI-SPM · Shadow AI Assessment</title><style>{CSS}</style></head>"
+            f"<title>AI-SPM · Shadow AI Assessment</title>"
+            f"<style>{CSS}{charts.CSS}</style></head>"
             f"<body>{body}</body></html>")
 
 

@@ -1,9 +1,10 @@
 """
-AI-SPM birleşik connector framework'ü.
+AI-SPM unified connector framework.
 
-Dört Microsoft veri kaynağı (Agent 365, Entra Agent ID, Defender for Cloud Apps,
-Purview) + mevcut Entra OAuth keşfi, ortak BaseCollector interface'i üzerinden aynı
-normalize modele yazar; registry.run() dayanıklı çalıştırır ve correlation birleştirir.
+The four Microsoft data sources (Agent 365, Entra Agent ID, Defender for Cloud Apps,
+Purview) + the existing Entra OAuth discovery all write to the same normalized model
+through the shared BaseCollector interface; registry.run() runs them resiliently and
+correlation merges the results.
 """
 from .base import (BaseCollector, ConnectorStatus, Source, EntityType,
                    LicenseMissing, PermissionMissing, ApiUnavailable)
@@ -24,7 +25,7 @@ __all__ = [
 
 
 def default_collectors(graph=None):
-    """Dört Microsoft connector + DSPM import adapter'ı (hepsi env ile gate'li)."""
+    """The four Microsoft connectors + the DSPM import adapter (all env-gated)."""
     return [
         Agent365Collector(graph),
         EntraAgentIdCollector(graph),

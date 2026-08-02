@@ -1,4 +1,4 @@
-"""Adım 3 — Microsoft Entra Agent ID collector testleri (offline mock)."""
+"""Step 3 — Microsoft Entra Agent ID collector tests (offline mock)."""
 import json
 import os
 
@@ -13,17 +13,17 @@ A365_FX = os.path.join(os.path.dirname(connectors.__file__), "fixtures", "agent3
 
 
 class FakeGraph:
-    """agentIdentity/blueprint listeleri + SP başına owner/sponsor/perm/grup yönlendirir."""
+    """Routes the agentIdentity/blueprint lists + per-SP owner/sponsor/perm/group."""
 
     def __init__(self, data, fail=None, blueprint_fail=None, sub_fail=False):
         self._identities = data.get("identities", [])
         self._blueprints = data.get("blueprints", [])
-        self._fail = fail                    # ana identity listesi hatası
+        self._fail = fail                    # main identity list error
         self._blueprint_fail = blueprint_fail
-        self._sub_fail = sub_fail            # tüm alt-kaynaklar patlasın (PARTIAL testi)
+        self._sub_fail = sub_fail            # make all sub-resources fail (PARTIAL test)
 
     def _by_oid(self, path):
-        # /servicePrincipals/{oid}/... → oid'yi çıkar
+        # /servicePrincipals/{oid}/... → extract the oid
         parts = path.split("/")
         return parts[2] if len(parts) > 2 else None
 
@@ -36,7 +36,7 @@ class FakeGraph:
             if self._blueprint_fail:
                 raise RuntimeError(self._blueprint_fail)
             return self._blueprints
-        # alt-kaynaklar
+        # sub-resources
         if self._sub_fail:
             raise RuntimeError("Graph 403 Forbidden on sub-resource")
         oid = self._by_oid(path)
@@ -74,14 +74,14 @@ def test_lists_and_normalizes_identities(monkeypatch):
 
     fin = next(a for a in assets if a["display_name"] == "Finance Agent Identity")
     assert fin["asset_type"] == EntityType.AGENT_IDENTITY
-    assert fin["external_ids"]["entra_app_id"] == "APP-FIN-1"       # Agent365 korelasyonuna hazır
+    assert fin["external_ids"]["entra_app_id"] == "APP-FIN-1"       # ready for Agent365 correlation
     assert fin["external_ids"]["agent_identity_id"] == "OID-1"
     assert fin["external_ids"]["agent_blueprint_id"] == "BP-1"
     ai = fin["agent_identity"]
     assert ai["account_enabled"] is True
     assert ai["owners"][0]["upn"] == "alice@contoso.com"
     assert ai["sponsors"][0]["display_name"] == "Bob Sponsor"
-    # app-only vs delege ayrı
+    # app-only vs delegated are separate
     assert ai["application_permissions"][0]["resource_display_name"] == "Microsoft Graph"
     assert ai["delegated_permissions"][0]["scopes"] == ["User.Read", "Mail.Read"]
     assert ai["group_memberships"][0]["display_name"] == "Finance-Agents"
@@ -104,10 +104,10 @@ def test_metrics(monkeypatch):
     assert m["total_identities"] == 2
     assert m["enabled"] == 1 and m["disabled"] == 1
     assert m["without_owner"] == 1 and m["without_sponsor"] == 1
-    assert m["without_blueprint"] == 1          # sadece Orphan
+    assert m["without_blueprint"] == 1          # only Orphan
     assert m["with_app_only_permissions"] == 1
     assert m["with_delegated_permissions"] == 1
-    assert m["uncorrelated"] == 1               # Orphan'ın appId'si yok
+    assert m["uncorrelated"] == 1               # Orphan has no appId
     assert m["total_blueprints"] == 2
 
 
@@ -121,11 +121,11 @@ def test_permission_missing_does_not_stop(monkeypatch):
 def test_sub_resource_failure_is_partial(monkeypatch):
     monkeypatch.setenv("ENABLE_ENTRA_AGENT_ID", "true")
     c = EntraAgentIdCollector(FakeGraph(_data(), sub_fail=True))
-    assets = c.safe_run()                       # identity'ler yine gelir
+    assets = c.safe_run()                       # identities still come through
     assert len(assets) == 4
     assert c.get_health()["status"] == ConnectorStatus.PARTIALLY_CONNECTED
     fin = next(a for a in assets if a["display_name"] == "Finance Agent Identity")
-    assert fin["agent_identity"]["owners"] == []   # owner alınamadı ama identity kayboldı değil
+    assert fin["agent_identity"]["owners"] == []   # owner couldn't be fetched but the identity wasn't lost
 
 
 def test_blueprint_list_failure_keeps_identities(monkeypatch):
@@ -138,7 +138,7 @@ def test_blueprint_list_failure_keeps_identities(monkeypatch):
 
 
 def test_not_configured_without_env():
-    c = EntraAgentIdCollector(FakeGraph(_data()))   # ENABLE_ENTRA_AGENT_ID yok
+    c = EntraAgentIdCollector(FakeGraph(_data()))   # no ENABLE_ENTRA_AGENT_ID
     assert c.safe_run() == []
     assert c.get_health()["status"] == ConnectorStatus.NOT_CONFIGURED
 
@@ -163,6 +163,6 @@ def test_identity_correlates_with_agent365_via_appid(monkeypatch):
     fin = [a for a in merged if a["external_ids"].get("entra_app_id") == "APP-FIN-1"]
     assert len(fin) == 1
     assert set(fin[0]["sources"]) == {"AGENT_365", "ENTRA_AGENT_ID"}
-    assert fin[0]["correlation_confidence"] == 98         # entra_app_id ile korele
-    # identity tarafının verisi korundu (agent_identity), package tarafı da (agent365)
+    assert fin[0]["correlation_confidence"] == 98         # correlated via entra_app_id
+    # the identity side's data is preserved (agent_identity), and the package side too (agent365)
     assert fin[0].get("agent_identity") and fin[0].get("agent365")

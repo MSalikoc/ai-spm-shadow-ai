@@ -18,12 +18,12 @@ def _app(app_id, **kw):
 
 
 def test_first_scan_is_baseline_no_events():
-    """Kriter 2/4: ilk scan (prev yok) yanlış change üretmez."""
+    """Criterion 2/4: the first scan (no prev) produces no false changes."""
     cur = drift.snapshot([_app("a1")])
-    events = drift.diff({}, cur, NOW)   # prev boş → gerçek diff (a1 yeni). Baseline'ı process yönetir.
+    events = drift.diff({}, cur, NOW)   # prev empty → real diff (a1 is new). process() manages the baseline.
     # process: prev None ise []
-    assert cur  # snapshot üretiliyor
-    # baseline davranışını diff değil process yönetir; burada diff'in NEW üretmesi normal
+    assert cur  # snapshot is produced
+    # process() (not diff) manages baseline behavior; diff producing NEW here is expected
     assert any(e["change_type"] == "NEW_APPLICATION" for e in events)
 
 
@@ -76,7 +76,7 @@ def test_activity_percentage_and_first_signin():
                                             "last_used_date": "2026-07-24T00:00:00+00:00"})])
     evs = {e["change_type"]: e for e in drift.diff(prev, cur, NOW)}
     assert "ACTIVITY_INCREASED" in evs
-    assert "%30" in evs["ACTIVITY_INCREASED"]["description"]   # (13-10)/10 = %30
+    assert "30%" in evs["ACTIVITY_INCREASED"]["description"]   # (13-10)/10 = 30%
     assert "FIRST_SIGNIN" in evs
 
 
@@ -108,21 +108,21 @@ def test_executive_summary_matches_manager_format():
     ]
     lines = drift.executive_summary(events)
     joined = " ".join(lines)
-    assert "3 yeni AI uygulaması keşfedildi." in lines
-    assert "1 uygulamaya app-only permission eklendi." in lines
-    assert "Claude kullanımı %32 arttı." in lines
-    assert "2 uygulamaya business owner atandı." in lines
-    assert "Approved durumuna geçti" in joined
+    assert "3 new AI applications discovered." in lines
+    assert "1 applications had app-only permissions added." in lines
+    assert "Claude usage increased 32%." in lines
+    assert "2 applications were assigned a business owner." in lines
+    assert "moved from" in joined and "to Approved" in joined
 
 
 def test_new_apps_grouped_by_business_unit():
-    """Kriter 8: yeni AI uygulamaları business unit bazında gösteriliyor."""
+    """Criterion 8: new AI applications are shown by business unit."""
     import report
 
     def full(aid, name, bu):
         return {"display_name": name, "vendor": "V", "first_party_microsoft": False,
                 "third_party": True, "verified_publisher": True, "scopes": [], "consent_type": None,
-                "user_count": 0, "risk_score": 10, "risk_level": "Düşük", "reasons": ["r"],
+                "user_count": 0, "risk_score": 10, "risk_level": "Low", "reasons": ["r"],
                 "remediation": ["m"], "delegated_permissions": [], "application_permissions": [],
                 "has_app_only_access": False, "usage": None,
                 "ownership": {"service_principal_owners": []},
@@ -134,19 +134,19 @@ def test_new_apps_grouped_by_business_unit():
     apps = [full("a1", "FinBot", "Finance"), full("a2", "HRBot", "HR"), full("a3", "Mystery", "")]
     ch = [{"change_type": "NEW_APPLICATION", "asset_id": i, "asset_name": n,
            "timestamp": "2026-07-25T10:00:00+00:00", "importance": "High",
-           "description": "yeni", "old_value": None, "new_value": "V", "change_id": "x"}
+           "description": "new", "old_value": None, "new_value": "V", "change_id": "x"}
           for i, n in [("a1", "FinBot"), ("a2", "HRBot"), ("a3", "Mystery")]]
     doc = report.html_string(apps, "t", ch)
-    assert "business unit bazında" in doc
+    assert "by business unit" in doc
     assert "Finance" in doc and "FinBot" in doc
     assert "HR" in doc and "HRBot" in doc
-    assert "Atanmamış" in doc          # BU'su olmayan yeni app
+    assert "Unassigned" in doc        # new app without a BU
 
 
 def test_dashboard_timeline_and_empty():
     apps = [{"display_name": "X", "vendor": "Y", "first_party_microsoft": False, "third_party": True,
              "verified_publisher": True, "scopes": [], "consent_type": None, "user_count": 0,
-             "risk_score": 10, "risk_level": "Düşük", "reasons": ["r"], "remediation": ["m"],
+             "risk_score": 10, "risk_level": "Low", "reasons": ["r"], "remediation": ["m"],
              "delegated_permissions": [], "application_permissions": [], "has_app_only_access": False,
              "usage": None, "ownership": {"service_principal_owners": []}, "business_context": {},
              "lifecycle": {"status": "Discovered"}, "technical_inventory": {}, "notes": "", "history": [],
@@ -155,8 +155,8 @@ def test_dashboard_timeline_and_empty():
     import report
     ch = [{"change_id": "abc", "change_type": "NEW_APPLICATION", "asset_id": "a1",
            "asset_name": "X", "timestamp": "2026-07-25T10:00:00+00:00", "old_value": None,
-           "new_value": "Y", "importance": "High", "description": "Yeni AI uygulaması"}]
+           "new_value": "Y", "importance": "High", "description": "New AI application"}]
     doc = report.html_string(apps, "t", ch)
-    assert "zaman çizelgesi" in doc and "NEW_APPLICATION" in doc
-    # baseline (changes=[]) → "değişiklik yok"
-    assert "değişiklik yok" in report.html_string(apps, "t", [])
+    assert "timeline" in doc and "NEW_APPLICATION" in doc
+    # baseline (changes=[]) → "no changes"
+    assert "No changes" in report.html_string(apps, "t", [])

@@ -1,4 +1,4 @@
-# Çekirdek (CLI + engine)
+# Core (CLI + engine)
 msal>=1.28
 requests>=2.31
 

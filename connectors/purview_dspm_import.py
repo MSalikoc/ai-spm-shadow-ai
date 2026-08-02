@@ -1,13 +1,13 @@
 """
-Purview DSPM import adapter — DSPM/Activity Explorer export'unu (JSON/CSV) içe alır (Adım 5).
+Purview DSPM import adapter — imports a DSPM/Activity Explorer export (JSON/CSV) (Step 5).
 
-Microsoft DSPM analytics için doğrudan bir extraction API'si YOKTUR; bu yüzden desteklenen
-bir export dosyası (PURVIEW_DSPM_IMPORT_PATH) import edilir. Kayıtlar birleşik
-**SENSITIVE_INTERACTION** modeline yazılır ve kaynak açıkça **PURVIEW_DSPM_EXPORT** olur
-(audit'ten ayrı; Adım 6 ikisini app bazında birleştirir).
+There is NO direct extraction API for Microsoft DSPM analytics; so a supported export
+file (PURVIEW_DSPM_IMPORT_PATH) is imported instead. Records are written to the unified
+**SENSITIVE_INTERACTION** model with the source explicitly set to **PURVIEW_DSPM_EXPORT**
+(kept separate from audit; Step 6 merges the two per application).
 
-Versioned schema (IMPORT_SCHEMA_VERSION). Uyumsuz major sürüm → ApiUnavailable (dürüst hata).
-Portal HTML scraping YOK.
+Versioned schema (IMPORT_SCHEMA_VERSION). Incompatible major version → ApiUnavailable
+(an honest error). No portal HTML scraping.
 """
 import csv
 import json
@@ -34,7 +34,7 @@ class PurviewDspmImportCollector(BaseCollector):
     def collect(self, since=None) -> list:
         path = self._import_path
         if not path or not os.path.exists(path):
-            raise ApiUnavailable(f"DSPM import dosyası yok: {path}")
+            raise ApiUnavailable(f"DSPM import file not found: {path}")
         ext = os.path.splitext(path)[1].lower()
         try:
             if ext == ".json":
@@ -49,14 +49,14 @@ class PurviewDspmImportCollector(BaseCollector):
                 with open(path, encoding="utf-8-sig", newline="") as f:
                     rows = list(csv.DictReader(f))
             else:
-                raise ApiUnavailable(f"desteklenmeyen format: {ext} (JSON/CSV bekleniyor)")
+                raise ApiUnavailable(f"unsupported format: {ext} (expected JSON/CSV)")
         except ValueError as e:
-            raise ApiUnavailable(f"DSPM import parse hatası: {str(e)[:160]}")
+            raise ApiUnavailable(f"DSPM import parse error: {str(e)[:160]}")
 
         if self._file_schema and _major(self._file_schema) != _major(IMPORT_SCHEMA_VERSION):
             raise ApiUnavailable(
-                f"uyumsuz DSPM export şeması {self._file_schema} "
-                f"(desteklenen major {_major(IMPORT_SCHEMA_VERSION)})")
+                f"incompatible DSPM export schema {self._file_schema} "
+                f"(supported major {_major(IMPORT_SCHEMA_VERSION)})")
         return rows or []
 
     def normalize(self, raw_records: list) -> list:

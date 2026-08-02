@@ -1,4 +1,4 @@
-"""Executive dashboard testleri."""
+"""Executive dashboard tests."""
 import executive
 import report
 
@@ -15,7 +15,7 @@ def _app(app_id, atype="application", ms=False, owner="", purpose="", cat="Third
 
 
 def test_application_and_agent_counts_separate():
-    """Kabul 1: application ile agent farkı."""
+    """Acceptance 1: application vs agent distinction."""
     apps = [_app("a1", "application"), _app("a2", "agent"), _app("a3", "agent")]
     m = executive.estate_metrics(apps)
     assert m["total_applications"] == 1
@@ -23,7 +23,7 @@ def test_application_and_agent_counts_separate():
 
 
 def test_usage_surface_enterprise_web_local():
-    """Kabul 2: local ve web AI ayrı."""
+    """Acceptance 2: local and web AI are separate."""
     apps = [_app("a1", consent="AllPrincipals"), _app("a2", consent="Principal"),
             _app("a3", consent="Principal")]
     s = executive.usage_surface(apps)
@@ -31,23 +31,23 @@ def test_usage_surface_enterprise_web_local():
 
 
 def test_models_and_mcp_are_connector_gated():
-    """Kabul 3: model & MCP özetleniyor (connector yok → 0, uydurma yok)."""
+    """Acceptance 3: model & MCP are summarized (no connector → 0, no fabrication)."""
     m = executive.estate_metrics([_app("a1")])
     assert m["ai_models"] == 0 and m["mcp_servers"] == 0 and m["local_agents"] == 0
 
 
 def test_coverage_gaps_visible():
-    """Kabul 4: coverage eksiklikleri görünüyor."""
+    """Acceptance 4: coverage gaps are visible."""
     apps = [_app("a1", owner=""), _app("a2", owner="Fin Team")]
     cov = executive.coverage(apps)
     assert cov["owner_coverage"] == 50
     names = {c[0]: c[1] for c in cov["connectors"]}
-    assert names["Microsoft Purview"] is False           # bağlı değil
+    assert names["Microsoft Purview"] is False           # not connected
     assert names["Entra ID / Microsoft Graph"] is True
 
 
 def test_needs_attention_generates_stories():
-    """Kabul 5: anlamlı yönetici hikâyeleri."""
+    """Acceptance 5: meaningful executive narratives."""
     apps = [_app("a1", "application", owner="", bu="Finance"),
             _app("a2", "agent", owner="X", purpose=""),
             _app("a3", "application", owner="X", cat="Unknown AI")]
@@ -56,11 +56,11 @@ def test_needs_attention_generates_stories():
                 "old_value": 100, "new_value": 142}]
     lines = executive.needs_attention(apps, changes, [])
     joined = " ".join(lines)
-    assert "Finance biriminde 1 yeni AI uygulaması keşfedildi." in lines
-    assert "Claude kullanımı %42 arttı." in joined
-    assert "business owner bilgisi eksik" in joined
-    assert "business purpose bilgisi bulunmuyor" in joined
-    assert "Purview connector bağlı olmadığı için hassas veri görünürlüğü sağlanamıyor." in lines
+    assert "1 new AI applications discovered in Finance." in lines
+    assert "Claude usage increased by 42% in the last 7 days." in joined
+    assert "missing business owner information" in joined
+    assert "no business purpose information" in joined
+    assert "Sensitive data visibility is unavailable because the Purview connector is not connected." in lines
 
 
 def test_top_changes_ordered_by_importance():
@@ -75,7 +75,7 @@ def test_dashboard_renders_executive_and_drilldown():
     apps = [{"display_name": "ChatGPT", "vendor": "OpenAI", "first_party_microsoft": False,
              "asset_type": "application", "third_party": True, "verified_publisher": True,
              "scopes": ["user.read"], "consent_type": "Principal", "user_count": 3, "risk_score": 20,
-             "risk_level": "Düşük", "reasons": ["r"], "remediation": ["m"], "delegated_permissions": [],
+             "risk_level": "Low", "reasons": ["r"], "remediation": ["m"], "delegated_permissions": [],
              "application_permissions": [], "has_app_only_access": False, "usage": None,
              "ownership": {"service_principal_owners": [], "business_owner": ""}, "business_context": {},
              "lifecycle": {"status": "Discovered"}, "technical_inventory": {}, "notes": "", "history": [],
@@ -83,10 +83,10 @@ def test_dashboard_renders_executive_and_drilldown():
                                 "confidence": 90, "reasons": ["x"], "manual_override": False},
              "app_id": "a1"}]
     doc = report.html_string(apps, "t", [], [])
-    assert 'data-tab="overview"' in doc                           # tab navigasyonu
+    assert 'data-tab="overview"' in doc                           # tab navigation
     assert "Needs Attention" in doc
     assert "Coverage Overview" in doc
-    assert "MCP Servers" in doc and "AI Models" in doc            # connector-gated kartlar
+    assert "MCP Servers" in doc and "AI Models" in doc            # connector-gated cards
     assert 'data-goto="apps"' in doc                              # KPI drill-down → tab
     assert 'data-tab="findings"' in doc and 'data-tab="governance"' in doc
-    assert "bağlı değil" in doc                                    # connector boşluğu
+    assert "not connected" in doc                                  # connector gap

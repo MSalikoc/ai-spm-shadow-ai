@@ -1,4 +1,4 @@
-"""Adım 2 — Microsoft Agent 365 collector testleri (offline mock)."""
+"""Step 2 — Microsoft Agent 365 collector tests (offline mock)."""
 import json
 import os
 from datetime import datetime, timezone
@@ -28,7 +28,7 @@ class FakeGraph:
         pid = path.rsplit("/", 1)[-1]
         for p in self._packages:
             if p.get("id") == pid:
-                return p     # detay = liste kaydının aynısı (mock)
+                return p     # detail = same as the list record (mock)
         return {}
 
 
@@ -46,14 +46,14 @@ def test_lists_and_normalizes_packages(monkeypatch):
     fin = next(a for a in assets if a["display_name"] == "Finance Assistant")
     assert fin["asset_type"] == EntityType.AI_AGENT
     assert fin["external_ids"]["agent365_package_id"] == "pkg-finance-001"
-    assert fin["external_ids"]["entra_app_id"] == "APP-FIN-1"      # korelasyona hazır
+    assert fin["external_ids"]["entra_app_id"] == "APP-FIN-1"      # ready for correlation
     assert fin["agent365"]["package_type"] == "declarativeAgent"
     assert fin["agent365"]["build_type"] == "partner"
     assert fin["agent365"]["available_to"] == "everyone"
     # elementDetails parse edildi
     el = fin["agent365"]["elements"][0]
     assert el["declarative_agent_id"] == "da-fin-1" and el["file_support"] is True
-    assert el["raw_reference"]["source"] == "AGENT_365"           # kayıp yok
+    assert el["raw_reference"]["source"] == "AGENT_365"           # nothing lost
 
 
 def test_build_type_and_blocked(monkeypatch):
@@ -74,13 +74,13 @@ def test_metrics(monkeypatch):
     assert m["blocked"] == 1
     assert m["deployed_to_everyone"] == 1        # sadece MS agent
     assert m["modified_last_30d"] == 1           # sadece Finance (07-20)
-    assert m["without_correlated_identity"] == 1  # MS agent'ın appId'si yok
+    assert m["without_correlated_identity"] == 1  # the MS agent has no appId
 
 
 def test_permission_missing_does_not_stop(monkeypatch):
     monkeypatch.setenv("ENABLE_AGENT365", "true")
     c = Agent365Collector(FakeGraph([], fail="Graph 403 Forbidden: Authorization_RequestDenied"))
-    assets = c.safe_run()          # exception fırlatmaz
+    assets = c.safe_run()          # never raises
     assert assets == []
     assert c.get_health()["status"] == ConnectorStatus.PERMISSION_MISSING
 
@@ -94,7 +94,7 @@ def test_not_configured_without_env():
 def test_package_correlates_with_entra_app(monkeypatch):
     monkeypatch.setenv("ENABLE_AGENT365", "true")
     a365 = Agent365Collector(FakeGraph(_packages())).safe_run()
-    # Entra tarafından aynı appId ile gelen bir uygulama (Adım 3'ün yapacağı gibi)
+    # An application coming from Entra with the same appId (as Step 3 would produce)
     entra = model.make_asset(EntityType.AI_AGENT, "Finance Agent Identity", Source.ENTRA_AGENT_ID,
                              external_ids={"entra_app_id": "APP-FIN-1", "agent_identity_id": "OID-1"})
     merged = correlation.correlate(a365 + [entra])

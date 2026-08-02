@@ -1,10 +1,10 @@
 """
-Rapor yayınlama. Azure'da Blob Storage'a, lokalde `out/` klasörüne yazar.
+Report publishing. Writes to Blob Storage on Azure, to the `out/` folder locally.
 
-Blob için:  AzureWebJobsStorage (connection string)  +  REPORT_CONTAINER (varsayılan aispm-reports)
-Her çalıştırma iki kopya yazar:
-  - shadow_ai_<UTCzaman>.html/json   (geçmiş / tarihçe)
-  - latest.html / latest.json         (dashboard'un okuyacağı sabit isim)
+For Blob:  AzureWebJobsStorage (connection string)  +  REPORT_CONTAINER (default aispm-reports)
+Every run writes two copies:
+  - shadow_ai_<UTCtimestamp>.html/json   (history / archive)
+  - latest.html / latest.json             (fixed name the dashboard reads)
 """
 import json
 import os
@@ -14,7 +14,7 @@ import report
 
 
 def read_json(name: str):
-    """Blob'daki bir JSON dosyasını okur (drift snapshot/changes, metadata). Yoksa None."""
+    """Reads a JSON file from Blob (drift snapshot/changes, metadata). None if missing."""
     raw = read_latest(name)
     if not raw:
         return None
@@ -25,7 +25,7 @@ def read_json(name: str):
 
 
 def write_json(name: str, obj) -> None:
-    """Bir JSON nesnesini Blob'a (yoksa out/ altına) yazar."""
+    """Writes a JSON object to Blob (or under out/ if unavailable)."""
     payload = json.dumps(obj, ensure_ascii=False, indent=2)
     conn = os.environ.get("AzureWebJobsStorage") or os.environ.get("REPORT_STORAGE_CONNECTION")
     if not conn or conn.lower().startswith("usedevelopmentstorage"):
@@ -49,15 +49,16 @@ SCAN_QUEUE = "aispm-scan-queue"
 
 def enqueue_scan(source: str) -> bool:
     """
-    `SCAN_QUEUE`'ya bir tarama isteği koyar; `scan_worker` (queue-trigger) bunu arka
-    planda işler. Consumption planında HTTP-tetikleyicili fonksiyonlar Azure'un kendi
-    front-end load balancer'ında sabit ~230s'de kesiliyor (host.json'daki
-    functionTimeout bunu etkilemez) — büyük tenant'larda çekirdek + 4 connector taraması
-    bunu aşabiliyor. Gerçek işi HTTP isteğinin dışına, queue-trigger'a taşıyarak bu
-    limitten kaçıyoruz (queue-trigger'lar bu LB kısıtına tabi değil).
+    Puts a scan request onto `SCAN_QUEUE`; `scan_worker` (queue-trigger) processes it in
+    the background. On the Consumption plan, HTTP-triggered functions get cut off by
+    Azure's own front-end load balancer at a fixed ~230s (host.json's functionTimeout
+    doesn't affect this) — on large tenants the core + 4 connector scan can exceed that.
+    Moving the real work out of the HTTP request into a queue-trigger sidesteps this
+    limit (queue-triggers aren't subject to that LB constraint).
 
-    Connection yoksa (lokal/test ortamı) False döner — çağıran eski senkron davranışa
-    düşer (`_run_scan` doğrudan çağrılır), böylece lokal geliştirme/testler etkilenmez.
+    Returns False if there's no connection (local/test environment) — the caller then
+    falls back to the old synchronous behavior (`_run_scan` is called directly), so local
+    development/tests are unaffected.
     """
     conn = os.environ.get("AzureWebJobsStorage") or os.environ.get("REPORT_STORAGE_CONNECTION")
     if not conn or conn.lower().startswith("usedevelopmentstorage"):
@@ -67,22 +68,22 @@ def enqueue_scan(source: str) -> bool:
     try:
         qc.create_queue()
     except Exception:
-        pass  # zaten var
+        pass  # already exists
     qc.send_message(source)
     return True
 
 
 def publish_connectors(html: str, js: str) -> dict:
     """
-    AI Data Sources dashboard'unu (connectors_report) `connectors_latest.html/json`
-    olarak yazar — `publish()`'in çekirdek dashboard için yaptığının aynısı.
+    Writes the AI Data Sources dashboard (connectors_report) as
+    `connectors_latest.html/json` — same as what `publish()` does for the core dashboard.
 
-    `/api/connectors` eskiden bunu her istekte CANLI hesaplıyordu (4 connector'ı Graph'tan
-    senkron çekip render ediyordu); büyük/E7 tenant'larda bu, Consumption planının
-    HTTP için sabit ~230s front-end limitini aşıp 504/sonsuz yüklenmeye yol açtı (gerçek
-    tenant'ta gözlemlendi — bkz. `_run_scan`). Artık `_run_scan` (queue/timer, HTTP
-    limitine tabi değil) bu fonksiyonla önceden hesaplayıp burada kaydediyor;
-    `/api/connectors` sadece okuyor.
+    `/api/connectors` used to compute this LIVE on every request (synchronously pulling
+    all 4 connectors from Graph and rendering); on large/E7 tenants this could exceed the
+    Consumption plan's fixed ~230s HTTP front-end limit, causing 504s/infinite loading
+    (observed on a real tenant — see `_run_scan`). Now `_run_scan` (queue/timer, not
+    subject to the HTTP limit) pre-computes and saves it via this function;
+    `/api/connectors` just reads it.
     """
     conn = os.environ.get("AzureWebJobsStorage") or os.environ.get("REPORT_STORAGE_CONNECTION")
     if conn and not conn.lower().startswith("usedevelopmentstorage"):
@@ -100,7 +101,7 @@ def publish_connectors(html: str, js: str) -> dict:
                            content_settings=ContentSettings(content_type="application/json"))
             return {"target": "blob", "container": container}
         except Exception as e:
-            print(f"[!] connectors Blob'a yazılamadı ({e}); lokale yazılıyor.")
+            print(f"[!] Could not write connectors to Blob ({e}); writing locally.")
     os.makedirs("out", exist_ok=True)
     with open(os.path.join("out", "connectors_latest.html"), "w", encoding="utf-8") as f:
         f.write(html)
@@ -110,7 +111,7 @@ def publish_connectors(html: str, js: str) -> dict:
 
 
 def read_metadata() -> dict:
-    """Kalıcı business/lifecycle metadata deposunu (metadata.json) okur. Yoksa {}."""
+    """Reads the persistent business/lifecycle metadata store (metadata.json). {} if missing."""
     return read_json("metadata.json") or {}
 
 
@@ -119,7 +120,7 @@ def write_metadata(store: dict) -> None:
 
 
 def read_latest(name: str = "latest.html") -> str | None:
-    """Blob'dan (yoksa lokal out/'tan) bir dosyayı okur. write_json ile simetrik."""
+    """Reads a file from Blob (or local out/ if unavailable). Symmetric with write_json."""
     conn = os.environ.get("AzureWebJobsStorage") or os.environ.get("REPORT_STORAGE_CONNECTION")
     if not conn or conn.lower().startswith("usedevelopmentstorage"):
         path = os.path.join("out", name)
@@ -146,8 +147,8 @@ def publish(scored: list[dict], tenant_id: str, changes=None, findings=None) -> 
     if conn and not conn.lower().startswith("usedevelopmentstorage"):
         try:
             return _publish_blob(conn, html, js, stamp)
-        except Exception as e:  # blob başarısızsa lokale düş, sessizce kaybetme
-            print(f"[!] Blob'a yazılamadı ({e}); lokale yazılıyor.")
+        except Exception as e:  # fall back to local on Blob failure, don't silently lose it
+            print(f"[!] Could not write to Blob ({e}); writing locally.")
     return _publish_local(html, js, stamp)
 
 
@@ -159,7 +160,7 @@ def _publish_blob(conn: str, html: str, js: str, stamp: str) -> dict:
     try:
         cc.create_container()
     except Exception:
-        pass  # zaten var
+        pass  # already exists
 
     def up(name, data, ctype):
         cc.upload_blob(name, data.encode("utf-8"), overwrite=True,
