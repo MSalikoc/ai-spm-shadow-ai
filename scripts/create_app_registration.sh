@@ -20,6 +20,7 @@ set -euo pipefail
 
 APP_NAME="${1:-AI-SPM Scanner}"
 GRAPH_APP_ID="00000003-0000-0000-c000-000000000000"
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 # Graph APPLICATION permission (app role) IDs. Names are resolved live below rather
 # than hard-coded, so a renamed or newly added role fails loudly instead of silently
@@ -89,6 +90,17 @@ echo "==> 4/4 Client secret oluşturuluyor (2 yıl)..."
 SECRET="$(az ad app credential reset --id "$APP_ID" --append \
           --display-name "aispm-cli" --years 2 --query password -o tsv)"
 
+# Print the interpreter that will actually work here. macOS has no bare `python`, and
+# when a venv exists it is usually the only one holding the dependencies — printing
+# `python` sends people straight into "command not found" or ModuleNotFoundError.
+if [[ -x "$ROOT_DIR/.venv/bin/python" ]]; then
+  PY=".venv/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+  PY="python3"
+else
+  PY="python"
+fi
+
 # The values are printed as an `export` block rather than inline flags: it pastes as one
 # unit, keeps the secret out of every later command line (and therefore out of shell
 # history and `ps` output), and leaves nothing to substitute by hand.
@@ -103,8 +115,8 @@ export AISPM_CLIENT_SECRET="$SECRET"
 
 Sonra sırasıyla:
 
-  python aispm.py doctor --auth app
-  python aispm.py scan  --auth app --scope consented --open
+  $PY aispm.py doctor --auth app
+  $PY aispm.py scan  --auth app --scope consented --open
 
 Secret'ı şimdi bir parola yöneticisine kaydedin — Azure bir daha göstermez.
 export'lar sadece bu terminal oturumu için geçerli.

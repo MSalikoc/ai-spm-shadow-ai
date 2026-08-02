@@ -36,7 +36,7 @@ and produces two ranked, explainable dashboards on every run.
   ·
   [AI data sources](https://htmlpreview.github.io/?https://github.com/MSalikoc/ai-spm-shadow-ai/blob/main/docs/sample-connectors.html)
   — a 24-application estate rendered through the real scoring and charting code.
-  Regenerate them yourself with `python aispm.py sample`.
+  Regenerate them yourself with `python3 aispm.py sample`.
 
 ---
 
@@ -107,11 +107,11 @@ pip install -r requirements.txt
 ```
 
 ```bash
-python aispm.py doctor
+python3 aispm.py doctor
 ```
 
 ```bash
-python aispm.py scan --open
+python3 aispm.py scan --open
 ```
 
 Sign in with an account holding a read-only directory role — **Global Reader** or
@@ -127,7 +127,7 @@ By default only apps matching the AI catalog are assessed, which is precise but 
 to any AI vendor the catalog hasn't heard of. Widen it:
 
 ```bash
-python aispm.py scan --scope consented
+python3 aispm.py scan --scope consented
 ```
 
 | `--scope` | Assesses | Use when |
@@ -190,11 +190,11 @@ grants the six Graph application permissions, admin-consents them, and prints a 
 It finishes by printing three `export` lines. Paste those, then:
 
 ```bash
-python aispm.py doctor --auth app
+python3 aispm.py doctor --auth app
 ```
 
 ```bash
-python aispm.py scan --auth app --scope consented --open
+python3 aispm.py scan --auth app --scope consented --open
 ```
 
 `AISPM_TENANT_ID`, `AISPM_CLIENT_ID` and `AISPM_CLIENT_SECRET` are read from the
@@ -412,6 +412,9 @@ scripts/                     create_app_registration.sh, postdeploy.sh, make_sam
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
+| `zsh: command not found: python` | macOS ships `python3` only | use `python3`, or `.venv/bin/python` if you made a venv |
+| `ModuleNotFoundError: No module named 'azure'` | running an interpreter the dependencies aren't installed into | `pip install -r requirements.txt` for *that* interpreter, or use `.venv/bin/python` |
+| `no such file or directory: T` | a `<PLACEHOLDER>` pasted into the shell, read as a redirect | use the `export` lines the setup script prints |
 | `Azure CLI is not installed` | no `az` on PATH | `brew install azure-cli`, or use `--auth app` |
 | Everything denied, including Enterprise applications | account has no directory role | sign in as Global Reader / Security Reader |
 | Only Entra sources connect | delegated token can't carry connector scopes | [Why only Entra connected](#why-only-entra-connected) → option 2 |
@@ -432,7 +435,7 @@ pytest
 ```
 
 ```bash
-python -c "import function_app"
+python3 -c "import function_app"
 ```
 
 CI runs the same checks on every pull request and before every deploy — a failing test
