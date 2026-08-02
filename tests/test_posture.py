@@ -97,11 +97,15 @@ def test_permission_heatmap_only_charts_sensitive_overlap():
 
 
 def test_vendor_treemap_folds_the_tail_rather_than_inventing_a_ninth_color():
-    apps = []
-    for i in range(11):
-        a = _app(f"App{i}", "Low", 5)
+    """One dominant vendor plus a long tail — the shape a treemap is actually for."""
+    apps = [_app(f"Big{i}", "Low", 5) for i in range(12)]
+    for a in apps:
+        a["vendor"] = "OpenAI"
+    for i in range(10):
+        a = _app(f"Tail{i}", "Low", 5)
         a["vendor"] = f"Vendor {i}"
         apps.append(a)
+
     out = report._vendor_treemap(apps, top=7)
     assert "Other (4 vendors)" in out
     assert "--viz-cat-8" in out            # the fold uses the next slot, never a wrap
@@ -117,3 +121,34 @@ def test_dashboard_renders_every_new_analytical_card():
     assert "Sensitive permission concentration" in doc
     assert "Estate share by vendor" in doc
     assert "Exposure points" in doc
+
+
+def test_vendor_chart_falls_back_to_bars_when_no_vendor_dominates():
+    """A folded 'Other' tile bigger than every real one says nothing but 'wrong form'."""
+    flat = []
+    for i in range(20):
+        a = _app(f"App{i}", "Low", 5)
+        a["vendor"] = f"Vendor {i}"
+        flat.append(a)
+    out = report._vendor_treemap(flat)
+    assert "none dominant" in out
+    assert "Other (" not in out
+
+    concentrated = [_app(f"A{i}", "Low", 5) for i in range(20)]
+    for a in concentrated:
+        a["vendor"] = "OpenAI"
+    for a in concentrated[:2]:
+        a["vendor"] = "Tiny Co"
+    assert "none dominant" not in report._vendor_treemap(concentrated)
+
+
+def test_vendor_chart_handles_an_empty_estate():
+    assert "viz-empty" in report._vendor_treemap([])
+
+
+def test_heatmap_legend_does_not_repeat_its_range():
+    apps = [_app("A", "Critical", 90, scopes=["mail.read", "files.readwrite.all"]),
+            _app("B", "High", 60, scopes=["mail.read"])]
+    out = report._permission_heatmap(apps)
+    assert "0–10 (0 –" not in out
+    assert "Permission sensitivity (0 –" in out

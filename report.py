@@ -349,20 +349,36 @@ def _permission_heatmap(shadow, top_apps=8, top_perms=7) -> str:
     values = [[_scope_weight(p) if p in set(a.get("scopes", [])) else 0 for p in perms]
               for a in apps]
     return charts.heatmap([a.get("display_name") or "—" for a in apps], perms, values,
-                          legend_title="Permission sensitivity, 0–10")
+                          legend_title="Permission sensitivity")
 
 
 def _vendor_treemap(shadow, top=7) -> str:
     """
-    Share of the estate by vendor. A ninth vendor never gets a generated color — the
-    tail folds into "Other" so no two vendors can share a hue.
+    Share of the estate by vendor.
+
+    A treemap only says something when a few vendors dominate. Estates where every
+    vendor has one or two apps are common, and there the folded "Other" tile becomes the
+    biggest thing on screen — which tells the reader nothing except that the form was
+    wrong. In that case this falls back to ranked bars, which read fine flat. Either
+    way the tail folds rather than generating a ninth hue.
     """
     by_vendor = {}
     for a in shadow:
-        by_vendor[a.get("vendor") or "Unknown"] = by_vendor.get(a.get("vendor") or "Unknown", 0) + 1
+        vendor = a.get("vendor") or "Unknown"
+        by_vendor[vendor] = by_vendor.get(vendor, 0) + 1
     ranked = sorted(by_vendor.items(), key=lambda kv: -kv[1])
-    items = [(v, n, charts.cat(i)) for i, (v, n) in enumerate(ranked[:top])]
+    if not ranked:
+        return charts._empty("No applications to chart")
+
     tail = sum(n for _, n in ranked[top:])
+    if tail > ranked[0][1]:
+        rows = [(v, f"{n} app{'s' if n != 1 else ''}", n, charts.cat(i))
+                for i, (v, n) in enumerate(ranked[:charts.CATEGORICAL_SLOTS])]
+        return charts.hbar(rows) + (
+            f'<p class="governed">{len(ranked)} vendors, none dominant — shown ranked '
+            f'rather than as shares.</p>' if len(ranked) > charts.CATEGORICAL_SLOTS else "")
+
+    items = [(v, n, charts.cat(i)) for i, (v, n) in enumerate(ranked[:top])]
     if tail:
         items.append((f"Other ({len(ranked) - top} vendors)", tail, charts.cat(top)))
     return charts.treemap(items)
