@@ -1,4 +1,6 @@
 """Classification engine tests."""
+import json
+
 import classifier
 import collectors
 import metadata
@@ -137,3 +139,50 @@ def test_dashboard_classification_section_and_ms_visible():
     assert 'data-cat="Microsoft First-Party AI"' in doc    # MS finding row
     assert 'data-group="cat"' in doc                       # classification filter
     assert "Known App ID" in doc                            # classification reason is shown
+
+
+# --- catalog loading --------------------------------------------------------
+def test_shipped_catalog_covers_the_major_vendors():
+    import config
+    names = " ".join(v["name"] for v in config.AI_VENDORS).lower()
+    for vendor in ("openai", "anthropic", "gemini", "perplexity", "glean",
+                   "otter", "cursor", "midjourney", "copilot"):
+        assert vendor in names, vendor
+    assert len(config.AI_VENDORS) >= 60
+
+
+def test_every_catalog_entry_has_a_usable_signal():
+    import config
+    for v in config.AI_VENDORS:
+        assert v.get("name")
+        assert v.get("app_ids") or v.get("patterns") or v.get("domains"), v["name"]
+        for pat in v.get("patterns", []):
+            assert pat == pat.lower(), f"{v['name']}: patterns are matched lowercase"
+        for dom in v.get("domains", []):
+            assert dom == dom.lower(), f"{v['name']}: domains are matched lowercase"
+
+
+def test_catalog_can_be_overridden_without_a_redeploy(tmp_path, monkeypatch):
+    import config
+    custom = tmp_path / "mine.json"
+    custom.write_text(json.dumps({
+        "vendors": [{"name": "Acme Internal AI", "app_ids": [], "patterns": ["acme-ai"],
+                     "domains": ["acme.example"]}],
+        "generic_hints": ["acme"],
+    }), encoding="utf-8")
+    monkeypatch.setenv("AISPM_CATALOG_PATH", str(custom))
+    loaded = config.load_catalog()
+    assert [v["name"] for v in loaded["vendors"]] == ["Acme Internal AI"]
+
+
+def test_a_broken_override_falls_back_instead_of_finding_nothing(tmp_path, monkeypatch):
+    """An empty catalog would make a healthy tenant look clean — the worst failure mode."""
+    import config
+    for content in ("{ not json", json.dumps({"vendors": []})):
+        bad = tmp_path / "bad.json"
+        bad.write_text(content, encoding="utf-8")
+        monkeypatch.setenv("AISPM_CATALOG_PATH", str(bad))
+        assert len(config.load_catalog()["vendors"]) >= 60
+
+    monkeypatch.setenv("AISPM_CATALOG_PATH", str(tmp_path / "nope.json"))
+    assert len(config.load_catalog()["vendors"]) >= 60

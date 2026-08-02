@@ -5,11 +5,39 @@ The AI vendor catalog lives OUT OF CODE in `catalog.json` (criterion 2); loaded 
 there. Scope weights and governance dictionaries are policy, so they stay here.
 """
 import json
+import logging
 import os
 
 # --- AI vendor catalog (from catalog.json) ---------------------------------
-with open(os.path.join(os.path.dirname(__file__), "catalog.json"), encoding="utf-8") as _f:
-    _CATALOG = json.load(_f)
+DEFAULT_CATALOG_PATH = os.path.join(os.path.dirname(__file__), "catalog.json")
+
+
+def load_catalog(path: str | None = None) -> dict:
+    """
+    Loads the AI vendor catalog, preferring `AISPM_CATALOG_PATH` when it is set.
+
+    Tenants disagree about what counts as an AI application — an override lets a team
+    add their own vendors, or replace the list wholesale, without forking the repo or
+    redeploying. A bad path falls back to the shipped catalog rather than silently
+    scanning with an empty one, which would look exactly like "no AI found".
+    """
+    chosen = path or os.environ.get("AISPM_CATALOG_PATH") or DEFAULT_CATALOG_PATH
+    try:
+        with open(chosen, encoding="utf-8") as f:
+            catalog = json.load(f)
+        if not catalog.get("vendors"):
+            raise ValueError("catalog has no vendors")
+        return catalog
+    except (OSError, ValueError) as e:
+        if chosen != DEFAULT_CATALOG_PATH:
+            logging.warning("AISPM_CATALOG_PATH %s unusable (%s); using the shipped catalog.",
+                            chosen, e)
+            with open(DEFAULT_CATALOG_PATH, encoding="utf-8") as f:
+                return json.load(f)
+        raise
+
+
+_CATALOG = load_catalog()
 AI_VENDORS = _CATALOG["vendors"]          # each: {name, app_ids, patterns, domains}
 GENERIC_AI_HINTS = _CATALOG["generic_hints"]
 
