@@ -123,7 +123,7 @@ def test_scatter_uses_a_log_x_axis_so_consent_counts_stay_comparable():
     pts = [("A", 50, 1, "Medium", 1), ("B", 50, 10, "Medium", 1),
            ("C", 50, 100, "Medium", 1), ("D", 50, 1000, "Medium", 1)]
     svg = charts.risk_scatter(pts)
-    xs = [float(x) for x in re.findall(r'<circle cx="([\d.]+)"', svg)]
+    xs = [float(x) for x in re.findall(r'<circle cx="([\d.]+)"[^>]*class="mark"', svg)]
     gaps = [round(b - a) for a, b in zip(xs, xs[1:])]
     # Even decade spacing is the whole point of the log scale.
     assert max(gaps) - min(gaps) <= 2
@@ -132,7 +132,8 @@ def test_scatter_uses_a_log_x_axis_so_consent_counts_stay_comparable():
 
 def test_scatter_dot_area_tracks_permission_count():
     svg = charts.risk_scatter([("Few", 50, 10, "Low", 1), ("Many", 50, 10, "Low", 16)])
-    radii = sorted(float(r) for r in re.findall(r'r="([\d.]+)"', svg))
+    radii = sorted(float(r) for r in
+                   re.findall(r'r="([\d.]+)"[^>]*class="mark"', svg))
     assert radii[1] > radii[0] * 1.5
 
 
@@ -191,13 +192,42 @@ def test_labels_from_tenant_data_are_escaped_everywhere():
         assert "&lt;script&gt;" in svg
 
 
-def test_every_mark_carries_a_hover_title():
-    assert "<title>" in charts.donut([("A", 1, "#111")])
-    assert "<title>" in charts.hbar([("A", "", 1, "#111")])
-    assert "<title>" in charts.treemap([("A", 1, "#111")])
-    assert "<title>" in charts.risk_scatter([("A", 1, 1, "Low", 1)])
-    assert "<title>" in charts.heatmap(["r"], ["c"], [[1]])
-    assert "<title>" in charts.timeseries([1, 2, 3])
+def test_every_mark_names_itself_on_hover():
+    """
+    A scatter of unlabelled dots is unreadable without this. `<title>` used to do it,
+    but the native tooltip is slow and easy to miss, so marks now carry data-tip for
+    the styled tooltip and aria-label for screen readers.
+    """
+    for svg in (charts.donut([("A", 1, "#111")]),
+                charts.hbar([("A", "", 1, "#111")]),
+                charts.treemap([("A", 1, "#111")]),
+                charts.risk_scatter([("A", 1, 1, "Low", 1)]),
+                charts.heatmap(["r"], ["c"], [[1]]),
+                charts.timeseries([1, 2, 3]),
+                charts.stacked_bar([("R", {"a": 1})], ["a"], {"a": "#111"})):
+        assert "data-tip=" in svg
+        assert "aria-label=" in svg
+        # No native tooltip alongside it — two at once is worse than one.
+        assert "<title>" not in svg
+
+
+def test_the_scatter_tooltip_names_the_vendor_and_its_numbers():
+    svg = charts.risk_scatter([("Anthropic (Claude)", 58, 490, "High", 4)])
+    assert 'data-tip="Anthropic (Claude) — risk 58/100 (High), 490 users, 4 permissions"' in svg
+
+
+def test_small_dots_get_a_hit_target_worth_pointing_at():
+    """The smallest dot is a few pixels across; the tooltip is the only label it has."""
+    svg = charts.risk_scatter([("Tiny", 50, 10, "Low", 0)])
+    radii = sorted(float(r) for r in re.findall(r'<circle cx="[\d.]+" cy="[\d.]+" r="([\d.]+)"', svg))
+    assert radii[-1] >= 11
+    assert 'fill="transparent"' in svg
+
+
+def test_the_tooltip_script_and_styles_travel_with_the_charts():
+    assert "#viz-tip" in charts.CSS
+    assert "data-tip" in charts.JS
+    assert "focusin" in charts.JS          # keyboard reaches it too
 
 
 def test_scatter_drops_a_name_that_would_land_on_another():

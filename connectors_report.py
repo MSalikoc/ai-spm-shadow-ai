@@ -1517,7 +1517,7 @@ def html_string(result: dict, tenant_id: str = "", now=None, portal_href=None) -
 </main>
 
 {_DETAIL_PANEL}
-<script>{_ZT_SCRIPT}</script>
+<script>{_ZT_SCRIPT}{charts.JS}</script>
 </body></html>"""
 
 

@@ -88,6 +88,49 @@ CSS = """
 .viz-legend i{width:10px;height:10px;border-radius:3px;flex:0 0 auto}
 .viz-legend b{font-variant-numeric:tabular-nums;color:var(--muted);font-weight:600}
 .viz-empty{color:var(--muted);font-size:12px;padding:14px 0}
+.viz [data-tip]{cursor:default}
+.viz [data-tip]:hover .mark,.viz [data-tip]:focus .mark{opacity:1;filter:brightness(1.08)}
+.viz [data-tip]:focus{outline:none}
+.viz [data-tip]:focus .mark{stroke:var(--ink);stroke-width:2}
+#viz-tip{position:fixed;z-index:60;pointer-events:none;opacity:0;transition:opacity .1s;
+ background:var(--ink);color:var(--panel);font:12px/1.45 'Segoe UI',-apple-system,Roboto,sans-serif;
+ padding:6px 10px;border-radius:7px;max-width:320px;box-shadow:0 4px 14px rgba(0,0,0,.28)}
+#viz-tip.on{opacity:1}
+"""
+
+# Attached once per page; every chart mark carries data-tip, so one listener covers all
+# eight forms. Keyboard focus shows the same tooltip, so the marks are not mouse-only.
+JS = """
+(function(){
+  var tip=document.getElementById('viz-tip');
+  if(!tip){tip=document.createElement('div');tip.id='viz-tip';document.body.appendChild(tip);}
+  function show(el,x,y){
+    var t=el.getAttribute('data-tip'); if(!t){return;}
+    tip.textContent=t; tip.classList.add('on');
+    var r=tip.getBoundingClientRect();
+    var left=Math.min(Math.max(8,x-r.width/2),window.innerWidth-r.width-8);
+    var top=y-r.height-12; if(top<8){top=y+18;}
+    tip.style.left=left+'px'; tip.style.top=top+'px';
+  }
+  function hide(){tip.classList.remove('on');}
+  document.addEventListener('mouseover',function(e){
+    var el=e.target.closest && e.target.closest('[data-tip]');
+    if(el){show(el,e.clientX,e.clientY);}else{hide();}
+  });
+  document.addEventListener('mousemove',function(e){
+    var el=e.target.closest && e.target.closest('[data-tip]');
+    if(el&&tip.classList.contains('on')){show(el,e.clientX,e.clientY);}
+  });
+  document.addEventListener('mouseout',function(e){
+    if(e.target.closest && e.target.closest('[data-tip]')){hide();}
+  });
+  document.addEventListener('focusin',function(e){
+    var el=e.target.closest && e.target.closest('[data-tip]');
+    if(el){var b=el.getBoundingClientRect();show(el,b.left+b.width/2,b.top);}
+  });
+  document.addEventListener('focusout',hide);
+  window.addEventListener('scroll',hide,{passive:true});
+})();
 """
 
 
@@ -109,6 +152,20 @@ def severity_color(level: str) -> str:
 
 def _e(s) -> str:
     return html.escape(str(s if s is not None else ""), quote=True)
+
+
+def hover(text) -> str:
+    """
+    Attributes that make a mark identify itself on hover.
+
+    `<title>` was doing this, but the browser's native tooltip waits about a second,
+    cannot be styled, and is easy to miss entirely — on a scatter of unlabelled dots
+    that left the reader with no way to tell which vendor was which. `data-tip` drives
+    the styled tooltip in JS; `aria-label` keeps the same text available to screen
+    readers without triggering a second, native tooltip on top of it.
+    """
+    safe = _e(text)
+    return f' data-tip="{safe}" aria-label="{safe}"'
 
 
 def _empty(msg="No data") -> str:
@@ -176,7 +233,6 @@ def gauge(score: int, caption: str = "", width: int = 210) -> str:
     return (
         f'<svg viewBox="0 0 {width} 118" width="{width}" height="118" class="viz" role="img" '
         f'aria-label="{_e(caption)}: {score} of 100, {band}">'
-        f'<title>{_e(caption)}: {score}/100 ({band})</title>'
         f'<path d="M{x0:.1f},{y0:.1f} A{r},{r} 0 0 1 {x1:.1f},{y1:.1f}" fill="none" '
         f'stroke="var(--track)" stroke-width="13" stroke-linecap="round"/>'
         f'<path d="M{x0:.1f},{y0:.1f} A{r},{r} 0 {large} 1 {xs:.1f},{ys:.1f}" fill="none" '
@@ -210,7 +266,7 @@ def donut(segments, center_value=None, center_label="", size: int = 190,
     for label, value, color in segments:
         dash = circ * (value / total)
         arcs.append(
-            f'<g><title>{_e(label)}: {value} ({round(100 * value / total)}%)</title>'
+            f'<g{hover(f"{label}: {value} ({round(100 * value / total)}%)")}>'
             f'<circle cx="{cx}" cy="{cy}" r="{r:.2f}" fill="none" stroke="{color}" '
             f'stroke-width="{stroke}" class="mark" '
             f'stroke-dasharray="{max(dash - gap, 0.5):.2f} {circ - max(dash - gap, 0.5):.2f}" '
@@ -251,7 +307,7 @@ def hbar(rows, width: int = 560, bar: int = 18, gap: int = 12,
         w = max(2.0, plot_w * (value / maxv))
         sub_txt = (f'<tspan class="sub" dx="6">{_e(sub)}</tspan>' if sub else "")
         out.append(
-            f'<g><title>{_e(label)}: {value}{_e(unit)}{" — " + _e(sub) if sub else ""}</title>'
+            f'<g{hover(f"{label}: {value}{unit}" + (f" — {sub}" if sub else ""))}>'
             f'<text x="0" y="{y + bar * 0.72:.1f}" class="lbl">'
             f'{_e(_clip(label, 26))}{sub_txt}</text>'
             f'<rect x="{label_w}" y="{y}" width="{plot_w}" height="{bar}" rx="4" '
@@ -292,7 +348,7 @@ def stacked_bar(rows, keys, colors, width: int = 560, bar: int = 20, gap: int = 
                 continue
             w = plot_w * (v / total)
             out.append(
-                f'<g><title>{_e(label)} — {_e(k)}: {v} ({round(100 * v / total)}%)</title>'
+                f'<g{hover(f"{label} — {k}: {v} ({round(100 * v / total)}%)")}>'
                 f'<rect x="{x:.1f}" y="{y}" width="{max(w - 2, 1):.1f}" height="{bar}" '
                 f'rx="3" fill="{colors.get(k, "var(--track)")}" class="mark"/></g>')
             x += w                                  # 2px of the step is left as surface gap
@@ -335,9 +391,8 @@ def timeseries(values, labels=None, width: int = 660, height: int = 150,
         f'text-anchor="end" class="ax">{_fmt(t)}</text>' for t in ticks)
 
     # Hover targets are full-height columns so the pointer never has to find the dot.
-    hover = "".join(
-        f'<g><title>{_e(labels[i]) if labels and i < len(labels) else f"point {i + 1}"}: '
-        f'{_fmt(v)}{_e(unit)}</title>'
+    hover_cols = "".join(
+        f'<g{hover((labels[i] if labels and i < len(labels) else f"point {i + 1}") + f": {_fmt(v)}{unit}")}>'
         f'<rect x="{pts[i][0] - dx / 2:.1f}" y="{pad_t}" width="{max(dx, 3):.1f}" '
         f'height="{plot_h}" fill="transparent"/></g>' for i, v in enumerate(values))
 
@@ -369,7 +424,7 @@ def timeseries(values, labels=None, width: int = 660, height: int = 150,
             f'<circle cx="{lx:.1f}" cy="{ly:.1f}" r="4" fill="{color}" '
             f'stroke="var(--panel)" stroke-width="2"/>'
             f'<text x="{lx - 6:.1f}" y="{ly - 9:.1f}" text-anchor="end" class="val">'
-            f'{_fmt(values[-1])}{_e(unit)}</text>{x_labels}{hover}</svg>')
+            f'{_fmt(values[-1])}{_e(unit)}</text>{x_labels}{hover_cols}</svg>')
 
 
 def _fmt(v):
@@ -436,11 +491,12 @@ def risk_scatter(points, width: int = 620, height: int = 300) -> str:
         # a zero-permission app visible, the range is wide enough for size to read.
         r = math.sqrt(16 + 150 * ((perms or 0) / max_perms))
         dots.append(
-            f'<g><title>{_e(name)} — risk {score}/100 ({_e(level)}), '
-            f'{users or 0} users, {perms or 0} permissions</title>'
+            f'<g{hover(f"{name} — risk {score}/100 ({level}), {users or 0} users, {perms or 0} permissions")}>'
             f'<circle cx="{ux(users):.1f}" cy="{ry(score):.1f}" r="{r:.1f}" '
             f'fill="{severity_color(level)}" fill-opacity="0.72" class="mark" '
-            f'stroke="var(--panel)" stroke-width="2"/></g>')
+            f'stroke="var(--panel)" stroke-width="2"/>'
+            f'<circle cx="{ux(users):.1f}" cy="{ry(score):.1f}" r="{max(r, 11):.1f}" '
+            f'fill="transparent"/></g>')
 
     # Name only the handful that matter, rather than a label on every dot — and drop a
     # name outright when it would land on one already placed. In a real tenant the
@@ -511,7 +567,7 @@ def heatmap(row_labels, col_labels, values, width: int = 620, cell_h: int = 22,
             x = label_w + c * cell_w
             fill = seq(v / top) if (top and v) else "var(--track)"
             cells.append(
-                f'<g><title>{_e(row)} — {_e(col)}: {v}</title>'
+                f'<g{hover(f"{row} — {col}: {v}")}>'
                 f'<rect x="{x + 1:.1f}" y="{y + 1}" width="{cell_w - 2:.1f}" '
                 f'height="{cell_h - 2}" rx="3" fill="{fill}" class="mark"/></g>')
     scale = ""
@@ -547,7 +603,7 @@ def treemap(items, width: int = 560, height: int = 220) -> str:
                     f'<text x="{x + 8:.1f}" y="{y + 34:.1f}" class="sub" '
                     f'style="fill:#fff;opacity:.85">{value} · {pct}%</text>')
         out.append(
-            f'<g><title>{_e(label)}: {value} ({pct}%)</title>'
+            f'<g{hover(f"{label}: {value} ({pct}%)")}>'
             f'<rect x="{x + 1:.1f}" y="{y + 1:.1f}" width="{max(w - 2, 1):.1f}" '
             f'height="{max(h - 2, 1):.1f}" rx="4" fill="{color}" class="mark"/>{text}</g>')
     return (f'<svg viewBox="0 0 {width} {height}" class="viz" role="img">'

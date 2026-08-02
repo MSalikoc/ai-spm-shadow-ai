@@ -681,7 +681,7 @@ def html_string(scored, tenant_id="", connectors_result=None, changes=None,
   <div class="foot">AI-SPM · read-only · {ts}</div>
 </main>
 {(conn or {}).get("detail_panel", "")}
-<script>{THEME_JS}{PORTAL_JS}{(conn or {}).get("script", "")}</script>
+<script>{THEME_JS}{PORTAL_JS}{charts.JS}{(conn or {}).get("script", "")}</script>
 """
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'

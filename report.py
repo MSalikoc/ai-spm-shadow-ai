@@ -1186,7 +1186,7 @@ def _build(apps: list[dict], tenant_id: str, changes=None, findings=None,
 
   <div class="foot">AI-SPM · read-only Entra/Graph scan · {ts}</div>
 </main>
-<script>{THEME_JS}</script>
+<script>{THEME_JS}{charts.JS}</script>
 """
     # The tab bodies are lifted back out of the assembled page rather than built twice.
     # `<section>` appears nowhere else in this document, so the split is unambiguous, and
