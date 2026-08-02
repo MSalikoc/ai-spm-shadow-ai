@@ -12,10 +12,64 @@ and produces two ranked, explainable dashboards on every run.
 
 ---
 
+## Try it in two minutes, without deploying anything
+
+The dashboards run locally against the sign-in you already have. No app registration,
+no client secret, no Function App.
+
+```bash
+pip install -r requirements.txt
+```
+
+```bash
+az login
+```
+
+See what your account is allowed to read — and exactly what to grant for anything it
+can't:
+
+```bash
+python aispm.py doctor
+```
+
+Then scan, and open the result:
+
+```bash
+python aispm.py scan --open
+```
+
+That writes `out/report.html` and `out/connectors.html`. A read-only directory role
+(Global Reader or Security Reader) is enough. Deploy to Azure when you want this to run
+*continuously* — see [Setup](#setup) — but you don't need it to see what the tool finds.
+
+### Choose how much to look at
+
+By default only apps matching the AI catalog are assessed, which is precise but blind
+to any AI vendor the catalog hasn't heard of. Widen it:
+
+```bash
+python aispm.py scan --scope consented
+```
+
+| `--scope` | Assesses | Use when |
+| --- | --- | --- |
+| `ai` *(default)* | Apps matching the AI catalog | You want a focused Shadow AI view |
+| `consented` | The above **plus every app holding a real OAuth grant** | You want the honest consent surface, including AI tools nobody catalogued |
+| `all` | Every third-party app | You're auditing the whole estate |
+
+Apps pulled in by scope rather than by a catalog hit are labelled `ai_match: false` —
+being in scope is never dressed up as an AI detection.
+
+The same setting works on the deployed Function via the `AISPM_SCAN_SCOPE` app setting.
+
+---
+
 ## What you get
 
 - **Core dashboard** (`/api/report`) — every third-party AI app with OAuth access to
-  your tenant, each with a transparent 0–100 risk score (reasons included).
+  your tenant, each with a transparent 0–100 risk score (reasons included). Charts:
+  a triage scatter (risk against blast radius), a weighted posture gauge, a sensitive
+  permission heatmap, and a vendor treemap.
 - **AI Data Sources dashboard** (`/api/connectors?format=html`) — a 6-tab view (Overview,
   Agents, Shadow AI, Sensitive Data, Findings, Gaps) fed by four Microsoft sources:
 
@@ -29,13 +83,19 @@ and produces two ranked, explainable dashboards on every run.
   Every agent, app, and finding gets the same transparent 0–100 score. Click any row to
   see exactly why: facts → score breakdown → what was checked → remediation.
 
-  **See it live without deploying anything:** [docs/sample-report.html](docs/sample-report.html)
-  ([open rendered](https://htmlpreview.github.io/?https://github.com/MSalikoc/ai-spm-shadow-ai/blob/main/docs/sample-report.html)) —
-  built with realistic mock data via the real code.
+  **Sample dashboards, no tenant required:**
+  [core](https://htmlpreview.github.io/?https://github.com/MSalikoc/ai-spm-shadow-ai/blob/main/docs/sample-report.html)
+  ·
+  [AI data sources](https://htmlpreview.github.io/?https://github.com/MSalikoc/ai-spm-shadow-ai/blob/main/docs/sample-connectors.html)
+  — a 24-application estate rendered through the real scoring and charting code.
+  Regenerate them yourself with `python aispm.py sample`.
 
 ---
 
 ## Setup
+
+Deploying gets you the scheduled scan, drift history across runs, and the weekly email
+digest. For a one-off look, the local CLI above is enough.
 
 ### Step 1 — Deploy the infrastructure
 
@@ -162,6 +222,8 @@ to set by hand.
 | Setting | Purpose |
 | --- | --- |
 | `AISPM_TENANT_ID` | Entra tenant to scan |
+| `AISPM_SCAN_SCOPE` | `ai` (default) / `consented` / `all` — see [Choose how much to look at](#choose-how-much-to-look-at) |
+| `AISPM_ACTIVITY_DAYS` | Sign-in history window, 7–90 (default 90). Lower it on very large tenants |
 | `SCAN_SCHEDULE` | Core scan schedule (default: daily 06:00 UTC) |
 | `ENABLE_AGENT365`, `ENABLE_ENTRA_AGENT_ID`, `ENABLE_DEFENDER_CLOUD_APPS`, `ENABLE_PREVIEW_CONNECTORS`, `ENABLE_PURVIEW_AUDIT` | Turn on the four AI Data Sources connectors |
 | `STORE_RAW_AI_CONTENT` | Leave **off** — sensitive-interaction records never keep prompt/response text unless this is explicitly `true` |
@@ -176,9 +238,12 @@ What counts as an "AI application" and how scores are weighted lives in
 ## Architecture
 
 ```
+aispm.py                     local CLI — doctor / scan / sample
+preflight.py                 permission + licence probes ("can this identity read X?")
 function_app.py              Azure Function entry points (timers + HTTP routes)
 pipeline.py                  core scan flow + AI Data Sources entry point
 collectors.py, scoring.py    OAuth-consent discovery + transparent risk scoring
+charts.py                    shared inline-SVG chart library (no external deps)
 report.py, executive.py      core HTML dashboard + executive KPIs
 findings.py, drift.py        managed findings + change-tracking
 notify.py                    weekly email digest
@@ -189,9 +254,17 @@ connectors_drift.py          AI Data Sources change-tracking (parallel to drift.
 
 auth.py, graph_client.py, config.py   shared: auth, Graph client, tunable AI catalog
 deploy/                      ARM template (one-click Deploy to Azure)
-scripts/                     postdeploy.sh and what it calls
+scripts/                     postdeploy.sh, make_sample.py
 .github/                     CI/CD (auto-deploy on push to main)
 ```
+
+### Why a section can be empty
+
+`python aispm.py doctor` answers this directly: for every source it says whether the
+identity is allowed to read it, whether the tenant has the feature at all, and which
+permission to grant. An empty section is never left ambiguous between "nothing there"
+and "not allowed to look" — on the deployed dashboards the same distinction shows up as
+`PERMISSION_MISSING` versus `LICENSE_MISSING`.
 
 ## Local testing
 
@@ -200,15 +273,11 @@ pip install -r requirements.txt pytest
 ```
 
 ```bash
-python -m compileall -q .
+pytest
 ```
 
 ```bash
 python -c "import function_app"
-```
-
-```bash
-pytest
 ```
 
 CI runs the same checks on every pull request and before every deploy — a failing test

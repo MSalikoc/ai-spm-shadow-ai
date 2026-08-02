@@ -8,11 +8,39 @@ Entra ID authentication. Two modes:
 Required Graph permissions (at minimum):
   Directory.Read.All, Application.Read.All, AuditLog.Read.All
 """
-import sys
 import msal
 
 GRAPH_SCOPES_DELEGATED = ["https://graph.microsoft.com/.default"]
 GRAPH_SCOPE_APP = ["https://graph.microsoft.com/.default"]
+
+
+def get_token_azure_cli(tenant_id: str | None = None) -> str:
+    """
+    Reuses the sign-in the operator already has from `az login`.
+
+    This is the path that removes setup entirely for a first look: no app registration
+    to create, no client secret to store, no Function App to deploy. The token carries
+    the operator's own delegated permissions, so a Global Reader or Security Reader can
+    run a scan against their tenant from a laptop and get the same dashboards the
+    deployed version produces.
+    """
+    from azure.identity import AzureCliCredential
+    cred = AzureCliCredential(tenant_id=tenant_id) if tenant_id else AzureCliCredential()
+    return cred.get_token("https://graph.microsoft.com/.default").token
+
+
+def tenant_id_from_cli() -> str | None:
+    """The tenant `az login` is currently pointed at, so it need not be typed out."""
+    import json
+    import subprocess
+    try:
+        out = subprocess.run(["az", "account", "show", "-o", "json"],
+                             capture_output=True, text=True, timeout=30)
+        if out.returncode != 0:
+            return None
+        return (json.loads(out.stdout) or {}).get("tenantId")
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
 
 
 def get_token_device_code(tenant_id: str, client_id: str) -> str:
