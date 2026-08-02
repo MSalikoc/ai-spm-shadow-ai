@@ -260,11 +260,19 @@ scripts/                     postdeploy.sh, make_sample.py
 
 ### Why a section can be empty
 
-`python aispm.py doctor` answers this directly: for every source it says whether the
-identity is allowed to read it, whether the tenant has the feature at all, and which
-permission to grant. An empty section is never left ambiguous between "nothing there"
-and "not allowed to look" — on the deployed dashboards the same distinction shows up as
-`PERMISSION_MISSING` versus `LICENSE_MISSING`.
+`doctor` answers this directly: for every source it says whether the identity is allowed
+to read it, whether the tenant has the feature at all, and which permission to grant. An
+empty section is never left ambiguous between "nothing there" and "not allowed to look".
+
+```bash
+python aispm.py doctor
+```
+
+The deployed Function exposes the same check, run against its Managed Identity:
+
+```bash
+curl "https://$FUNCTION_APP.azurewebsites.net/api/doctor?code=$KEY"
+```
 
 ## Local testing
 

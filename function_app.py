@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 import azure.functions as func
 
 import auth
+import collectors
 import connectors_drift
 import connectors_report
 import drift
@@ -238,6 +239,38 @@ def connectors_now(req: func.HttpRequest) -> func.HttpResponse:
         logging.exception("connectors_now (live fallback) error")
         return func.HttpResponse(json.dumps({"error": str(e)}, ensure_ascii=False),
                                  mimetype="application/json", status_code=500)
+
+
+@app.route(route="doctor", auth_level=func.AuthLevel.FUNCTION)
+def doctor_view(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Same preflight the local CLI runs, against the Managed Identity.
+
+    This is how you tell an empty dashboard section apart from a permission that was
+    never granted, without reading Portal logs: each source reports readable, denied,
+    or not provisioned, plus the permission to grant. ?format=json for the raw rows.
+    """
+    import preflight
+    try:
+        tenant_id = os.environ.get("AISPM_TENANT_ID", "")
+        if not tenant_id:
+            raise RuntimeError("AISPM_TENANT_ID env-var is not set.")
+        graph = GraphClient(auth.get_token_managed_identity())
+        rows = preflight.run(graph)
+    except Exception as e:
+        logging.exception("doctor error")
+        return func.HttpResponse(json.dumps({"error": str(e)}, ensure_ascii=False),
+                                 mimetype="application/json", status_code=500)
+
+    if (req.params.get("format") or "").lower() == "json":
+        return func.HttpResponse(
+            json.dumps({"tenant": tenant_id, "scan_scope": collectors.scan_scope(),
+                        "blocking": [r["key"] for r in preflight.blocking(rows)],
+                        "sources": rows}, ensure_ascii=False),
+            mimetype="application/json", status_code=200)
+    body = (f"Tenant: {tenant_id}\nScan scope: {collectors.scan_scope()}\n"
+            + preflight.format_text(rows))
+    return func.HttpResponse(body, mimetype="text/plain", status_code=200)
 
 
 @app.route(route="metadata", methods=["POST"], auth_level=func.AuthLevel.FUNCTION)

@@ -234,3 +234,49 @@ def test_not_signed_in_is_distinguished_from_not_installed():
     assert "az login" in hint
     assert "brew install" not in hint    # they already have it; don't send them installing
     assert "Global Reader" in hint       # says which role is enough
+
+
+# --- the deployed Function exposes the same preflight ----------------------
+def test_function_app_serves_doctor(monkeypatch):
+    import function_app
+
+    monkeypatch.setenv("AISPM_TENANT_ID", "tenant-abc")
+    monkeypatch.setattr(function_app.auth, "get_token_managed_identity", lambda: "tok")
+    monkeypatch.setattr(function_app, "GraphClient",
+                        lambda _t: FakeTenant(denied=["/auditLogs/signIns"]))
+
+    class Req:
+        params = {}
+
+    body = function_app.doctor_view(Req()).get_body().decode()
+    assert "Sign-in logs" in body and "AuditLog.Read.All" in body
+    assert "Scan scope: ai" in body
+
+
+def test_function_app_doctor_json_names_blocking_sources(monkeypatch):
+    import function_app
+
+    monkeypatch.setenv("AISPM_TENANT_ID", "tenant-abc")
+    monkeypatch.setattr(function_app.auth, "get_token_managed_identity", lambda: "tok")
+    monkeypatch.setattr(function_app, "GraphClient",
+                        lambda _t: FakeTenant(denied=["/servicePrincipals"]))
+
+    class Req:
+        params = {"format": "json"}
+
+    payload = json.loads(function_app.doctor_view(Req()).get_body().decode())
+    assert "service_principals" in payload["blocking"]
+    assert payload["tenant"] == "tenant-abc"
+
+
+def test_function_app_doctor_reports_a_missing_tenant_id(monkeypatch):
+    import function_app
+
+    monkeypatch.delenv("AISPM_TENANT_ID", raising=False)
+
+    class Req:
+        params = {}
+
+    resp = function_app.doctor_view(Req())
+    assert resp.status_code == 500
+    assert "AISPM_TENANT_ID" in resp.get_body().decode()
