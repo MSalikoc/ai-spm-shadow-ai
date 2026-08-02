@@ -1,7 +1,7 @@
 name: CI
 
-# Pull request'lerde otomatik çalışır: derleme + import smoke + pytest.
-# Deployment'tan önce import/dependency hatalarını yakalar.
+# Runs automatically on pull requests: compile + import smoke + pytest.
+# Catches import/dependency errors before a deployment does.
 on:
   pull_request:
   workflow_dispatch:
