@@ -44,6 +44,7 @@ import html
 import json
 from datetime import datetime, timezone
 
+import charts
 from connectors.agent365 import metrics as agent365_metrics
 from connectors.base import ConnectorStatus
 from connectors.defender_cloud_apps import metrics as mdca_metrics
@@ -338,7 +339,10 @@ def json_string(result: dict, now=None) -> str:
 
 
 # ---------- shared HTML helpers ----------
-_SEV = {"high": "#c0392b", "medium": "#b8860b", "low": "#2e8b57", "info": "#6b7280"}
+# Risk tiers here are the same status scale as report.py's severity levels, one step
+# coarser: high/medium/low map onto Critical/Medium/Low, and info stays neutral ink.
+_SEV = {"high": charts.SEVERITY["Critical"], "medium": charts.SEVERITY["Medium"],
+        "low": charts.SEVERITY["Low"], "info": "#6b7280"}
 _RISK_LABEL = {"high": "High", "medium": "Medium", "low": "Low", "info": "Info"}
 _RISK_RANK = {"high": 3, "medium": 2, "low": 1, "info": 0}  # for table sorting
 
@@ -399,44 +403,148 @@ def _interactions_table(sample):
 
 # ---------- helpers reusing the classic dashboard's (report.py) visual language ----------
 def _donut(segments, size=170, stroke=26, center_label="Finding"):
-    import math
-    total = sum(v for _, v, _ in segments) or 1
-    r = (size - stroke) / 2
-    cx = cy = size / 2
-    circ = 2 * math.pi * r
-    offset = 0.0
-    arcs = []
-    for _, value, color in segments:
-        if value <= 0:
-            continue
-        dash = circ * (value / total)
-        arcs.append(
-            f'<circle cx="{cx}" cy="{cy}" r="{r:.2f}" fill="none" stroke="{color}" '
-            f'stroke-width="{stroke}" stroke-dasharray="{dash:.2f} {circ - dash:.2f}" '
-            f'stroke-dashoffset="{-offset:.2f}" transform="rotate(-90 {cx} {cy})"/>')
-        offset += dash
-    return (
-        f'<svg viewBox="0 0 {size} {size}" width="{size}" height="{size}" role="img" class="donut">'
-        f'<circle cx="{cx}" cy="{cy}" r="{r:.2f}" fill="none" stroke="var(--track)" stroke-width="{stroke}"/>'
-        f'{"".join(arcs)}'
-        f'<text x="{cx}" y="{cy - 4}" text-anchor="middle" class="donut-num">{total}</text>'
-        f'<text x="{cx}" y="{cy + 16}" text-anchor="middle" class="donut-cap">{_esc(center_label)}</text>'
-        f'</svg>')
+    return charts.donut(segments, center_label=center_label, size=size, stroke=stroke)
 
 
-def _bars(rows, maxv):
-    """rows: [(label, sublabel, value, color)] → same bar-row pattern as report.py."""
-    maxv = maxv or 1
-    out = []
-    for label, sub, value, color in rows:
-        pct = max(3, round(100 * value / maxv))
-        out.append(
-            f'<div class="bar-row"><div class="bar-label">{_esc(label)}'
-            f'<span class="bar-sub">{_esc(sub)}</span></div>'
-            f'<div class="bar-track"><div class="bar-fill" style="width:{pct}%;'
-            f'background:{color}"></div></div>'
-            f'<div class="bar-val">{value}</div></div>')
-    return "".join(out) or '<div class="empty">No data</div>'
+def _bars(rows, maxv=None):
+    """rows: [(label, sublabel, value, color)] → ranked horizontal bars."""
+    return charts.hbar(rows)
+
+
+# ---------- analytical charts over the correlated estate ----------
+# Kept short enough to survive the bar chart's label column without being clipped.
+_DIRECTION_LABEL = {
+    "BLOCKED": "Blocked by DLP", "ALLOWED": "Allowed despite DLP",
+    "ACCESSED": "Accessed org data", "SHARED": "Shared to AI app",
+    "UPLOADED": "Uploaded", "GENERATED": "Generated", "OBSERVED": "Observed",
+    "UNKNOWN_DIRECTION": "Direction unknown",
+}
+# Direction is an outcome scale, not a set of peer categories: DLP blocking sensitive
+# content is the good end, DLP matching it and allowing it through is the bad end, and
+# data leaving the tenant sits between. So it takes the status palette rather than
+# categorical slots — which also avoids putting a categorical green ("Uploaded") right
+# beside the status green ("Blocked"), where the two read as the same outcome.
+_DIRECTION_COLOR = {
+    "BLOCKED": charts.SEVERITY["Low"],
+    "OBSERVED": "#6b7280",
+    "GENERATED": "#6b7280",
+    "ACCESSED": charts.SEVERITY["Medium"],
+    "UPLOADED": charts.SEVERITY["High"],
+    "SHARED": charts.SEVERITY["High"],
+    "ALLOWED": charts.SEVERITY["Critical"],
+    "UNKNOWN_DIRECTION": "#6b7280",
+}
+
+
+def _direction_chart(directions: dict) -> str:
+    """
+    What actually happened to sensitive data, worst outcome first — so the row that
+    needs attention is the one at the top, rather than whichever happens to be largest.
+    """
+    order = ["ALLOWED", "SHARED", "UPLOADED", "ACCESSED", "GENERATED", "OBSERVED",
+             "UNKNOWN_DIRECTION", "BLOCKED"]
+    rank = {d: i for i, d in enumerate(order)}
+    rows = [(_DIRECTION_LABEL.get(d, d), "", n, _DIRECTION_COLOR.get(d, "#6b7280"))
+            for d, n in sorted(directions.items(), key=lambda kv: (rank.get(kv[0], 99), -kv[1]))
+            if n]
+    if not rows:
+        return '<div class="empty">No interaction directions recorded yet.</div>'
+    return charts.hbar(rows, unit=" interactions")
+
+
+def _sit_chart(sit_distribution: dict, top: int = 8) -> str:
+    """Which sensitive information types are actually reaching AI apps."""
+    # Sorted here rather than trusting the caller: the fold only means "the small ones"
+    # if the list is actually in descending order.
+    ranked = sorted(((k, v) for k, v in sit_distribution.items() if v and v > 0),
+                    key=lambda kv: -kv[1])
+    if not ranked:
+        return '<div class="empty">No sensitive information types detected.</div>'
+    items = [(name, n, charts.cat(i)) for i, (name, n) in enumerate(ranked[:top])]
+    tail = sum(n for _, n in ranked[top:])
+    if tail:
+        items.append((f"Other ({len(ranked) - top} types)", tail, charts.cat(top)))
+    return charts.treemap(items, height=200)
+
+
+def _shadow_traffic_chart(apps, top: int = 8) -> str:
+    """Upload volume by discovered app — where data is actually leaving."""
+    ranked = sorted((a for a in apps if a.get("uploaded_bytes")),
+                    key=lambda a: -a["uploaded_bytes"])[:top]
+    if not ranked:
+        return '<div class="empty">No upload volume reported by Defender for Cloud Apps.</div>'
+    rows = [(a.get("display_name") or "—", _fmt_bytes(a["uploaded_bytes"]),
+             round(a["uploaded_bytes"] / 1_048_576, 1),
+             charts.severity_color(_mdca_risk_level(a.get("risk_score"))))
+            for a in ranked]
+    return charts.hbar(rows, unit=" MB")
+
+
+def _mdca_risk_level(score) -> str:
+    """
+    MDCA scores run 0-10 where LOW means risky — the inverse of every other score on
+    these pages. Converting here keeps the inversion in one place.
+    """
+    if not isinstance(score, int):
+        return "Low"
+    return ("Critical" if score <= 3 else "High" if score <= 5
+            else "Medium" if score <= 7 else "Low")
+
+
+def _shadow_risk_scatter(apps) -> str:
+    """
+    Discovered Shadow AI by reach against risk, the same triage read as the core
+    dashboard so both pages are looked at the same way. Dot size is upload volume,
+    because a widely-used app that also uploads is the one to look at first.
+    """
+    pts = []
+    for a in apps:
+        score = a.get("risk_score")
+        risk_0_100 = (10 - score) * 10 if isinstance(score, int) else 50
+        pts.append((a.get("display_name") or "—", risk_0_100, a.get("users", 0) or 0,
+                    _mdca_risk_level(score),
+                    max(1, round((a.get("uploaded_bytes") or 0) / 1_048_576))))
+    return charts.risk_scatter(pts)
+
+
+def _analysis_cards(a: dict, shadow_apps) -> str:
+    """
+    The four charts that summarise the correlated estate. Each one is dropped rather
+    than drawn empty when its source connector has no data, so a tenant without Purview
+    does not get a page of blank frames.
+    """
+    cards = []
+    directions = a.get("direction_analysis") or {}
+    if any(directions.values()):
+        cards.append(
+            '<div class="card"><h3>What happened to sensitive data</h3>'
+            f'{_direction_chart(directions)}'
+            '<p class="c-note">Blocked is the good outcome. Allowed means DLP matched '
+            'sensitive content and let it through.</p></div>')
+
+    sits = a.get("sit_distribution") or {}
+    if any(sits.values()):
+        cards.append('<div class="card"><h3>Sensitive information types reaching AI</h3>'
+                     f'{_sit_chart(sits)}</div>')
+
+    if any(x.get("uploaded_bytes") for x in shadow_apps):
+        cards.append('<div class="card"><h3>Upload volume by application</h3>'
+                     f'{_shadow_traffic_chart(shadow_apps)}</div>')
+
+    if shadow_apps:
+        cards.append(
+            '<div class="card"><h3>Shadow AI: reach against risk</h3>'
+            f'{_shadow_risk_scatter(shadow_apps)}'
+            f'{charts.legend([(lv, charts.severity_color(lv), None) for lv in charts.SEVERITY_ORDER], show_values=False)}'
+            '<p class="c-note">Defender scores 0–10 with low meaning risky; shown here '
+            'inverted so higher is worse, matching every other score in AI-SPM. '
+            'Dot size is upload volume.</p></div>')
+
+    if not cards:
+        return ""
+    rows = "".join(f'<div class="grid cols-2" style="margin-top:16px">{"".join(pair)}</div>'
+                   for pair in (cards[i:i + 2] for i in range(0, len(cards), 2)))
+    return rows
 
 
 def _flow_diagram(columns, flows, width=520, height=210, node_w=10):
@@ -985,6 +1093,7 @@ table.c-tbl thead th{text-align:left;font-size:11px;text-transform:uppercase;col
 table.c-tbl tbody td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
 table.c-tbl tbody tr:last-child td{border-bottom:none}
 .c-name{font-weight:600}
+.c-note{font-size:12px;color:var(--muted);margin:12px 0 0;line-height:1.5}
 .c-num{font-variant-numeric:tabular-nums}
 .c-tag{display:inline-block;font-size:11px;background:var(--track);color:var(--ink);
  padding:1px 7px;border-radius:5px;margin:1px 3px 1px 0}
@@ -1247,6 +1356,9 @@ def html_string(result: dict, tenant_id: str = "", now=None) -> str:
         f'<span class="l">Sensitive data exposure</span></a>',
     ])
 
+    shadow_apps = a["shadow_ai_usage"]["applications"]
+    analysis_cards = _analysis_cards(a, shadow_apps)
+
     shadow_flow = _shadow_flow(shadow_items)
     identity_flow = _identity_flow(identity_items)
     flow_cards = ""
@@ -1280,6 +1392,7 @@ def html_string(result: dict, tenant_id: str = "", now=None) -> str:
   </div>
 </div>
 <div class="kpi-grid" style="margin-top:16px">{quick}</div>
+{analysis_cards}
 {flow_cards}
 <div class="card" style="margin-top:16px"><h3>Top 5 Highest-Risk Items (all sources)</h3>
 {top_risks}</div>
@@ -1317,7 +1430,7 @@ def html_string(result: dict, tenant_id: str = "", now=None) -> str:
 
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <title>AI-SPM — Microsoft AI Data Sources Assessment</title>
-<style>{CSS}{_ZT_CSS}</style></head><body>
+<style>{CSS}{charts.CSS}{_ZT_CSS}</style></head><body>
 <header>{_MS_LOGO_SVG}<h1>AI-SPM</h1>
 <nav class="tabs">{nav}</nav>
 <div class="spacer"></div><div class="tenant">{_esc(tenant_id)}</div>
