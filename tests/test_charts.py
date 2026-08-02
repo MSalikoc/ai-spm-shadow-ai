@@ -198,3 +198,20 @@ def test_every_mark_carries_a_hover_title():
     assert "<title>" in charts.risk_scatter([("A", 1, 1, "Low", 1)])
     assert "<title>" in charts.heatmap(["r"], ["c"], [[1]])
     assert "<title>" in charts.timeseries([1, 2, 3])
+
+
+def test_scatter_drops_a_name_that_would_land_on_another():
+    """Top-scoring apps cluster in the same corner; three names stacked read as none."""
+    clustered = [(f"Very Long App Name {i}", 100 - i, 500, "Critical", 4) for i in range(5)]
+    svg = charts.risk_scatter(clustered)
+    assert svg.count('class="val"') == 1
+
+    spread = [("Low reach", 95, 2, "Critical", 4), ("Wide reach", 40, 900, "Medium", 4)]
+    assert charts.risk_scatter(spread).count('class="val"') == 2
+
+
+def test_scatter_keeps_top_scoring_dots_inside_the_plot():
+    svg = charts.risk_scatter([("Maxed", 100, 500, "Critical", 30)])
+    cy = float(re.search(r'<circle cx="[\d.]+" cy="([\d.]+)" r="([\d.]+)"', svg).group(1))
+    r = float(re.search(r'<circle cx="[\d.]+" cy="[\d.]+" r="([\d.]+)"', svg).group(1))
+    assert cy - r > 0          # dot is not sliced by the top edge

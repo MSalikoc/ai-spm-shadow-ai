@@ -396,7 +396,9 @@ def risk_scatter(points, width: int = 620, height: int = 300) -> str:
     if not points:
         return _empty("No scored applications yet")
 
-    pad_l, pad_r, pad_t, pad_b = 44, 16, 16, 40
+    # The top pad has to clear the largest dot plus its label, or a cluster of
+    # 100-score apps is drawn half outside the plot with the names sliced off.
+    pad_l, pad_r, pad_t, pad_b = 44, 16, 30, 40
     plot_w, plot_h = width - pad_l - pad_r, height - pad_t - pad_b
     max_users = max((p[2] or 0) for p in points)
 
@@ -440,14 +442,29 @@ def risk_scatter(points, width: int = 620, height: int = 300) -> str:
             f'fill="{severity_color(level)}" fill-opacity="0.72" class="mark" '
             f'stroke="var(--panel)" stroke-width="2"/></g>')
 
-    # Name only the handful that matter, rather than a label on every dot.
-    labelled = sorted(points, key=lambda p: -(p[1] or 0))[:3]
-    names = ""
-    for name, score, users, level, _perms in labelled:
+    # Name only the handful that matter, rather than a label on every dot — and drop a
+    # name outright when it would land on one already placed. In a real tenant the
+    # top-scoring apps cluster in the same corner, so unconditional labelling prints
+    # three names on top of each other and none of them can be read. The test is the
+    # label's real horizontal extent, which depends on which way it is anchored: two
+    # labels 120px apart still collide if they point at each other.
+    names, placed = "", []
+    for name, score, users, level, _perms in sorted(points, key=lambda p: -(p[1] or 0)):
+        if len(placed) >= 3:
+            break
         x, y = ux(users), ry(score)
+        label_y = y - 11
+        text = _clip(name, 20)
+        text_w = len(text) * 6.1                       # ~6.1px per char at 11px semibold
         anchor = "end" if x > pad_l + plot_w * 0.7 else "start"
-        names += (f'<text x="{x + (7 if anchor == "start" else -7):.1f}" y="{y - 9:.1f}" '
-                  f'text-anchor="{anchor}" class="val">{_e(_clip(name, 20))}</text>')
+        lo = (x + 8) if anchor == "start" else (x - 8 - text_w)
+        hi = lo + text_w
+        if any(abs(py - label_y) < 13 and lo < phi and plo < hi
+               for plo, phi, py in placed):
+            continue
+        placed.append((lo, hi, label_y))
+        names += (f'<text x="{x + (8 if anchor == "start" else -8):.1f}" y="{label_y:.1f}" '
+                  f'text-anchor="{anchor}" class="val">{_e(text)}</text>')
 
     return (f'<svg viewBox="0 0 {width} {height}" class="viz" role="img" '
             f'aria-label="Risk score against number of consenting users">{grid}'

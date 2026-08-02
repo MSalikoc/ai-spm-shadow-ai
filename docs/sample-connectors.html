@@ -1,0 +1,392 @@
+<!doctype html><html><head><meta charset="utf-8">
+<title>AI-SPM — Microsoft AI Data Sources Assessment</title>
+<style>
+:root{
+ --bg:#f3f4f6; --panel:#ffffff; --ink:#1a1a1a; --muted:#5f6b7a; --line:#e3e6ea;
+ --track:#e9edf1; --accent:#0f6cbd; --shadow:0 1px 3px rgba(0,0,0,.08);
+}
+@media (prefers-color-scheme:dark){
+ :root{--bg:#0f1419;--panel:#171e26;--ink:#e6edf3;--muted:#8b98a6;--line:#232c37;
+ --track:#232c37;--accent:#4aa3f0;--shadow:0 1px 3px rgba(0,0,0,.4);}
+}
+:root[data-theme=light]{--bg:#f3f4f6;--panel:#fff;--ink:#1a1a1a;--muted:#5f6b7a;--line:#e3e6ea;--track:#e9edf1;--accent:#0f6cbd;--shadow:0 1px 3px rgba(0,0,0,.08);}
+:root[data-theme=dark]{--bg:#0f1419;--panel:#171e26;--ink:#e6edf3;--muted:#8b98a6;--line:#232c37;--track:#232c37;--accent:#4aa3f0;--shadow:0 1px 3px rgba(0,0,0,.4);}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+ font:14px/1.5 'Segoe UI',-apple-system,Roboto,sans-serif}
+header{display:flex;align-items:center;gap:14px;padding:12px 22px;background:var(--panel);
+ border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+.logo{flex-shrink:0}
+header h1{font-size:15px;margin:0;font-weight:600}
+header .spacer{flex:1}
+header .tenant{font-size:12px;color:var(--muted)}
+.themebtn{cursor:pointer;border:1px solid var(--line);background:transparent;color:var(--ink);
+ border-radius:6px;padding:4px 9px;font-size:13px}
+.tabs{display:flex;gap:2px;margin-left:10px;flex-wrap:wrap}
+.navlink{cursor:pointer;padding:8px 13px;font-size:13px;color:var(--muted);font-weight:600;
+ border-bottom:2px solid transparent;user-select:none}
+.navlink:hover{color:var(--ink)}
+.navlink.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tab{display:none;animation:fade .18s ease}
+.tab.active{display:block}
+@keyframes fade{from{opacity:.4}to{opacity:1}}
+.hero{display:grid;grid-template-columns:1.1fr 1.2fr 1fr;gap:16px;align-items:stretch}
+.hero .card{margin:0}
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.tile{display:flex;flex-direction:column;justify-content:center;gap:3px}
+.tile .n{font-size:32px;font-weight:700;line-height:1}
+.tile .l{font-size:12px;color:var(--muted)}
+.tile.high .n{color:#d35400}
+@media(max-width:900px){.hero{grid-template-columns:1fr}}
+main{max-width:1180px;margin:0 auto;padding:22px}
+.grid{display:grid;gap:16px}
+.cols-4{grid-template-columns:repeat(4,1fr)}
+.cols-2{grid-template-columns:1fr 1fr}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+ padding:18px;box-shadow:var(--shadow)}
+.card h3{margin:0 0 14px;font-size:13px;font-weight:600;letter-spacing:.02em;
+ text-transform:uppercase;color:var(--muted)}
+.kpi{display:flex;flex-direction:column;gap:2px}
+.kpi .n{font-size:30px;font-weight:700;line-height:1}
+.kpi .l{font-size:12px;color:var(--muted)}
+.kpi.crit .n{color:#c0392b}.kpi.high .n{color:#d35400}
+.kpi.med .n{color:#b8860b}.kpi.low .n{color:#2e8b57}.kpi.muted .n{color:var(--muted)}
+a.card{text-decoration:none;color:inherit;cursor:pointer;transition:border-color .15s}
+a.card:hover{border-color:var(--accent)}
+a.card .n{font-size:24px}
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+.na li{margin:5px 0}
+.posture-parts{list-style:none;margin:14px 0 0;padding:0;font-size:12px}
+.posture-parts li{display:flex;justify-content:space-between;gap:12px;padding:5px 0;
+ border-top:1px solid var(--line);color:var(--muted)}
+.posture-parts b{color:var(--ink);font-variant-numeric:tabular-nums}
+.conn{margin:8px 0 0;padding:0}
+.conn li{list-style:none;display:flex;align-items:center;gap:8px;font-size:13px;margin:5px 0}
+.summary{display:flex;gap:26px;align-items:center;flex-wrap:wrap}
+.tenant-facts{display:grid;grid-template-columns:auto auto;gap:6px 26px;font-size:13px}
+.tenant-facts b{color:var(--muted);font-weight:500}
+.donut-num{font-size:34px;font-weight:700;fill:var(--ink)}
+.donut-cap{font-size:11px;fill:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.legend{display:flex;flex-direction:column;gap:7px}
+.legend div{display:flex;align-items:center;gap:8px;font-size:13px}
+.dot{width:11px;height:11px;border-radius:3px;display:inline-block}
+.bar-row{display:flex;align-items:center;gap:10px;margin:9px 0}
+.bar-label{width:190px;font-size:13px;flex-shrink:0}
+.bar-sub{display:block;font-size:11px;color:var(--muted)}
+.bar-track{flex:1;height:9px;background:var(--track);border-radius:6px;overflow:hidden}
+.bar-fill{height:100%;border-radius:6px}
+.bar-val{width:34px;text-align:right;font-size:13px;font-variant-numeric:tabular-nums}
+.empty{color:var(--muted);font-size:13px;padding:8px 0}
+.findings{margin-top:4px}
+.finding{border:1px solid var(--line);border-radius:10px;margin-bottom:8px;background:var(--panel);
+ overflow:hidden}
+.finding summary{display:flex;align-items:center;gap:14px;padding:12px 16px;cursor:pointer;
+ list-style:none}
+.finding summary::-webkit-details-marker{display:none}
+.pill{color:#fff;min-width:34px;text-align:center;padding:3px 8px;border-radius:7px;
+ font-weight:700;font-size:13px}
+.f-name{font-weight:600;flex:1}
+.f-vendor{display:block;font-size:12px;color:var(--muted);font-weight:400}
+.f-meta{font-size:12px;color:var(--muted);text-align:right}
+.f-level{font-weight:600;min-width:56px;text-align:right}
+.f-body{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:18px;
+ padding:4px 16px 16px;border-top:1px solid var(--line)}
+.trend{display:block}
+.f-body h4{margin:12px 0 6px;font-size:12px;color:var(--muted);text-transform:uppercase}
+.f-body ul{margin:0;padding-left:16px}.f-body li{margin:3px 0}
+.f-body code{font-size:12px;word-break:break-word;color:var(--ink)}
+.f-pub{font-size:12px;color:var(--muted);margin:8px 0 0}
+.governed{font-size:13px;color:var(--muted)}
+.governed summary{cursor:pointer;font-weight:600;color:var(--ink)}
+.governed ul{columns:2;margin:10px 0 0;padding-left:18px}
+.ptype{color:#fff;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;white-space:nowrap}
+.apperms{margin:4px 0 0}.apperms b{font-weight:600}.apperms .res{color:var(--muted);font-size:12px}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 14px}
+.filters button{cursor:pointer;border:1px solid var(--line);background:transparent;color:var(--ink);
+ border-radius:999px;padding:5px 14px;font-size:13px}
+.filters button.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.filters label{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+.filters select{border:1px solid var(--line);background:transparent;color:var(--ink);
+ border-radius:999px;padding:5px 12px;font-size:13px}
+.editor{margin:0 16px 14px;border-top:1px dashed var(--line)}
+.editor summary{cursor:pointer;padding:8px 0;font-size:13px;color:var(--accent);font-weight:600}
+.mform,.fform{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;padding:8px 0}
+.mform label,.fform label{display:flex;flex-direction:column;font-size:12px;color:var(--muted);gap:4px}
+.mform input,.mform select,.mform textarea,.fform input,.fform select,.fform textarea{
+ background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:6px;
+ padding:6px 8px;font:13px inherit}
+.mform textarea,.fform textarea{min-height:46px;grid-column:1/-1}
+.mform .msave,.fform .fsave{background:var(--accent);color:#fff;border:none;border-radius:6px;
+ padding:8px 16px;cursor:pointer;font-weight:600;align-self:end}
+.mstatus{font-size:12px;color:var(--muted);align-self:center}
+.timeline{display:flex;flex-direction:column}
+.tl-row{display:flex;align-items:center;gap:12px;padding:8px 4px;border-bottom:1px solid var(--line);font-size:13px}
+.tl-name{font-weight:600;min-width:130px}
+.tl-desc{flex:1}
+.tl-ts{color:var(--muted);font-size:12px;white-space:nowrap}
+@media(max-width:820px){.tl-desc{display:none}}
+.foot{color:var(--muted);font-size:12px;text-align:center;padding:18px}
+@media(max-width:820px){.cols-4,.cols-2{grid-template-columns:1fr}
+ .f-body{grid-template-columns:1fr}.bar-label{width:130px}
+ .f-meta,.ptype{display:none}}
+
+.c-subtitle{font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;
+ letter-spacing:.03em;margin:4px 0 10px}
+.c-tbl-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px}
+table.c-tbl{width:100%;border-collapse:collapse;font-size:13px;min-width:520px}
+table.c-tbl thead th{text-align:left;font-size:11px;text-transform:uppercase;color:var(--muted);
+ letter-spacing:.03em;padding:9px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+table.c-tbl tbody td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+table.c-tbl tbody tr:last-child td{border-bottom:none}
+.c-name{font-weight:600}
+.c-num{font-variant-numeric:tabular-nums}
+.c-tag{display:inline-block;font-size:11px;background:var(--track);color:var(--ink);
+ padding:1px 7px;border-radius:5px;margin:1px 3px 1px 0}
+header .navlink{cursor:pointer}
+.flow-label{font-size:11px;fill:var(--ink)}
+.flow-wrap{overflow-x:auto}
+.zt-toolbar{display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+.zt-search{border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:8px;
+ padding:7px 12px;font-size:13px;min-width:160px}
+.zt-chips{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.zt-chip-label{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;margin-right:2px}
+.zt-chip{cursor:pointer;border:1px solid var(--line);background:transparent;color:var(--ink);
+ border-radius:999px;padding:4px 12px;font-size:12px}
+.zt-chip.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+table.zt-table{width:100%;border-collapse:collapse;font-size:13px;min-width:420px}
+table.zt-table thead th{text-align:left;font-size:11px;text-transform:uppercase;color:var(--muted);
+ letter-spacing:.03em;padding:9px 12px;border-bottom:1px solid var(--line)}
+table.c-tbl thead th.zt-sortable,table.zt-table thead th.zt-sortable{cursor:pointer;user-select:none;
+ white-space:nowrap}
+table.c-tbl thead th.zt-sortable:hover,table.zt-table thead th.zt-sortable:hover{color:var(--ink)}
+th.zt-sortable::after{content:"";margin-left:4px;opacity:.35}
+th.sorted-asc::after{content:"▲";opacity:1}
+th.sorted-desc::after{content:"▼";opacity:1}
+table.zt-table tbody td{padding:10px 12px;border-bottom:1px solid var(--line)}
+table.zt-table tbody tr:last-child td{border-bottom:none}
+table.zt-table tbody tr{cursor:pointer;transition:background .12s}
+table.zt-table tbody tr:hover{background:var(--track)}
+.zt-pill{display:inline-block;background:var(--pc,#6b7280);color:#fff;font-size:11px;font-weight:700;
+ padding:3px 10px;border-radius:999px}
+.zt-toprow{display:flex;align-items:center;gap:12px;padding:9px 4px;border-bottom:1px solid var(--line);
+ font-size:13px}
+.zt-toprow:last-child{border-bottom:none}
+.zt-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);opacity:0;pointer-events:none;
+ transition:opacity .18s;z-index:20}
+.zt-overlay.open{opacity:1;pointer-events:auto}
+.zt-panel{position:fixed;top:0;right:0;bottom:0;width:min(500px,92vw);background:var(--panel);
+ box-shadow:-8px 0 30px rgba(0,0,0,.18);transform:translateX(100%);transition:transform .22s ease;
+ z-index:21;overflow-y:auto;padding:26px}
+.zt-panel.open{transform:translateX(0)}
+.zt-panel-close{position:absolute;top:18px;right:18px;cursor:pointer;border:1px solid var(--line);
+ background:transparent;color:var(--ink);border-radius:8px;width:30px;height:30px;font-size:16px;
+ line-height:1}
+.zt-panel h2{font-size:19px;margin:0 34px 20px 0;text-wrap:balance}
+.zt-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:14px;
+ border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:18px}
+.zt-fact{display:flex;flex-direction:column;gap:3px}
+.zt-fact-l{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
+.zt-fact-v{font-size:14px;font-weight:600}
+.zt-score{display:flex;align-items:center;gap:14px;margin-bottom:8px}
+.zt-score-num{font-size:30px;font-weight:700;font-family:"Cascadia Code",Consolas,ui-monospace,monospace;
+ min-width:60px}
+.zt-score-bar{flex:1;height:10px;border-radius:6px;background:var(--track);overflow:hidden}
+.zt-score-fill{height:100%;border-radius:6px;transition:width .2s}
+.zt-result{display:flex;align-items:center;gap:10px;margin:18px 0;padding-bottom:18px;
+ border-bottom:1px solid var(--line)}
+.zt-result b{font-size:15px}
+.zt-panel h4{font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);
+ margin:0 0 8px}
+.zt-panel section{margin-bottom:20px}
+.zt-panel p{font-size:13.5px;line-height:1.65;margin:0;color:var(--ink)}
+.zt-panel ul{margin:0;padding-left:18px;font-size:13.5px;line-height:1.65}
+.zt-panel ul li{margin:5px 0}
+</style></head><body>
+<header><svg width="21" height="21" viewBox="0 0 21 21" xmlns="http://www.w3.org/2000/svg">
+<rect x="1" y="1" width="9" height="9" fill="#F25022"/>
+<rect x="11" y="1" width="9" height="9" fill="#7FBA00"/>
+<rect x="1" y="11" width="9" height="9" fill="#00A4EF"/>
+<rect x="11" y="11" width="9" height="9" fill="#FFB900"/>
+</svg><h1>AI-SPM</h1>
+<nav class="tabs"><a class="navlink active" data-tab="overview">Overview</a><a class="navlink" data-tab="agents">Agents</a><a class="navlink" data-tab="shadow">Shadow AI</a><a class="navlink" data-tab="sensitive">Sensitive Data</a><a class="navlink" data-tab="findings">Findings</a><a class="navlink" data-tab="gaps">Gaps</a></nav>
+<div class="spacer"></div><div class="tenant">contoso-sample-0000-0000-000000000000</div>
+<a id="coreDashboardLink" class="themebtn" href="#" style="display:inline-block;text-decoration:none;margin-left:10px" title="Go to the Core (OAuth-consent) dashboard">&#8592; Core Dashboard</a>
+</header>
+<main>
+<section class="tab active" data-tab="overview">
+<div class="hero">
+  <div class="card">
+    <h3>Source Status</h3>
+    <div class="tenant-facts">
+      <b>Tenant</b><span>contoso-sample-0000-0000-000000000000</span>
+      <b>Connected sources</b><span>4/5</span>
+      <b>Matched assets</b><span>6/7</span>
+      <b>Generated</b><span>2026-08-02 07:52:37 UTC</span>
+    </div>
+  </div>
+  <div class="tiles"><div class="card tile high"><span class="n">2</span><span class="l">Apps sharing sensitive data</span></div><div class="card tile"><span class="n">2</span><span class="l">Affected users</span></div><div class="card tile"><span class="n">1</span><span class="l">Blocked (DLP)</span></div><div class="card tile high"><span class="n">1</span><span class="l">High severity findings</span></div></div>
+  <div class="card">
+    <h3>Finding Distribution</h3>
+    <div class="summary"><svg viewBox="0 0 170 170" width="170" height="170" role="img" class="donut"><circle cx="85.0" cy="85.0" r="72.00" fill="none" stroke="var(--track)" stroke-width="26"/><circle cx="85.0" cy="85.0" r="72.00" fill="none" stroke="#c0392b" stroke-width="26" stroke-dasharray="90.48 361.91" stroke-dashoffset="-0.00" transform="rotate(-90 85.0 85.0)"/><circle cx="85.0" cy="85.0" r="72.00" fill="none" stroke="#b8860b" stroke-width="26" stroke-dasharray="90.48 361.91" stroke-dashoffset="-90.48" transform="rotate(-90 85.0 85.0)"/><circle cx="85.0" cy="85.0" r="72.00" fill="none" stroke="#2e8b57" stroke-width="26" stroke-dasharray="180.96 271.43" stroke-dashoffset="-180.96" transform="rotate(-90 85.0 85.0)"/><circle cx="85.0" cy="85.0" r="72.00" fill="none" stroke="#6b7280" stroke-width="26" stroke-dasharray="90.48 361.91" stroke-dashoffset="-361.91" transform="rotate(-90 85.0 85.0)"/><text x="85.0" y="81.0" text-anchor="middle" class="donut-num">5</text><text x="85.0" y="101.0" text-anchor="middle" class="donut-cap">Finding</text></svg><div class="legend"><div><span class="dot" style="background:#c0392b"></span>High <b style="margin-left:auto">1</b></div><div><span class="dot" style="background:#b8860b"></span>Medium <b style="margin-left:auto">1</b></div><div><span class="dot" style="background:#2e8b57"></span>Low <b style="margin-left:auto">2</b></div><div><span class="dot" style="background:#6b7280"></span>Info <b style="margin-left:auto">1</b></div></div></div>
+  </div>
+</div>
+<div class="kpi-grid" style="margin-top:16px"><a class="card kpi" data-goto="agents"><span class="n">4/5</span><span class="l">Connected data sources</span></a><a class="card kpi" data-goto="agents"><span class="n">4</span><span class="l">Agent (365 + Identity)</span></a><a class="card kpi" data-goto="shadow"><span class="n">3</span><span class="l">Shadow AI applications</span></a><a class="card kpi high" data-goto="sensitive"><span class="n">2</span><span class="l">Sensitive data exposure</span></a></div>
+<div class="grid cols-2" style="margin-top:16px"><div class="card"><h3>Shadow AI: Sanction Status → Risk Flow</h3><div class="flow-wrap"><svg viewBox="0 0 520 210" width="100%" height="210" role="img" class="flow" preserveAspectRatio="xMidYMid meet"><path d="M10.0,10.0 C132.5,10.0 132.5,10.0 255.0,10.0 L255.0,69.3 C132.5,69.3 132.5,73.3 10.0,73.3 Z" fill="#5f6b7a" opacity="0.42"/><path d="M10.0,73.3 C132.5,73.3 132.5,75.3 255.0,75.3 L255.0,134.7 C132.5,134.7 132.5,136.7 10.0,136.7 Z" fill="#5f6b7a" opacity="0.42"/><path d="M10.0,136.7 C132.5,136.7 132.5,140.7 255.0,140.7 L255.0,200.0 C132.5,200.0 132.5,200.0 10.0,200.0 Z" fill="#5f6b7a" opacity="0.42"/><path d="M265.0,10.0 C387.5,10.0 387.5,10.0 510.0,10.0 L510.0,69.3 C387.5,69.3 387.5,69.3 265.0,69.3 Z" fill="#c0392b" opacity="0.42"/><path d="M265.0,75.3 C387.5,75.3 387.5,75.3 510.0,75.3 L510.0,134.7 C387.5,134.7 387.5,134.7 265.0,134.7 Z" fill="#2e8b57" opacity="0.42"/><path d="M265.0,140.7 C387.5,140.7 387.5,140.7 510.0,140.7 L510.0,200.0 C387.5,200.0 387.5,200.0 265.0,200.0 Z" fill="#b8860b" opacity="0.42"/><rect x="0.0" y="10.0" width="10" height="190.0" fill="#5f6b7a" rx="2"/><text x="16.0" y="105.0" dy="4" text-anchor="start" class="flow-label">Discovered Applications (3)</text><rect x="255.0" y="10.0" width="10" height="59.3" fill="#c0392b" rx="2"/><text x="260.0" y="39.7" dy="4" text-anchor="middle" class="flow-label">unsanctioned (1)</text><rect x="255.0" y="75.3" width="10" height="59.3" fill="#2e8b57" rx="2"/><text x="260.0" y="105.0" dy="4" text-anchor="middle" class="flow-label">sanctioned (1)</text><rect x="255.0" y="140.7" width="10" height="59.3" fill="#b8860b" rx="2"/><text x="260.0" y="170.3" dy="4" text-anchor="middle" class="flow-label">unreviewed (1)</text><rect x="510.0" y="10.0" width="10" height="59.3" fill="#c0392b" rx="2"/><text x="504.0" y="39.7" dy="4" text-anchor="end" class="flow-label">High (1)</text><rect x="510.0" y="75.3" width="10" height="59.3" fill="#6b7280" rx="2"/><text x="504.0" y="105.0" dy="4" text-anchor="end" class="flow-label">Info (1)</text><rect x="510.0" y="140.7" width="10" height="59.3" fill="#b8860b" rx="2"/><text x="504.0" y="170.3" dy="4" text-anchor="end" class="flow-label">Medium (1)</text></svg></div></div><div class="card"><h3>Agent Identity: Owner/Sponsor → Risk Flow</h3><div class="flow-wrap"><svg viewBox="0 0 520 210" width="100%" height="210" role="img" class="flow" preserveAspectRatio="xMidYMid meet"><path d="M10.0,10.0 C132.5,10.0 132.5,10.0 255.0,10.0 L255.0,102.0 C132.5,102.0 132.5,105.0 10.0,105.0 Z" fill="#5f6b7a" opacity="0.42"/><path d="M10.0,105.0 C132.5,105.0 132.5,108.0 255.0,108.0 L255.0,200.0 C132.5,200.0 132.5,200.0 10.0,200.0 Z" fill="#5f6b7a" opacity="0.42"/><path d="M265.0,10.0 C387.5,10.0 387.5,10.0 510.0,10.0 L510.0,102.0 C387.5,102.0 387.5,102.0 265.0,102.0 Z" fill="#2e8b57" opacity="0.42"/><path d="M265.0,108.0 C387.5,108.0 387.5,108.0 510.0,108.0 L510.0,200.0 C387.5,200.0 387.5,200.0 265.0,200.0 Z" fill="#6b7280" opacity="0.42"/><rect x="0.0" y="10.0" width="10" height="190.0" fill="#5f6b7a" rx="2"/><text x="16.0" y="105.0" dy="4" text-anchor="start" class="flow-label">Agent Identities (2)</text><rect x="255.0" y="10.0" width="10" height="92.0" fill="#2e8b57" rx="2"/><text x="260.0" y="56.0" dy="4" text-anchor="middle" class="flow-label">Owner/Sponsor: Full (1)</text><rect x="255.0" y="108.0" width="10" height="92.0" fill="#6b7280" rx="2"/><text x="260.0" y="154.0" dy="4" text-anchor="middle" class="flow-label">Owner/Sponsor: Disabled (1)</text><rect x="510.0" y="10.0" width="10" height="92.0" fill="#2e8b57" rx="2"/><text x="504.0" y="56.0" dy="4" text-anchor="end" class="flow-label">Low (1)</text><rect x="510.0" y="108.0" width="10" height="92.0" fill="#6b7280" rx="2"/><text x="504.0" y="154.0" dy="4" text-anchor="end" class="flow-label">Info (1)</text></svg></div></div></div>
+<div class="card" style="margin-top:16px"><h3>Top 5 Highest-Risk Items (all sources)</h3>
+<div class="zt-toprow" data-detail-ref="shadow-0"><span class="zt-pill" style="--pc:#c0392b">80</span><span class="c-name">ChatGPT</span><span style="color:var(--muted);font-size:12px">Unsanctioned application.</span></div><div class="zt-toprow" data-detail-ref="finding-0"><span class="zt-pill" style="--pc:#c0392b">80</span><span class="c-name">Sensitive Data Shared With Unsanctioned Ai</span><span style="color:var(--muted);font-size:12px">ChatGPT is unsanctioned and has sensitive data in a sharing/processing direction (3 interactions). SIT: [&#x27;U.S. Social Security Number&#x27;].</span></div><div class="zt-toprow" data-detail-ref="exposure-1"><span class="zt-pill" style="--pc:#c0392b">76</span><span class="c-name">ChatGPT</span><span style="color:var(--muted);font-size:12px">DLP matched but access was allowed — needs review.</span></div><div class="zt-toprow" data-detail-ref="shadow-2"><span class="zt-pill" style="--pc:#b8860b">53</span><span class="c-name">SomeAI Writer</span><span style="color:var(--muted);font-size:12px">Not yet reviewed.</span></div><div class="zt-toprow" data-detail-ref="finding-1"><span class="zt-pill" style="--pc:#b8860b">50</span><span class="c-name">Ai App Accessing Labeled Data</span><span style="color:var(--muted);font-size:12px">Microsoft Teams is accessing labeled corporate data: [&#x27;label-confidential&#x27;].</span></div></div>
+<div class="card" style="margin-top:16px"><h3>Data Source Coverage</h3>
+<ul class="conn"><li><span class="dot" style="background:#2e8b57"></span><b>Microsoft Agent 365</b> — CONNECTED · 2 assets · <span style="color:var(--muted)">CopilotPackages.Read.All</span></li><li><span class="dot" style="background:#2e8b57"></span><b>Microsoft Entra Agent ID</b> — CONNECTED · 4 assets · <span style="color:var(--muted)">Application.Read.All + Directory.Read.All</span></li><li><span class="dot" style="background:#2e8b57"></span><b>Defender for Cloud Apps (Shadow AI)</b> — CONNECTED · 7 assets · <span style="color:var(--muted)">CloudApp-Discovery.Read.All</span></li><li><span class="dot" style="background:#2e8b57"></span><b>Microsoft Purview Audit</b> — CONNECTED · 3 assets · <span style="color:var(--muted)">AuditLogsQuery.Read.All</span></li></ul></div></section>
+<section class="tab" data-tab="agents">
+<div class="card" id="identities"><h3>Entra Agent Identities</h3>
+<div class="c-subtitle">Owner/sponsor/permission assignment — score rises as assignments are missing</div>
+<div class="zt-toolbar"><input class="zt-search" data-scope="identities" placeholder="Search..." oninput="ztSearch(this)"><div class="zt-chips"><span class="zt-chip-label">Risk</span><button class="zt-chip" data-scope="identities" data-key="risk" data-val="Low" onclick="ztChip(this)">Low</button><button class="zt-chip" data-scope="identities" data-key="risk" data-val="Info" onclick="ztChip(this)">Info</button></div><div class="zt-chips"><span class="zt-chip-label">Status</span><button class="zt-chip" data-scope="identities" data-key="status" data-val="Disabled" onclick="ztChip(this)">Disabled</button><button class="zt-chip" data-scope="identities" data-key="status" data-val="Passed" onclick="ztChip(this)">Passed</button></div></div>
+<div class="zt-tbl-wrap"><table class="zt-table">
+<thead><tr><th>Name</th><th>Score</th><th>Risk</th><th>Status</th></tr></thead>
+<tbody><tr class="zt-row" data-scope="identities" data-risk="Low" data-status="Passed" data-name="finance assistant" data-detail='{&quot;id&quot;: &quot;identity-0&quot;, &quot;name&quot;: &quot;Finance Assistant&quot;, &quot;bucket&quot;: &quot;Full&quot;, &quot;score&quot;: 15, &quot;risk_key&quot;: &quot;low&quot;, &quot;risk_label&quot;: &quot;Low&quot;, &quot;risk_color&quot;: &quot;#2e8b57&quot;, &quot;reasons&quot;: [&quot;+15 \u2014 1 app-only (unattended) permissions&quot;], &quot;status_label&quot;: &quot;Passed&quot;, &quot;status_color&quot;: &quot;#2e8b57&quot;, &quot;facts&quot;: [[&quot;Owner&quot;, &quot;alice@contoso.com&quot;], [&quot;Sponsor&quot;, &quot;bob@contoso.com&quot;], [&quot;App-only Permissions&quot;, &quot;Microsoft Graph&quot;], [&quot;Delegated Permissions&quot;, &quot;User.Read, Mail.Read&quot;], [&quot;Sources&quot;, &quot;Agent 365, Entra Agent ID&quot;], [&quot;Correlation Confidence&quot;, &quot;98/100&quot;]], &quot;result_line&quot;: &quot;Owner and sponsor assigned.&quot;, &quot;what_checked&quot;: &quot;Finance Assistant is enabled. Owner: alice@contoso.com. Sponsor: bob@contoso.com. Has 1 app-only (Microsoft Graph) and 1 delegated (User.Read, Mail.Read) permissions (app-only + delegated). Blueprint: BP-1. Sources: Agent 365, Entra Agent ID.&quot;, &quot;remediation&quot;: [&quot;No further action needed.&quot;]}' onclick="ztOpen(this)"><td class="c-name" data-sort="finance assistant">Finance Assistant</td><td class="c-num" data-sort="15"><b>15</b>/100</td><td data-sort="1"><span class="zt-pill" style="--pc:#2e8b57">Low</span></td><td data-sort="passed"><span class="zt-pill" style="--pc:#2e8b57">Passed</span></td></tr><tr class="zt-row" data-scope="identities" data-risk="Info" data-status="Disabled" data-name="orphan agent identity" data-detail='{&quot;id&quot;: &quot;identity-1&quot;, &quot;name&quot;: &quot;Orphan Agent Identity&quot;, &quot;bucket&quot;: &quot;Disabled&quot;, &quot;score&quot;: 5, &quot;risk_key&quot;: &quot;info&quot;, &quot;risk_label&quot;: &quot;Info&quot;, &quot;risk_color&quot;: &quot;#6b7280&quot;, &quot;reasons&quot;: [&quot;+5 \u2014 Disabled \u2014 no active access risk&quot;], &quot;status_label&quot;: &quot;Disabled&quot;, &quot;status_color&quot;: &quot;#6b7280&quot;, &quot;facts&quot;: [[&quot;Owner&quot;, &quot;\u2014&quot;], [&quot;Sponsor&quot;, &quot;\u2014&quot;], [&quot;App-only Permissions&quot;, &quot;\u2014&quot;], [&quot;Delegated Permissions&quot;, &quot;\u2014&quot;], [&quot;Sources&quot;, &quot;Entra Agent ID&quot;], [&quot;Correlation Confidence&quot;, &quot;100/100&quot;]], &quot;result_line&quot;: &quot;Disabled \u2014 no active risk.&quot;, &quot;what_checked&quot;: &quot;Orphan Agent Identity is disabled. Owner: none assigned. Sponsor: none assigned. Has 0 app-only (\u2014) and 0 delegated (\u2014) permissions (no permissions). Not linked to any blueprint. Sources: Entra Agent ID.&quot;, &quot;remediation&quot;: [&quot;No further action needed.&quot;]}' onclick="ztOpen(this)"><td class="c-name" data-sort="orphan agent identity">Orphan Agent Identity</td><td class="c-num" data-sort="5"><b>5</b>/100</td><td data-sort="0"><span class="zt-pill" style="--pc:#6b7280">Info</span></td><td data-sort="disabled"><span class="zt-pill" style="--pc:#6b7280">Disabled</span></td></tr></tbody></table></div>
+</div>
+<div class="card" id="agent365"><h3>Agent 365 Packages</h3>
+<div class="c-subtitle">Deployment scope and Entra correlation — score: wide scope + lack of correlation</div>
+<div class="zt-toolbar"><input class="zt-search" data-scope="agent365" placeholder="Search..." oninput="ztSearch(this)"><div class="zt-chips"><span class="zt-chip-label">Risk</span><button class="zt-chip" data-scope="agent365" data-key="risk" data-val="Low" onclick="ztChip(this)">Low</button><button class="zt-chip" data-scope="agent365" data-key="risk" data-val="Info" onclick="ztChip(this)">Info</button></div><div class="zt-chips"><span class="zt-chip-label">Status</span><button class="zt-chip" data-scope="agent365" data-key="status" data-val="Blocked" onclick="ztChip(this)">Blocked</button><button class="zt-chip" data-scope="agent365" data-key="status" data-val="Investigate" onclick="ztChip(this)">Investigate</button></div></div>
+<div class="zt-tbl-wrap"><table class="zt-table">
+<thead><tr><th>Name</th><th>Score</th><th>Risk</th><th>Status</th></tr></thead>
+<tbody><tr class="zt-row" data-scope="agent365" data-risk="Low" data-status="Investigate" data-name="finance assistant" data-detail='{&quot;id&quot;: &quot;agent365-0&quot;, &quot;name&quot;: &quot;Finance Assistant&quot;, &quot;bucket&quot;: &quot;Everyone&quot;, &quot;score&quot;: 35, &quot;risk_key&quot;: &quot;low&quot;, &quot;risk_label&quot;: &quot;Low&quot;, &quot;risk_color&quot;: &quot;#2e8b57&quot;, &quot;reasons&quot;: [&quot;+35 \u2014 Deployment scope is &#x27;everyone&#x27; \u2014 open to the entire organization&quot;], &quot;status_label&quot;: &quot;Investigate&quot;, &quot;status_color&quot;: &quot;#b8860b&quot;, &quot;facts&quot;: [[&quot;Build Type&quot;, &quot;partner&quot;], [&quot;Deployment&quot;, &quot;Finance-Group&quot;], [&quot;Entra Correlation&quot;, &quot;Yes&quot;], [&quot;Sources&quot;, &quot;Agent 365, Entra Agent ID&quot;], [&quot;Correlation Confidence&quot;, &quot;98/100&quot;]], &quot;result_line&quot;: &quot;Open deployment.&quot;, &quot;what_checked&quot;: &quot;Finance Assistant is a partner package registered in the Agent 365 catalog. It is deployed to Finance-Group scope and available to everyone users. The package is active and not blocked. Correlated with Entra application: APP-FIN-1.&quot;, &quot;remediation&quot;: [&quot;Verify the deployment scope matches an actual business need.&quot;]}' onclick="ztOpen(this)"><td class="c-name" data-sort="finance assistant">Finance Assistant</td><td class="c-num" data-sort="35"><b>35</b>/100</td><td data-sort="1"><span class="zt-pill" style="--pc:#2e8b57">Low</span></td><td data-sort="investigate"><span class="zt-pill" style="--pc:#b8860b">Investigate</span></td></tr><tr class="zt-row" data-scope="agent365" data-risk="Info" data-status="Blocked" data-name="microsoft 365 copilot agent" data-detail='{&quot;id&quot;: &quot;agent365-1&quot;, &quot;name&quot;: &quot;Microsoft 365 Copilot Agent&quot;, &quot;bucket&quot;: &quot;Blocked&quot;, &quot;score&quot;: 5, &quot;risk_key&quot;: &quot;info&quot;, &quot;risk_label&quot;: &quot;Info&quot;, &quot;risk_color&quot;: &quot;#6b7280&quot;, &quot;reasons&quot;: [&quot;+5 \u2014 Package is currently blocked \u2014 cannot be used actively&quot;], &quot;status_label&quot;: &quot;Blocked&quot;, &quot;status_color&quot;: &quot;#c0392b&quot;, &quot;facts&quot;: [[&quot;Build Type&quot;, &quot;microsoft&quot;], [&quot;Deployment&quot;, &quot;everyone&quot;], [&quot;Entra Correlation&quot;, &quot;No&quot;], [&quot;Sources&quot;, &quot;Agent 365&quot;], [&quot;Correlation Confidence&quot;, &quot;100/100&quot;]], &quot;result_line&quot;: &quot;Package is blocked.&quot;, &quot;what_checked&quot;: &quot;Microsoft 365 Copilot Agent is a microsoft package registered in the Agent 365 catalog. It is deployed to everyone scope and available to everyone users. The package is currently blocked. Not correlated with any Entra application.&quot;, &quot;remediation&quot;: [&quot;Verify the reason for blocking with the publisher/responsible team; don&#x27;t remove it unless necessary.&quot;]}' onclick="ztOpen(this)"><td class="c-name" data-sort="microsoft 365 copilot agent">Microsoft 365 Copilot Agent</td><td class="c-num" data-sort="5"><b>5</b>/100</td><td data-sort="0"><span class="zt-pill" style="--pc:#6b7280">Info</span></td><td data-sort="blocked"><span class="zt-pill" style="--pc:#c0392b">Blocked</span></td></tr></tbody></table></div>
+</div></section>
+<section class="tab" data-tab="shadow">
+<div class="card" id="shadow"><h3>Shadow AI — Discovered Apps</h3>
+<div class="c-subtitle">Same columns as Defender for Cloud Apps&#x27; &#x27;Discovered apps&#x27; view — user/device/IP COUNTS (individual identity lists are not in the API — see Gaps). Click a row to open the risk score + reasons + remediation panel.</div>
+<div class="zt-toolbar"><input class="zt-search" data-scope="shadow" placeholder="Search..." oninput="ztSearch(this)"><div class="zt-chips"><span class="zt-chip-label">Risk</span><button class="zt-chip" data-scope="shadow" data-key="risk" data-val="High" onclick="ztChip(this)">High</button><button class="zt-chip" data-scope="shadow" data-key="risk" data-val="Medium" onclick="ztChip(this)">Medium</button><button class="zt-chip" data-scope="shadow" data-key="risk" data-val="Info" onclick="ztChip(this)">Info</button></div><div class="zt-chips"><span class="zt-chip-label">Status</span><button class="zt-chip" data-scope="shadow" data-key="status" data-val="Sanctioned" onclick="ztChip(this)">Sanctioned</button><button class="zt-chip" data-scope="shadow" data-key="status" data-val="Unreviewed" onclick="ztChip(this)">Unreviewed</button><button class="zt-chip" data-scope="shadow" data-key="status" data-val="Unsanctioned" onclick="ztChip(this)">Unsanctioned</button></div></div>
+<div class="c-tbl-wrap"><table class="c-tbl zt-table"><thead><tr><th>Application</th><th>Risk Score</th><th>Tag</th><th>Traffic</th><th>Upload</th><th>Transactions</th><th>Users</th><th>IP Addresses</th><th>Devices</th><th>Last Seen</th></tr></thead>
+<tbody><tr class="zt-row" data-scope="shadow" data-risk="High" data-status="Unsanctioned" data-name="chatgpt" data-detail='{&quot;id&quot;: &quot;shadow-0&quot;, &quot;name&quot;: &quot;ChatGPT&quot;, &quot;bucket&quot;: &quot;unsanctioned&quot;, &quot;score&quot;: 80, &quot;risk_key&quot;: &quot;high&quot;, &quot;risk_label&quot;: &quot;High&quot;, &quot;risk_color&quot;: &quot;#c0392b&quot;, &quot;reasons&quot;: [&quot;+45 \u2014 Unsanctioned application&quot;, &quot;+10 \u2014 MDCA risk score 6/10 (lower score = higher risk)&quot;, &quot;+15 \u2014 40 users are using this application (wide spread)&quot;, &quot;+10 \u2014 3,000,000 bytes uploaded (30d)&quot;], &quot;status_label&quot;: &quot;Unsanctioned&quot;, &quot;status_color&quot;: &quot;#c0392b&quot;, &quot;facts&quot;: [[&quot;Users (30d)&quot;, 40], [&quot;Devices (30d)&quot;, 35], [&quot;IP Addresses (30d)&quot;, 12]], &quot;result_line&quot;: &quot;Unsanctioned application.&quot;, &quot;what_checked&quot;: &quot;ChatGPT was discovered by Defender for Cloud Apps over the last 30 days with traffic from 40 users, 35 devices, and 12 distinct IP addresses: 8,000 transactions, 3,000,000 bytes uploaded, 12,000,000 bytes downloaded. Sanction status: unsanctioned. MDCA risk score: 6/10. Sensitivity status: UNDETERMINED_REQUIRES_PURVIEW \u2014 not conclusive without Purview correlation. Note: these numbers are TOTALS; the MDCA aggregatedAppsDetails API does not provide individual user/device/IP identity.&quot;, &quot;remediation&quot;: [&quot;Mark the application as sanctioned or blocked in Defender for Cloud Apps.&quot;, &quot;Redirect users to an approved alternative.&quot;], &quot;traffic&quot;: {&quot;vendor&quot;: &quot;OpenAI&quot;, &quot;category&quot;: &quot;Generative AI&quot;, &quot;sanctioned_state&quot;: &quot;unsanctioned&quot;, &quot;risk_score&quot;: 6, &quot;users&quot;: 40, &quot;devices&quot;: 35, &quot;ip_addresses&quot;: 12, &quot;transactions&quot;: 8000, &quot;uploaded_bytes&quot;: 3000000, &quot;downloaded_bytes&quot;: 12000000, &quot;last_seen&quot;: &quot;2026-07-26T00:00:00Z&quot;, &quot;defender_url&quot;: &quot;https://security.microsoft.com/cloudapps/discovery?tid=contoso-sample-0000-0000-000000000000&quot;}}' onclick="ztOpen(this)"><td data-sort="chatgpt"><div class="c-name">ChatGPT</div><div style="font-size:11px;color:var(--muted)">Generative AI &middot; <a href="https://security.microsoft.com/cloudapps/discovery?tid=contoso-sample-0000-0000-000000000000" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:var(--accent)">Open in Defender ↗</a></div></td><td data-sort="6"><div style="display:flex;align-items:center;gap:6px"><div style="width:46px;height:7px;border-radius:4px;background:var(--track);overflow:hidden"><div style="width:60%;height:100%;background:#b8860b"></div></div><span class="c-num">6</span></div></td><td data-sort="unsanctioned"><span class="zt-pill" style="--pc:#c0392b">Unsanctioned</span></td><td class="c-num" data-sort="15000000">14.3 MB</td><td class="c-num" data-sort="3000000">2.9 MB</td><td class="c-num" data-sort="8000">8,000</td><td class="c-num" data-sort="40">40</td><td class="c-num" data-sort="12">12</td><td class="c-num" data-sort="35">35</td><td class="c-num" data-sort="2026-07-26T00:00:00Z" style="white-space:nowrap">2026-07-26</td></tr><tr class="zt-row" data-scope="shadow" data-risk="Info" data-status="Sanctioned" data-name="claude" data-detail='{&quot;id&quot;: &quot;shadow-1&quot;, &quot;name&quot;: &quot;Claude&quot;, &quot;bucket&quot;: &quot;sanctioned&quot;, &quot;score&quot;: 13, &quot;risk_key&quot;: &quot;info&quot;, &quot;risk_label&quot;: &quot;Info&quot;, &quot;risk_color&quot;: &quot;#6b7280&quot;, &quot;reasons&quot;: [&quot;Organizationally sanctioned&quot;, &quot;+5 \u2014 MDCA risk score 8/10 (lower score = higher risk)&quot;, &quot;+8 \u2014 10 users are using this application&quot;], &quot;status_label&quot;: &quot;Sanctioned&quot;, &quot;status_color&quot;: &quot;#2e8b57&quot;, &quot;facts&quot;: [[&quot;Users (30d)&quot;, 10], [&quot;Devices (30d)&quot;, 8], [&quot;IP Addresses (30d)&quot;, 3]], &quot;result_line&quot;: &quot;Organizationally sanctioned.&quot;, &quot;what_checked&quot;: &quot;Claude was discovered by Defender for Cloud Apps over the last 30 days with traffic from 10 users, 8 devices, and 3 distinct IP addresses: 200 transactions, 500,000 bytes uploaded, 1,500,000 bytes downloaded. Sanction status: sanctioned. MDCA risk score: 8/10. Sensitivity status: UNDETERMINED_REQUIRES_PURVIEW \u2014 not conclusive without Purview correlation. Note: these numbers are TOTALS; the MDCA aggregatedAppsDetails API does not provide individual user/device/IP identity.&quot;, &quot;remediation&quot;: [&quot;No further action needed; continue monitoring traffic periodically.&quot;], &quot;traffic&quot;: {&quot;vendor&quot;: &quot;Anthropic&quot;, &quot;category&quot;: &quot;Collaboration&quot;, &quot;sanctioned_state&quot;: &quot;sanctioned&quot;, &quot;risk_score&quot;: 8, &quot;users&quot;: 10, &quot;devices&quot;: 8, &quot;ip_addresses&quot;: 3, &quot;transactions&quot;: 200, &quot;uploaded_bytes&quot;: 500000, &quot;downloaded_bytes&quot;: 1500000, &quot;last_seen&quot;: &quot;2026-07-20T00:00:00Z&quot;, &quot;defender_url&quot;: &quot;https://security.microsoft.com/cloudapps/discovery?tid=contoso-sample-0000-0000-000000000000&quot;}}' onclick="ztOpen(this)"><td data-sort="claude"><div class="c-name">Claude</div><div style="font-size:11px;color:var(--muted)">Collaboration &middot; <a href="https://security.microsoft.com/cloudapps/discovery?tid=contoso-sample-0000-0000-000000000000" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:var(--accent)">Open in Defender ↗</a></div></td><td data-sort="8"><div style="display:flex;align-items:center;gap:6px"><div style="width:46px;height:7px;border-radius:4px;background:var(--track);overflow:hidden"><div style="width:80%;height:100%;background:#2e8b57"></div></div><span class="c-num">8</span></div></td><td data-sort="sanctioned"><span class="zt-pill" style="--pc:#2e8b57">Sanctioned</span></td><td class="c-num" data-sort="2000000">1.9 MB</td><td class="c-num" data-sort="500000">488.3 KB</td><td class="c-num" data-sort="200">200</td><td class="c-num" data-sort="10">10</td><td class="c-num" data-sort="3">3</td><td class="c-num" data-sort="8">8</td><td class="c-num" data-sort="2026-07-20T00:00:00Z" style="white-space:nowrap">2026-07-20</td></tr><tr class="zt-row" data-scope="shadow" data-risk="Medium" data-status="Unreviewed" data-name="someai writer" data-detail='{&quot;id&quot;: &quot;shadow-2&quot;, &quot;name&quot;: &quot;SomeAI Writer&quot;, &quot;bucket&quot;: &quot;unreviewed&quot;, &quot;score&quot;: 53, &quot;risk_key&quot;: &quot;medium&quot;, &quot;risk_label&quot;: &quot;Medium&quot;, &quot;risk_color&quot;: &quot;#b8860b&quot;, &quot;reasons&quot;: [&quot;+25 \u2014 Not yet reviewed (unreviewed)&quot;, &quot;+20 \u2014 MDCA risk score 2/10 (lower score = higher risk)&quot;, &quot;+8 \u2014 5 users are using this application&quot;], &quot;status_label&quot;: &quot;Unreviewed&quot;, &quot;status_color&quot;: &quot;#b8860b&quot;, &quot;facts&quot;: [[&quot;Users (30d)&quot;, 5], [&quot;Devices (30d)&quot;, 5], [&quot;IP Addresses (30d)&quot;, 2]], &quot;result_line&quot;: &quot;Not yet reviewed.&quot;, &quot;what_checked&quot;: &quot;SomeAI Writer was discovered by Defender for Cloud Apps over the last 30 days with traffic from 5 users, 5 devices, and 2 distinct IP addresses: 50 transactions, 100 bytes uploaded, 500 bytes downloaded. Sanction status: unreviewed. MDCA risk score: 2/10. Sensitivity status: UNDETERMINED_REQUIRES_PURVIEW \u2014 not conclusive without Purview correlation. Note: these numbers are TOTALS; the MDCA aggregatedAppsDetails API does not provide individual user/device/IP identity.&quot;, &quot;remediation&quot;: [&quot;Review the application and classify it as sanctioned/unsanctioned.&quot;], &quot;traffic&quot;: {&quot;vendor&quot;: &quot;&quot;, &quot;category&quot;: &quot;Generative AI&quot;, &quot;sanctioned_state&quot;: &quot;unreviewed&quot;, &quot;risk_score&quot;: 2, &quot;users&quot;: 5, &quot;devices&quot;: 5, &quot;ip_addresses&quot;: 2, &quot;transactions&quot;: 50, &quot;uploaded_bytes&quot;: 100, &quot;downloaded_bytes&quot;: 500, &quot;last_seen&quot;: &quot;2026-07-24T00:00:00Z&quot;, &quot;defender_url&quot;: &quot;https://security.microsoft.com/cloudapps/discovery?tid=contoso-sample-0000-0000-000000000000&quot;}}' onclick="ztOpen(this)"><td data-sort="someai writer"><div class="c-name">SomeAI Writer</div><div style="font-size:11px;color:var(--muted)">Generative AI &middot; <a href="https://security.microsoft.com/cloudapps/discovery?tid=contoso-sample-0000-0000-000000000000" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="color:var(--accent)">Open in Defender ↗</a></div></td><td data-sort="2"><div style="display:flex;align-items:center;gap:6px"><div style="width:46px;height:7px;border-radius:4px;background:var(--track);overflow:hidden"><div style="width:20%;height:100%;background:#c0392b"></div></div><span class="c-num">2</span></div></td><td data-sort="unreviewed"><span class="zt-pill" style="--pc:#b8860b">Unreviewed</span></td><td class="c-num" data-sort="600">600 B</td><td class="c-num" data-sort="100">100 B</td><td class="c-num" data-sort="50">50</td><td class="c-num" data-sort="5">5</td><td class="c-num" data-sort="2">2</td><td class="c-num" data-sort="5">5</td><td class="c-num" data-sort="2026-07-24T00:00:00Z" style="white-space:nowrap">2026-07-24</td></tr></tbody></table></div>
+</div></section>
+<section class="tab" data-tab="sensitive">
+<div class="card" id="exposure"><h3>Applications with Sensitive Data Exposure</h3>
+<div class="c-subtitle">DLP outcome (blocked/allowed) and data-type diversity determine the score</div>
+<div class="zt-toolbar"><input class="zt-search" data-scope="exposure" placeholder="Search..." oninput="ztSearch(this)"><div class="zt-chips"><span class="zt-chip-label">Risk</span><button class="zt-chip" data-scope="exposure" data-key="risk" data-val="High" onclick="ztChip(this)">High</button><button class="zt-chip" data-scope="exposure" data-key="risk" data-val="Low" onclick="ztChip(this)">Low</button></div><div class="zt-chips"><span class="zt-chip-label">Status</span><button class="zt-chip" data-scope="exposure" data-key="status" data-val="Failed" onclick="ztChip(this)">Failed</button><button class="zt-chip" data-scope="exposure" data-key="status" data-val="Passed" onclick="ztChip(this)">Passed</button></div></div>
+<div class="zt-tbl-wrap"><table class="zt-table">
+<thead><tr><th>Name</th><th>Score</th><th>Risk</th><th>Status</th></tr></thead>
+<tbody><tr class="zt-row" data-scope="exposure" data-risk="High" data-status="Failed" data-name="chatgpt" data-detail='{&quot;id&quot;: &quot;exposure-1&quot;, &quot;name&quot;: &quot;ChatGPT&quot;, &quot;bucket&quot;: null, &quot;score&quot;: 76, &quot;risk_key&quot;: &quot;high&quot;, &quot;risk_label&quot;: &quot;High&quot;, &quot;risk_color&quot;: &quot;#c0392b&quot;, &quot;reasons&quot;: [&quot;+50 \u2014 1 sensitive interactions were allowed despite DLP&quot;, &quot;+8 \u2014 1 distinct sensitive data types: U.S. Social Security Number&quot;, &quot;+3 \u2014 1 users affected&quot;, &quot;+15 \u2014 Unsanctioned application&quot;], &quot;status_label&quot;: &quot;Failed&quot;, &quot;status_color&quot;: &quot;#c0392b&quot;, &quot;facts&quot;: [[&quot;Affected Users&quot;, 1], [&quot;Sensitive Interactions (30d)&quot;, 1], [&quot;Data Type Count&quot;, 1]], &quot;result_line&quot;: &quot;DLP matched but access was allowed \u2014 needs review.&quot;, &quot;what_checked&quot;: &quot;ChatGPT had 1/1 sensitive interactions in the last 30 days, affecting 1 users. Data types: U.S. Social Security Number. Direction breakdown: UPLOADED:2, ALLOWED:1. 0 blocked, 1 allowed.&quot;, &quot;remediation&quot;: [&quot;ChatGPT is unsanctioned and has sensitive data in a sharing/processing direction (3 interactions). SIT: [&#x27;U.S. Social Security Number&#x27;].&quot;]}' onclick="ztOpen(this)"><td class="c-name" data-sort="chatgpt">ChatGPT</td><td class="c-num" data-sort="76"><b>76</b>/100</td><td data-sort="3"><span class="zt-pill" style="--pc:#c0392b">High</span></td><td data-sort="failed"><span class="zt-pill" style="--pc:#c0392b">Failed</span></td></tr><tr class="zt-row" data-scope="exposure" data-risk="Low" data-status="Passed" data-name="microsoft teams" data-detail='{&quot;id&quot;: &quot;exposure-0&quot;, &quot;name&quot;: &quot;Microsoft Teams&quot;, &quot;bucket&quot;: null, &quot;score&quot;: 21, &quot;risk_key&quot;: &quot;low&quot;, &quot;risk_label&quot;: &quot;Low&quot;, &quot;risk_color&quot;: &quot;#2e8b57&quot;, &quot;reasons&quot;: [&quot;+10 \u2014 1 sensitive interactions were blocked (positive control)&quot;, &quot;+8 \u2014 1 distinct sensitive data types: Credit Card Number&quot;, &quot;+3 \u2014 1 users affected&quot;], &quot;status_label&quot;: &quot;Passed&quot;, &quot;status_color&quot;: &quot;#2e8b57&quot;, &quot;facts&quot;: [[&quot;Affected Users&quot;, 1], [&quot;Sensitive Interactions (30d)&quot;, 1], [&quot;Data Type Count&quot;, 1]], &quot;result_line&quot;: &quot;All sensitive interactions were blocked.&quot;, &quot;what_checked&quot;: &quot;Microsoft Teams had 1/2 sensitive interactions in the last 30 days, affecting 1 users. Data types: Credit Card Number. Direction breakdown: ACCESSED:1, BLOCKED:1. 1 blocked, 0 allowed.&quot;, &quot;remediation&quot;: [&quot;1 sensitive interactions were blocked by DLP for Microsoft Teams (positive control).&quot;, &quot;Microsoft Teams is accessing labeled corporate data: [&#x27;label-confidential&#x27;].&quot;]}' onclick="ztOpen(this)"><td class="c-name" data-sort="microsoft teams">Microsoft Teams</td><td class="c-num" data-sort="21"><b>21</b>/100</td><td data-sort="1"><span class="zt-pill" style="--pc:#2e8b57">Low</span></td><td data-sort="passed"><span class="zt-pill" style="--pc:#2e8b57">Passed</span></td></tr></tbody></table></div>
+</div><div class="card" style="margin-top:16px"><h3>Purview — Recent Sensitive Interactions</h3><div class="c-tbl-wrap"><table class="c-tbl"><thead><tr><th>Time</th><th>Application</th><th>User</th><th>Direction</th><th>Data type</th></tr></thead><tbody><tr><td class="c-num">2026-07-20T10:00:00Z</td><td class="c-name">Microsoft Teams</td><td>alice@contoso.com</td><td><span class="c-tag">BLOCKED</span></td><td><span class="c-tag">Credit Card Number</span></td></tr><tr><td class="c-num">2026-07-21T11:00:00Z</td><td class="c-name">ChatGPT</td><td>bob@contoso.com</td><td><span class="c-tag">ALLOWED</span></td><td><span class="c-tag">U.S. Social Security Number</span></td></tr><tr><td class="c-num">2026-07-22T09:00:00Z</td><td class="c-name">Microsoft Teams</td><td>alice@contoso.com</td><td><span class="c-tag">ACCESSED</span></td><td>—</td></tr></tbody></table></div></div></section>
+<section class="tab" data-tab="findings">
+<div class="card" id="findings"><h3>Findings</h3>
+<div class="c-subtitle">Each finding is listed as a failed assessment check</div>
+<div class="zt-toolbar"><input class="zt-search" data-scope="findings" placeholder="Search..." oninput="ztSearch(this)"><div class="zt-chips"><span class="zt-chip-label">Risk</span><button class="zt-chip" data-scope="findings" data-key="risk" data-val="High" onclick="ztChip(this)">High</button><button class="zt-chip" data-scope="findings" data-key="risk" data-val="Medium" onclick="ztChip(this)">Medium</button><button class="zt-chip" data-scope="findings" data-key="risk" data-val="Low" onclick="ztChip(this)">Low</button><button class="zt-chip" data-scope="findings" data-key="risk" data-val="Info" onclick="ztChip(this)">Info</button></div><div class="zt-chips"><span class="zt-chip-label">Status</span><button class="zt-chip" data-scope="findings" data-key="status" data-val="Failed" onclick="ztChip(this)">Failed</button><button class="zt-chip" data-scope="findings" data-key="status" data-val="Passed" onclick="ztChip(this)">Passed</button></div></div>
+<div class="zt-tbl-wrap"><table class="zt-table">
+<thead><tr><th>Name</th><th>Score</th><th>Risk</th><th>Status</th></tr></thead>
+<tbody><tr class="zt-row" data-scope="findings" data-risk="High" data-status="Failed" data-name="sensitive data shared with unsanctioned ai" data-detail='{&quot;id&quot;: &quot;finding-0&quot;, &quot;name&quot;: &quot;Sensitive Data Shared With Unsanctioned Ai&quot;, &quot;bucket&quot;: null, &quot;score&quot;: 80, &quot;risk_key&quot;: &quot;high&quot;, &quot;risk_label&quot;: &quot;High&quot;, &quot;risk_color&quot;: &quot;#c0392b&quot;, &quot;reasons&quot;: [&quot;+80 \u2014 ChatGPT is unsanctioned and has sensitive data in a sharing/processing direction (3 interactions). SIT: [&#x27;U.S. Social Security Number&#x27;].&quot;], &quot;status_label&quot;: &quot;Failed&quot;, &quot;status_color&quot;: &quot;#c0392b&quot;, &quot;facts&quot;: [[&quot;Application&quot;, &quot;ChatGPT&quot;], [&quot;Affected Users&quot;, 1], [&quot;Source&quot;, &quot;MDCA / Purview&quot;]], &quot;result_line&quot;: &quot;ChatGPT is unsanctioned and has sensitive data in a sharing/processing direction (3 interactions). SIT: [&#x27;U.S. Social Security Number&#x27;].&quot;, &quot;what_checked&quot;: &quot;ChatGPT is unsanctioned and has sensitive data in a sharing/processing direction (3 interactions). SIT: [&#x27;U.S. Social Security Number&#x27;].&quot;, &quot;remediation&quot;: [&quot;Mark this application as sanctioned or blocked in Defender for Cloud Apps; expand the DLP policy to also cover this application; redirect users to an approved alternative.&quot;]}' onclick="ztOpen(this)"><td class="c-name" data-sort="sensitive data shared with unsanctioned ai">Sensitive Data Shared With Unsanctioned Ai</td><td class="c-num" data-sort="80"><b>80</b>/100</td><td data-sort="3"><span class="zt-pill" style="--pc:#c0392b">High</span></td><td data-sort="failed"><span class="zt-pill" style="--pc:#c0392b">Failed</span></td></tr><tr class="zt-row" data-scope="findings" data-risk="Medium" data-status="Failed" data-name="ai app accessing labeled data" data-detail='{&quot;id&quot;: &quot;finding-1&quot;, &quot;name&quot;: &quot;Ai App Accessing Labeled Data&quot;, &quot;bucket&quot;: null, &quot;score&quot;: 50, &quot;risk_key&quot;: &quot;medium&quot;, &quot;risk_label&quot;: &quot;Medium&quot;, &quot;risk_color&quot;: &quot;#b8860b&quot;, &quot;reasons&quot;: [&quot;+50 \u2014 Microsoft Teams is accessing labeled corporate data: [&#x27;label-confidential&#x27;].&quot;], &quot;status_label&quot;: &quot;Failed&quot;, &quot;status_color&quot;: &quot;#b8860b&quot;, &quot;facts&quot;: [[&quot;Application&quot;, &quot;Microsoft Teams&quot;], [&quot;Affected Users&quot;, &quot;\u2014&quot;], [&quot;Source&quot;, &quot;MDCA / Purview&quot;]], &quot;result_line&quot;: &quot;Microsoft Teams is accessing labeled corporate data: [&#x27;label-confidential&#x27;].&quot;, &quot;what_checked&quot;: &quot;Microsoft Teams is accessing labeled corporate data: [&#x27;label-confidential&#x27;].&quot;, &quot;remediation&quot;: [&quot;Verify whether this application&#x27;s access to labeled data reflects an actual business need; define an additional DLP policy if necessary.&quot;]}' onclick="ztOpen(this)"><td class="c-name" data-sort="ai app accessing labeled data">Ai App Accessing Labeled Data</td><td class="c-num" data-sort="50"><b>50</b>/100</td><td data-sort="2"><span class="zt-pill" style="--pc:#b8860b">Medium</span></td><td data-sort="failed"><span class="zt-pill" style="--pc:#b8860b">Failed</span></td></tr><tr class="zt-row" data-scope="findings" data-risk="Low" data-status="Failed" data-name="unsanctioned ai upload undetermined" data-detail='{&quot;id&quot;: &quot;finding-2&quot;, &quot;name&quot;: &quot;Unsanctioned Ai Upload Undetermined&quot;, &quot;bucket&quot;: null, &quot;score&quot;: 25, &quot;risk_key&quot;: &quot;low&quot;, &quot;risk_label&quot;: &quot;Low&quot;, &quot;risk_color&quot;: &quot;#2e8b57&quot;, &quot;reasons&quot;: [&quot;+25 \u2014 SomeAI Writer has a high upload volume (100 bytes) but no Purview correlation \u2192 sensitivity is UNDETERMINED (volume alone isn&#x27;t sharing).&quot;], &quot;status_label&quot;: &quot;Failed&quot;, &quot;status_color&quot;: &quot;#2e8b57&quot;, &quot;facts&quot;: [[&quot;Application&quot;, &quot;SomeAI Writer&quot;], [&quot;Affected Users&quot;, &quot;\u2014&quot;], [&quot;Source&quot;, &quot;MDCA / Purview&quot;]], &quot;result_line&quot;: &quot;SomeAI Writer has a high upload volume (100 bytes) but no Purview correlation \u2192 sensitivity is UNDETERMINED (volume alone isn&#x27;t sharing).&quot;, &quot;what_checked&quot;: &quot;SomeAI Writer has a high upload volume (100 bytes) but no Purview correlation \u2192 sensitivity is UNDETERMINED (volume alone isn&#x27;t sharing).&quot;, &quot;remediation&quot;: [&quot;Enable the Purview Audit/DSPM connection to determine this application&#x27;s real data sensitivity; keep monitoring upload volume until it&#x27;s connected.&quot;]}' onclick="ztOpen(this)"><td class="c-name" data-sort="unsanctioned ai upload undetermined">Unsanctioned Ai Upload Undetermined</td><td class="c-num" data-sort="25"><b>25</b>/100</td><td data-sort="1"><span class="zt-pill" style="--pc:#2e8b57">Low</span></td><td data-sort="failed"><span class="zt-pill" style="--pc:#2e8b57">Failed</span></td></tr><tr class="zt-row" data-scope="findings" data-risk="Low" data-status="Failed" data-name="unsanctioned ai upload undetermined" data-detail='{&quot;id&quot;: &quot;finding-3&quot;, &quot;name&quot;: &quot;Unsanctioned Ai Upload Undetermined&quot;, &quot;bucket&quot;: null, &quot;score&quot;: 25, &quot;risk_key&quot;: &quot;low&quot;, &quot;risk_label&quot;: &quot;Low&quot;, &quot;risk_color&quot;: &quot;#2e8b57&quot;, &quot;reasons&quot;: [&quot;+25 \u2014 Claude has a high upload volume (500000 bytes) but no Purview correlation \u2192 sensitivity is UNDETERMINED (volume alone isn&#x27;t sharing).&quot;], &quot;status_label&quot;: &quot;Failed&quot;, &quot;status_color&quot;: &quot;#2e8b57&quot;, &quot;facts&quot;: [[&quot;Application&quot;, &quot;Claude&quot;], [&quot;Affected Users&quot;, &quot;\u2014&quot;], [&quot;Source&quot;, &quot;MDCA / Purview&quot;]], &quot;result_line&quot;: &quot;Claude has a high upload volume (500000 bytes) but no Purview correlation \u2192 sensitivity is UNDETERMINED (volume alone isn&#x27;t sharing).&quot;, &quot;what_checked&quot;: &quot;Claude has a high upload volume (500000 bytes) but no Purview correlation \u2192 sensitivity is UNDETERMINED (volume alone isn&#x27;t sharing).&quot;, &quot;remediation&quot;: [&quot;Enable the Purview Audit/DSPM connection to determine this application&#x27;s real data sensitivity; keep monitoring upload volume until it&#x27;s connected.&quot;]}' onclick="ztOpen(this)"><td class="c-name" data-sort="unsanctioned ai upload undetermined">Unsanctioned Ai Upload Undetermined</td><td class="c-num" data-sort="25"><b>25</b>/100</td><td data-sort="1"><span class="zt-pill" style="--pc:#2e8b57">Low</span></td><td data-sort="failed"><span class="zt-pill" style="--pc:#2e8b57">Failed</span></td></tr><tr class="zt-row" data-scope="findings" data-risk="Info" data-status="Passed" data-name="sensitive data blocked to ai" data-detail='{&quot;id&quot;: &quot;finding-4&quot;, &quot;name&quot;: &quot;Sensitive Data Blocked To Ai&quot;, &quot;bucket&quot;: null, &quot;score&quot;: 10, &quot;risk_key&quot;: &quot;info&quot;, &quot;risk_label&quot;: &quot;Info&quot;, &quot;risk_color&quot;: &quot;#6b7280&quot;, &quot;reasons&quot;: [&quot;+10 \u2014 1 sensitive interactions were blocked by DLP for Microsoft Teams (positive control).&quot;], &quot;status_label&quot;: &quot;Passed&quot;, &quot;status_color&quot;: &quot;#2e8b57&quot;, &quot;facts&quot;: [[&quot;Application&quot;, &quot;Microsoft Teams&quot;], [&quot;Affected Users&quot;, &quot;\u2014&quot;], [&quot;Source&quot;, &quot;MDCA / Purview&quot;]], &quot;result_line&quot;: &quot;1 sensitive interactions were blocked by DLP for Microsoft Teams (positive control).&quot;, &quot;what_checked&quot;: &quot;1 sensitive interactions were blocked by DLP for Microsoft Teams (positive control).&quot;, &quot;remediation&quot;: [&quot;Positive control \u2014 the DLP policy is working. No further action needed; review policy coverage periodically.&quot;]}' onclick="ztOpen(this)"><td class="c-name" data-sort="sensitive data blocked to ai">Sensitive Data Blocked To Ai</td><td class="c-num" data-sort="10"><b>10</b>/100</td><td data-sort="0"><span class="zt-pill" style="--pc:#6b7280">Info</span></td><td data-sort="passed"><span class="zt-pill" style="--pc:#2e8b57">Passed</span></td></tr></tbody></table></div>
+</div></section>
+<section class="tab" data-tab="gaps"><div class="card"><h3>Known Gaps / API Limitations</h3><ul class="na"><li>Purview audit&#x27;s sensitivity_label_name is not exposed by the API (field=NOT_EXPOSED_BY_API); only label_id is available.</li><li>MDCA upload volume alone does not count as &#x27;sensitive sharing&#x27;; without Purview correlation, data_sensitivity stays UNDETERMINED_REQUIRES_PURVIEW.</li><li>agent_blueprint_id is NOT a merge token (relate-not-merge); multiple identities derived from the same blueprint remain separate assets.</li><li>Defender for Cloud Apps (aggregatedAppsDetails) only returns user/device/IP COUNTS — individual user/device/IP identity is NOT in this API; so the &#x27;which user/device&#x27; question can only be answered via Purview interactions (which carry real user identity).</li></ul></div></section>
+<div class="foot">AI-SPM — Microsoft AI Data Sources · connectors_report.assessment()</div>
+</main>
+
+<div class="zt-overlay" id="zt-overlay" onclick="ztClose()"></div>
+<aside class="zt-panel" id="zt-panel" role="dialog" aria-label="Detail">
+  <button class="zt-panel-close" onclick="ztClose()" aria-label="Close">&times;</button>
+  <h2 id="zt-title"></h2>
+  <div class="zt-facts" id="zt-facts"></div>
+  <h4>Risk Score</h4>
+  <div class="zt-score"><span class="zt-score-num" id="zt-score-num"></span>
+  <div class="zt-score-bar"><div class="zt-score-fill" id="zt-score-fill"></div></div></div>
+  <h4>Why this score?</h4>
+  <ul id="zt-reasons"></ul>
+  <div class="zt-result">
+    <span>Test result →</span>
+    <span class="zt-pill" id="zt-result-pill"></span>
+    <span id="zt-result-line" style="color:var(--muted);font-size:13px"></span>
+  </div>
+  <section><h4>What was checked</h4><p id="zt-checked"></p></section>
+  <section><h4>Remediation action</h4><ul id="zt-remediation"></ul></section>
+</aside>
+<script>
+(function(){
+function showTab(n){
+  document.querySelectorAll('.tab').forEach(function(t){t.classList.toggle('active',t.getAttribute('data-tab')===n);});
+  document.querySelectorAll('.navlink').forEach(function(x){x.classList.toggle('active',x.getAttribute('data-tab')===n);});
+  window.scrollTo(0,0);
+}
+document.querySelectorAll('.navlink').forEach(function(l){l.onclick=function(){showTab(l.getAttribute('data-tab'));};});
+document.querySelectorAll('[data-goto]').forEach(function(c){c.onclick=function(e){e.preventDefault();showTab(c.getAttribute('data-goto'));};});
+window.ztGoto = showTab;
+var coreLink=document.getElementById('coreDashboardLink');
+if(coreLink){
+  if(location.pathname.indexOf('/api/')===0){
+    var coreCode=new URLSearchParams(location.search).get('code');
+    coreLink.href='/api/report'+(coreCode?('?code='+encodeURIComponent(coreCode)):'');
+  }else{
+    coreLink.remove();
+  }
+}
+})();
+function ztRows(scope){return document.querySelectorAll('tr.zt-row[data-scope="'+scope+'"]');}
+function ztActiveChips(scope,key){
+  var sel='.zt-chip.active[data-scope="'+scope+'"][data-key="'+key+'"]';
+  return Array.prototype.map.call(document.querySelectorAll(sel), function(c){return c.dataset.val;});
+}
+function ztApply(scope){
+  var risks=ztActiveChips(scope,'risk'), statuses=ztActiveChips(scope,'status');
+  var searchEl=document.querySelector('.zt-search[data-scope="'+scope+'"]');
+  var q=searchEl?searchEl.value.trim().toLowerCase():'';
+  ztRows(scope).forEach(function(row){
+    var okRisk=risks.length===0||risks.indexOf(row.dataset.risk)>-1;
+    var okStatus=statuses.length===0||statuses.indexOf(row.dataset.status)>-1;
+    var okSearch=!q||row.dataset.name.indexOf(q)>-1;
+    row.style.display=(okRisk&&okStatus&&okSearch)?'':'none';
+  });
+}
+function ztChip(btn){btn.classList.toggle('active');ztApply(btn.dataset.scope);}
+function ztSearch(input){ztApply(input.dataset.scope);}
+function ztOpen(row){
+  var d=JSON.parse(row.getAttribute('data-detail'));
+  document.getElementById('zt-title').textContent=d.name;
+  var factsEl=document.getElementById('zt-facts');factsEl.innerHTML='';
+  d.facts.forEach(function(f){
+    var wrap=document.createElement('div');wrap.className='zt-fact';
+    var l=document.createElement('span');l.className='zt-fact-l';l.textContent=f[0];
+    var v=document.createElement('span');v.className='zt-fact-v';v.textContent=f[1];
+    wrap.appendChild(l);wrap.appendChild(v);factsEl.appendChild(wrap);
+  });
+  document.getElementById('zt-score-num').textContent=d.score+'/100';
+  var fill=document.getElementById('zt-score-fill');
+  fill.style.width=d.score+'%';fill.style.background=d.risk_color;
+  var reasonsEl=document.getElementById('zt-reasons');reasonsEl.innerHTML='';
+  d.reasons.forEach(function(r){var li=document.createElement('li');li.textContent=r;reasonsEl.appendChild(li);});
+  var pill=document.getElementById('zt-result-pill');
+  pill.textContent=d.status_label;pill.style.setProperty('--pc',d.status_color);
+  document.getElementById('zt-result-line').textContent=d.result_line;
+  document.getElementById('zt-checked').textContent=d.what_checked;
+  var remEl=document.getElementById('zt-remediation');remEl.innerHTML='';
+  d.remediation.forEach(function(r){var li=document.createElement('li');li.textContent=r;remEl.appendChild(li);});
+  document.getElementById('zt-overlay').classList.add('open');
+  document.getElementById('zt-panel').classList.add('open');
+}
+function ztClose(){
+  document.getElementById('zt-overlay').classList.remove('open');
+  document.getElementById('zt-panel').classList.remove('open');
+}
+document.addEventListener('keydown',function(e){if(e.key==='Escape')ztClose();});
+function ztSortTable(th){
+  var table=th.closest('table');
+  if(!table)return;
+  var tbody=table.querySelector('tbody');
+  if(!tbody)return;
+  var ths=Array.prototype.slice.call(th.parentNode.children);
+  var idx=ths.indexOf(th);
+  var dir=th.classList.contains('sorted-asc')?'desc':'asc';
+  ths.forEach(function(h){h.classList.remove('sorted-asc','sorted-desc');});
+  th.classList.add(dir==='asc'?'sorted-asc':'sorted-desc');
+  var rows=Array.prototype.slice.call(tbody.rows);
+  rows.sort(function(a,b){
+    var ac=a.cells[idx],bc=b.cells[idx];
+    var av=ac?(ac.dataset.sort!==undefined?ac.dataset.sort:ac.textContent.trim().toLowerCase()):'';
+    var bv=bc?(bc.dataset.sort!==undefined?bc.dataset.sort:bc.textContent.trim().toLowerCase()):'';
+    var an=parseFloat(av),bn=parseFloat(bv);
+    var cmp=(!isNaN(an)&&!isNaN(bn)&&av!==''&&bv!=='')?(an-bn):String(av).localeCompare(String(bv));
+    return dir==='asc'?cmp:-cmp;
+  });
+  rows.forEach(function(r){tbody.appendChild(r);});
+}
+document.querySelectorAll('table.zt-table thead th, table.c-tbl thead th').forEach(function(th){
+  th.classList.add('zt-sortable');
+  th.onclick=function(){ztSortTable(th);};
+});
+</script>
+</body></html>

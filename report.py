@@ -4,26 +4,30 @@ import json
 import math
 from datetime import datetime, timezone
 
+import charts
 from config import (SENSITIVE_SCOPES, SCOPE_HEURISTICS,
                     LIFECYCLE_STATUSES, CRITICALITY, ENVIRONMENTS,
                     AI_CATEGORIES, OWNERSHIP_CLASSES, FINDING_STATUSES)
 
-_SEV_COLOR = {"Critical": "#c0392b", "High": "#d35400", "Medium": "#b8860b", "Low": "#2e8b57"}
-_FSTATUS_COLOR = {"Open": "#c0392b", "Assigned": "#d35400", "In Progress": "#0f6cbd",
-                  "Pending Review": "#b8860b", "Resolved": "#2e8b57", "Accepted": "#4b5563",
-                  "False Positive": "#6b7280", "Reopened": "#c0392b"}
+# Severity is a status scale, so it uses the one validated status palette everywhere —
+# chips, rows, and charts alike. See charts.SEVERITY.
+_SEV_COLOR = dict(charts.SEVERITY)
+_FSTATUS_COLOR = {"Open": charts.SEVERITY["Critical"], "Assigned": charts.SEVERITY["High"],
+                  "In Progress": charts.CATEGORICAL_LIGHT[0],
+                  "Pending Review": charts.SEVERITY["Medium"],
+                  "Resolved": charts.SEVERITY["Low"], "Accepted": "#4b5563",
+                  "False Positive": "#6b7280", "Reopened": charts.SEVERITY["Critical"]}
 
-_LIFECYCLE_COLOR = {"Discovered": "#6b7280", "Under Review": "#b8860b", "Pilot": "#0f6cbd",
-                    "Approved": "#2e8b57", "Restricted": "#d35400", "Blocked": "#c0392b",
+_LIFECYCLE_COLOR = {"Discovered": "#6b7280", "Under Review": charts.SEVERITY["Medium"],
+                    "Pilot": charts.CATEGORICAL_LIGHT[0], "Approved": charts.SEVERITY["Low"],
+                    "Restricted": charts.SEVERITY["High"], "Blocked": charts.SEVERITY["Critical"],
                     "Retired": "#4b5563", "Unknown": "#6b7280"}
 
-_CAT_COLOR = {"Microsoft First-Party AI": "#0f6cbd", "Approved Enterprise AI": "#2e8b57",
-              "Unapproved Enterprise AI": "#d35400", "Third-Party Shadow AI": "#c0392b",
-              "Internal Custom AI": "#7c3aed", "Personal AI Usage": "#b8860b",
-              "Unknown AI": "#6b7280", "Retired AI": "#4b5563"}
+# Classification is identity, not severity — categorical slots, in fixed order so a
+# category keeps its color as counts change.
+_CAT_COLOR = {c: charts.cat(i) for i, c in enumerate(AI_CATEGORIES)}
 
-_IMP_COLOR = {"Critical": "#c0392b", "High": "#d35400", "Medium": "#b8860b",
-              "Low": "#2e8b57", "Info": "#6b7280"}
+_IMP_COLOR = {**charts.SEVERITY, "Info": "#6b7280"}
 
 
 def _finding_editor(rec):
@@ -233,8 +237,8 @@ def _timeline_section(changes):
     return (f'<div class="card" style="margin-top:16px"><h3>Changes — timeline '
             f'({len(changes)})</h3><div class="timeline">{rows}</div></div>')
 
-LEVELS = ["Critical", "High", "Medium", "Low"]
-LEVEL_COLORS = {"Critical": "#c0392b", "High": "#d35400", "Medium": "#b8860b", "Low": "#2e8b57"}
+LEVELS = charts.SEVERITY_ORDER
+LEVEL_COLORS = _SEV_COLOR
 
 
 # ---------------------------------------------------------------- JSON
@@ -261,44 +265,107 @@ def _scope_weight(scope: str) -> int:
 
 def _donut(segments, size=180, stroke=28):
     """segments: [(label, value, color)] → SVG donut string."""
-    total = sum(v for _, v, _ in segments) or 1
-    r = (size - stroke) / 2
-    cx = cy = size / 2
-    circ = 2 * math.pi * r
-    offset = 0.0
-    arcs = []
-    for _, value, color in segments:
-        if value <= 0:
-            continue
-        dash = circ * (value / total)
-        arcs.append(
-            f'<circle cx="{cx}" cy="{cy}" r="{r:.2f}" fill="none" stroke="{color}" '
-            f'stroke-width="{stroke}" stroke-dasharray="{dash:.2f} {circ - dash:.2f}" '
-            f'stroke-dashoffset="{-offset:.2f}" transform="rotate(-90 {cx} {cy})"/>')
-        offset += dash
-    return (
-        f'<svg viewBox="0 0 {size} {size}" width="{size}" height="{size}" '
-        f'role="img" class="donut">'
-        f'<circle cx="{cx}" cy="{cy}" r="{r:.2f}" fill="none" stroke="var(--track)" '
-        f'stroke-width="{stroke}"/>{"".join(arcs)}'
-        f'<text x="{cx}" y="{cy - 4}" text-anchor="middle" class="donut-num">{total}</text>'
-        f'<text x="{cx}" y="{cy + 16}" text-anchor="middle" class="donut-cap">Shadow AI</text>'
-        f'</svg>')
+    return charts.donut(segments, center_label="Shadow AI", size=size, stroke=stroke)
 
 
-def _bars(rows, maxv):
-    """rows: [(label, sublabel, value, color)] → HTML bar list."""
-    maxv = maxv or 1
-    out = []
-    for label, sub, value, color in rows:
-        pct = max(3, round(100 * value / maxv))
-        out.append(
-            f'<div class="bar-row"><div class="bar-label">{html.escape(label)}'
-            f'<span class="bar-sub">{html.escape(sub)}</span></div>'
-            f'<div class="bar-track"><div class="bar-fill" style="width:{pct}%;'
-            f'background:{color}"></div></div>'
-            f'<div class="bar-val">{value}</div></div>')
-    return "".join(out) or '<div class="empty">No data</div>'
+def _bars(rows, maxv=None):
+    """rows: [(label, sublabel, value, color)] → ranked horizontal bars."""
+    return charts.hbar(rows)
+
+
+_POSTURE_WEIGHTS = {"Critical": 14, "High": 7, "Medium": 2, "Low": 0.5,
+                    "admin_consent": 3, "app_only": 4}
+_POSTURE_SCALE = 120.0
+
+
+def _posture_points(shadow, counts) -> list[tuple[str, int, float]]:
+    """The (label, count, weight) rows the posture score is built from."""
+    admin = sum(1 for a in shadow if a.get("consent_type") == "AllPrincipals")
+    apponly = sum(1 for a in shadow
+                  if any(_scope_weight((p.get("permission") or "").lower()) >= 8
+                         for p in a.get("application_permissions", [])))
+    w = _POSTURE_WEIGHTS
+    return [("Critical findings", counts["Critical"], w["Critical"]),
+            ("High findings", counts["High"], w["High"]),
+            ("Medium findings", counts["Medium"], w["Medium"]),
+            ("Low findings", counts["Low"], w["Low"]),
+            ("Org-wide admin consent", admin, w["admin_consent"]),
+            ("High-privilege app-only", apponly, w["app_only"])]
+
+
+def _posture_score(shadow, counts) -> int:
+    """
+    One number for the tenant's AI exposure, 0 (clean) to 100 (severe).
+
+    Deliberately not an average of risk scores: twenty Low-risk apps should not dilute
+    two Criticals into a comfortable-looking number. Each severity band contributes a
+    fixed weight, and the total is put through a saturating curve rather than simply
+    clipped — a straight sum pins a mid-sized estate at exactly 100 and then stops
+    moving, so getting worse and getting better both look identical.
+    """
+    if not shadow:
+        return 0
+    raw = sum(n * w for _label, n, w in _posture_points(shadow, counts))
+    return round(100 * (1 - math.exp(-raw / _POSTURE_SCALE)))
+
+
+def _posture_breakdown(shadow, counts) -> str:
+    """Shows what the posture number is actually made of, so it isn't a black box."""
+    rows = _posture_points(shadow, counts)
+    items = "".join(
+        f'<li><span>{html.escape(label)}</span>'
+        f'<b>{n} &times; {w:g} = {n * w:g}</b></li>' for label, n, w in rows if n)
+    if not items:
+        return '<p class="governed">Nothing contributing to the score.</p>'
+    total = sum(n * w for _label, n, w in rows)
+    return (f'<ul class="posture-parts">{items}'
+            f'<li><span>Exposure points</span><b>{total:g}</b></li></ul>')
+
+
+def _triage_chart(shadow) -> str:
+    """Risk against blast radius — which finding to work on first."""
+    pts = [(a.get("display_name") or "—", a.get("risk_score", 0),
+            a.get("user_count", 0), a.get("risk_level", "Low"),
+            len(a.get("scopes", [])) + len(a.get("application_permissions", [])))
+           for a in shadow]
+    return charts.risk_scatter(pts)
+
+
+def _permission_heatmap(shadow, top_apps=8, top_perms=7) -> str:
+    """
+    Where sensitive access piles up: the riskiest apps against the permissions most
+    often granted to them, shaded by how sensitive each permission is.
+    """
+    counted = {}
+    for a in shadow:
+        for s in a.get("scopes", []):
+            if _scope_weight(s) >= 5:
+                counted[s] = counted.get(s, 0) + 1
+    perms = [p for p, _ in sorted(counted.items(),
+                                  key=lambda kv: (-kv[1], -_scope_weight(kv[0])))][:top_perms]
+    apps = [a for a in shadow if any(s in perms for s in a.get("scopes", []))][:top_apps]
+    if not apps or not perms:
+        return charts._empty("No overlapping sensitive permissions to chart")
+    values = [[_scope_weight(p) if p in set(a.get("scopes", [])) else 0 for p in perms]
+              for a in apps]
+    return charts.heatmap([a.get("display_name") or "—" for a in apps], perms, values,
+                          legend_title="Permission sensitivity, 0–10")
+
+
+def _vendor_treemap(shadow, top=7) -> str:
+    """
+    Share of the estate by vendor. A ninth vendor never gets a generated color — the
+    tail folds into "Other" so no two vendors can share a hue.
+    """
+    by_vendor = {}
+    for a in shadow:
+        by_vendor[a.get("vendor") or "Unknown"] = by_vendor.get(a.get("vendor") or "Unknown", 0) + 1
+    ranked = sorted(by_vendor.items(), key=lambda kv: -kv[1])
+    items = [(v, n, charts.cat(i)) for i, (v, n) in enumerate(ranked[:top])]
+    tail = sum(n for _, n in ranked[top:])
+    if tail:
+        items.append((f"Other ({len(ranked) - top} vendors)", tail, charts.cat(top)))
+    return charts.treemap(items)
 
 
 def _perm_type(app):
@@ -344,21 +411,13 @@ def _days_ago(iso):
     return (datetime.now(timezone.utc) - dt).days
 
 
-def _trend_svg(values, width=680, height=84):
+def _trend_svg(values, width=680, height=150):
     if not values or max(values) == 0:
         return '<div class="empty">No activity data (requires Entra ID P1)</div>'
     n = len(values)
-    maxv = max(values) or 1
-    dx = width / (n - 1) if n > 1 else width
-    pts = [(i * dx, height - (v / maxv) * (height - 16) - 8) for i, v in enumerate(values)]
-    line = " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
-    area = f"0,{height} {line} {width},{height}"
-    lx, ly = pts[-1]
-    return (f'<svg viewBox="0 0 {width} {height}" width="100%" height="{height}" '
-            f'preserveAspectRatio="none" class="trend" role="img">'
-            f'<polygon points="{area}" fill="var(--accent)" opacity="0.12"/>'
-            f'<polyline points="{line}" fill="none" stroke="var(--accent)" stroke-width="2"/>'
-            f'<circle cx="{lx:.1f}" cy="{ly:.1f}" r="3.5" fill="var(--accent)"/></svg>')
+    labels = [f"{n - i} days ago" if i < n - 1 else "today" for i in range(n)]
+    return charts.timeseries(values, labels=labels, width=width, height=height,
+                             unit=" users")
 
 
 def _usage_block(app):
@@ -594,6 +653,10 @@ a.card:hover{border-color:var(--accent)}
 a.card .n{font-size:24px}
 .kpi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
 .na li{margin:5px 0}
+.posture-parts{list-style:none;margin:14px 0 0;padding:0;font-size:12px}
+.posture-parts li{display:flex;justify-content:space-between;gap:12px;padding:5px 0;
+ border-top:1px solid var(--line);color:var(--muted)}
+.posture-parts b{color:var(--ink);font-variant-numeric:tabular-nums}
 .conn{margin:8px 0 0;padding:0}
 .conn li{list-style:none;display:flex;align-items:center;gap:8px;font-size:13px;margin:5px 0}
 .summary{display:flex;gap:26px;align-items:center;flex-wrap:wrap}
@@ -732,6 +795,13 @@ def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None) -
     top_rows = [(a.get("display_name") or "—", a.get("vendor", ""), a["risk_score"],
                  LEVEL_COLORS.get(a["risk_level"], "#555")) for a in shadow[:8]]
     top_bars = _bars(top_rows, max((a["risk_score"] for a in shadow), default=1))
+
+    posture = _posture_score(shadow, counts)
+    triage_chart = _triage_chart(shadow)
+    permission_heatmap = _permission_heatmap(shadow)
+    vendor_treemap = _vendor_treemap(shadow)
+    severity_legend = charts.legend(
+        [(lv, LEVEL_COLORS[lv], counts[lv]) for lv in LEVELS])
 
     scope_count = {}
     for a in shadow:
@@ -958,6 +1028,21 @@ def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None) -
       <div class="card kpi high"><span class="n">{counts['High']}</span><span class="l">High</span></div>
       <div class="card kpi med"><span class="n">{counts['Medium']}</span><span class="l">Medium</span></div>
     </div>
+    <div class="grid cols-2" style="margin-top:16px">
+      <div class="card">
+        <h3>Where to start</h3>
+        {triage_chart}{severity_legend}
+        <p class="governed">Up and to the right is urgent: a high score reaching many
+        users. Dot size is the number of permissions the app holds.</p>
+      </div>
+      <div class="card">
+        <h3>Tenant AI posture</h3>
+        <div style="display:flex;justify-content:center">{charts.gauge(posture, "Tenant AI posture")}</div>
+        <p class="governed">Weighted by severity rather than averaged, so a handful of
+        Critical findings is not diluted by a long tail of Low ones.</p>
+        {_posture_breakdown(shadow, counts)}
+      </div>
+    </div>
     {_executive_section(apps, changes, findings)}
   </section>
 
@@ -965,6 +1050,16 @@ def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None) -
     <div class="grid cols-2">
       <div class="card"><h3>Riskiest applications</h3>{top_bars}</div>
       <div class="card"><h3>Most granted sensitive permissions</h3>{scope_bars}</div>
+    </div>
+    <div class="grid cols-2" style="margin-top:16px">
+      <div class="card">
+        <h3>Sensitive permission concentration</h3>
+        {permission_heatmap}
+      </div>
+      <div class="card">
+        <h3>Estate share by vendor</h3>
+        {vendor_treemap}
+      </div>
     </div>
     <div class="grid cols-4" style="margin-top:16px">
       <div class="card kpi"><span class="n">{admin}</span><span class="l">Admin (org-wide) consent</span></div>
@@ -1014,7 +1109,8 @@ def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None) -
 """
     return ("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
             "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-            f"<title>AI-SPM · Shadow AI Assessment</title><style>{CSS}</style></head>"
+            f"<title>AI-SPM · Shadow AI Assessment</title>"
+            f"<style>{CSS}{charts.CSS}</style></head>"
             f"<body>{body}</body></html>")
 
 
