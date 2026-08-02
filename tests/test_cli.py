@@ -127,9 +127,11 @@ def cli(monkeypatch):
     touched = [k for k in os.environ if k.startswith(("ENABLE_", "AISPM_"))]
     saved = {k: os.environ[k] for k in touched}
 
-    def _run(argv, tenant=None):
+    def _run(argv, tenant=None, scopes=("Directory.Read.All",), kind="application"):
         graph = tenant or FakeTenant()
         monkeypatch.setattr(aispm, "_graph", lambda _a: (graph, "tenant-abc"))
+        monkeypatch.setattr(aispm, "_graph_and_scopes",
+                            lambda _a: (graph, "tenant-abc", set(scopes), kind))
         return aispm.main(argv)
 
     yield _run

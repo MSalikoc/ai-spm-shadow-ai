@@ -22,32 +22,44 @@ _STATUS_NOTE = {
     FAILED: "the call failed",
 }
 
-# (key, label, path, permission, beta, what it powers, whether a scan is useless without it)
+# (key, label, path, permission, beta, what it powers, required, graph scopes that satisfy it)
+#
+# `scopes` is the machine-readable form of `permission`: any ONE of them is enough. It
+# exists so a denial can be explained against the scopes the token actually carries,
+# rather than leaving the operator to guess whether it is a permission or a licence.
 PROBES = [
     ("service_principals", "Enterprise applications", "/servicePrincipals",
      "Application.Read.All or Directory.Read.All", False,
-     "AI application discovery — the core scan", True),
+     "AI application discovery — the core scan", True,
+     ["Application.Read.All", "Directory.Read.All"]),
     ("oauth_grants", "Delegated OAuth consents", "/oauth2PermissionGrants",
      "Directory.Read.All", False,
-     "which permissions users consented to, and the risk score", True),
+     "which permissions users consented to, and the risk score", True,
+     ["Directory.Read.All"]),
     ("signin_logs", "Sign-in logs", "/auditLogs/signIns",
      "AuditLog.Read.All + Entra ID P1", False,
-     "real usage: active users, unused apps, activity trend", False),
+     "real usage: active users, unused apps, activity trend", False,
+     ["AuditLog.Read.All"]),
     ("directory_roles", "Directory roles", "/directoryRoles",
-     "Directory.Read.All", False, "privileged-role context on owners", False),
+     "Directory.Read.All", False, "privileged-role context on owners", False,
+     ["Directory.Read.All"]),
     ("agent365", "Agent 365 catalog", "/copilot/admin/catalog/packages",
      "CopilotPackages.Read.All + Microsoft 365 Copilot", False,
-     "registered Copilot agent packages", False),
+     "registered Copilot agent packages", False,
+     ["CopilotPackages.Read.All"]),
     ("entra_agent_id", "Entra Agent ID", "/servicePrincipals/microsoft.graph.agentIdentity",
      "Application.Read.All + Directory.Read.All", False,
-     "agent identities: owners, sponsors, permissions", False),
+     "agent identities: owners, sponsors, permissions", False,
+     ["Application.Read.All", "Directory.Read.All"]),
     ("defender_cloud_apps", "Defender for Cloud Apps",
      "/security/dataDiscovery/cloudAppDiscovery/uploadedStreams",
      "CloudApp-Discovery.Read.All + Defender for Cloud Apps", True,
-     "Shadow AI web usage: traffic, users, devices", False),
+     "Shadow AI web usage: traffic, users, devices", False,
+     ["CloudApp-Discovery.Read.All"]),
     ("purview_audit", "Purview Audit", "/security/auditLog/queries",
      "AuditLogsQuery.Read.All + Purview Audit turned on", False,
-     "sensitive AI interactions, blocked vs allowed", False),
+     "sensitive AI interactions, blocked vs allowed", False,
+     ["AuditLogsQuery.Read.All"]),
 ]
 
 
@@ -71,16 +83,44 @@ def _probe(graph, path, beta):
         return FAILED, text[:300]
 
 
-def run(graph) -> list[dict]:
-    """Runs every probe and returns one result row each, in PROBES order."""
+NOT_IN_TOKEN = ("the sign-in does not carry this scope at all — the client application "
+                "is not authorized for it, so no directory role will change this")
+
+
+def run(graph, held_scopes: set[str] | None = None, token_kind: str = "unknown") -> list[dict]:
+    """
+    Runs every probe and returns one result row each, in PROBES order.
+
+    Pass `held_scopes` (from `auth.token_scopes`) to sharpen a denial. A 403 has two
+    very different causes and the remedy differs completely: the scope is missing from
+    the token because the client application was never authorized for it — common with
+    an `az login` sign-in, and unfixable by granting the *user* another directory role —
+    or the scope is present and the tenant refused anyway.
+    """
+    held = {s.lower() for s in (held_scopes or set())}
     rows = []
-    for key, label, path, permission, beta, powers, required in PROBES:
+    for key, label, path, permission, beta, powers, required, scopes in PROBES:
         status, detail = _probe(graph, path, beta)
+        satisfied = any(s.lower() in held for s in scopes) if held else None
+        note = _STATUS_NOTE[status]
+        if status == DENIED and satisfied is False:
+            note = NOT_IN_TOKEN
         rows.append({"key": key, "label": label, "path": path, "permission": permission,
-                     "powers": powers, "required": required,
-                     "status": status, "detail": detail,
-                     "note": _STATUS_NOTE[status]})
+                     "powers": powers, "required": required, "scopes": scopes,
+                     "status": status, "detail": detail, "note": note,
+                     "scope_in_token": satisfied, "token_kind": token_kind})
     return rows
+
+
+def missing_scopes(rows) -> list[str]:
+    """Graph scopes that would unlock a currently-denied source, deduplicated."""
+    out = []
+    for r in rows:
+        if r["status"] == DENIED and r.get("scope_in_token") is False:
+            for s in r["scopes"]:
+                if s not in out:
+                    out.append(s)
+    return out
 
 
 def blocking(rows) -> list[dict]:
@@ -106,18 +146,54 @@ def connector_flags(rows) -> dict[str, bool]:
 _ICON = {OK: "  OK  ", DENIED: "DENIED", UNAVAILABLE: " N/A  ", FAILED: " FAIL "}
 
 
+_DELEGATED_REMEDY = """
+Why these are denied
+--------------------
+An `az login` sign-in is a DELEGATED token: it can only carry Graph scopes the Azure
+CLI application itself is authorized for. The CLI is authorized for directory reads,
+which is why Entra discovery works — but not for the specialised connector scopes
+below. Being a Global Administrator does not change this; the limit is on the client
+application, not on you.
+
+Two ways to get them, both using APPLICATION permissions instead:
+
+  1. An app registration you own (stays local, no Azure resources):
+         ./scripts/create_app_registration.sh
+     then re-run with the values it prints:
+         python aispm.py doctor --auth app --tenant <T> --client-id <C> --client-secret <S>
+
+  2. Deploy, and let the Function's Managed Identity hold them:
+         ./scripts/postdeploy.sh <RESOURCE_GROUP> <FUNCTION_APP>
+
+Either way the scopes to grant are:
+"""
+
+
 def format_text(rows) -> str:
     """A readable preflight report for the terminal."""
     width = max(len(r["label"]) for r in rows) if rows else 20
-    lines = ["", "Preflight — what this identity can read", "=" * 58]
+    kind = rows[0].get("token_kind", "unknown") if rows else "unknown"
+    header = {"delegated": "Preflight — what this sign-in can read (delegated token)",
+              "application": "Preflight — what this app identity can read (application token)"
+              }.get(kind, "Preflight — what this identity can read")
+
+    lines = ["", header, "=" * 58]
     for r in rows:
         flag = "required" if r["required"] else "optional"
         lines.append(f"  [{_ICON[r['status']]}] {r['label']:<{width}}  {flag}")
         if r["status"] != OK:
-            lines.append(f"           {r['note']} — grant: {r['permission']}")
+            lines.append(f"           {r['note']}")
+            lines.append(f"           needs: {r['permission']}")
             lines.append(f"           powers: {r['powers']}")
-    missing = blocking(rows)
     lines.append("=" * 58)
+
+    absent = missing_scopes(rows)
+    if absent and kind == "delegated":
+        lines.append(_DELEGATED_REMEDY.rstrip())
+        lines.extend(f"     {s}" for s in absent)
+        lines.append("")
+
+    missing = blocking(rows)
     if missing:
         lines.append("Cannot run a useful scan yet. Missing: "
                      + ", ".join(r["label"] for r in missing))

@@ -32,24 +32,38 @@ DEFAULT_OUT = "out"
 # --- shared plumbing --------------------------------------------------------
 def _graph(args):
     """Builds a Graph client for the requested auth mode, plus the resolved tenant."""
-    tenant = args.tenant
-    if args.auth == "azure-cli":
-        tenant = tenant or auth.tenant_id_from_cli()
-        token = auth.get_token_azure_cli(tenant)
-    elif args.auth == "device-code":
-        if not (args.client_id and tenant):
-            raise SystemExit("--auth device-code needs --tenant and --client-id")
-        token = auth.get_token_device_code(tenant, args.client_id)
-    elif args.auth == "app":
-        if not (args.client_id and args.client_secret and tenant):
-            raise SystemExit("--auth app needs --tenant, --client-id and --client-secret")
-        token = auth.get_token_client_credentials(tenant, args.client_id, args.client_secret)
-    else:
-        token = auth.get_token_managed_identity()
+    tenant, token = _token(args)
     if not tenant:
         raise SystemExit(
             "Could not determine the tenant. Run `az login`, or pass --tenant <ID>.")
     return GraphClient(token), tenant
+
+
+def _token(args):
+    tenant = args.tenant
+    if args.auth == "azure-cli":
+        tenant = tenant or auth.tenant_id_from_cli()
+        return tenant, auth.get_token_azure_cli(tenant)
+    if args.auth == "device-code":
+        if not (args.client_id and tenant):
+            raise SystemExit("--auth device-code needs --tenant and --client-id")
+        return tenant, auth.get_token_device_code(tenant, args.client_id)
+    if args.auth == "app":
+        if not (args.client_id and args.client_secret and tenant):
+            raise SystemExit("--auth app needs --tenant, --client-id and --client-secret")
+        return tenant, auth.get_token_client_credentials(tenant, args.client_id,
+                                                         args.client_secret)
+    return tenant, auth.get_token_managed_identity()
+
+
+def _graph_and_scopes(args):
+    """Graph client plus what the token actually carries — see preflight.run."""
+    tenant, token = _token(args)
+    if not tenant:
+        raise SystemExit(
+            "Could not determine the tenant. Run `az login`, or pass --tenant <ID>.")
+    scopes, kind = auth.token_scopes(token)
+    return GraphClient(token), tenant, scopes, kind
 
 
 _INSTALL_HINT = ("Azure CLI is not installed. Install it, then sign in:\n\n"
@@ -81,9 +95,12 @@ def _auth_hint(e: Exception) -> str:
 # --- commands ---------------------------------------------------------------
 def cmd_doctor(args) -> int:
     import preflight
-    graph, tenant = _graph(args)
-    print(f"Tenant: {tenant}")
-    rows = preflight.run(graph)
+    graph, tenant, scopes, kind = _graph_and_scopes(args)
+    print(f"Tenant    : {tenant}")
+    print(f"Auth      : {args.auth} ({kind} token)")
+    print(f"Graph scopes carried ({len(scopes)}): "
+          + (", ".join(sorted(scopes)) if scopes else "none readable from the token"))
+    rows = preflight.run(graph, scopes, kind)
     print(preflight.format_text(rows))
     return 1 if preflight.blocking(rows) else 0
 
@@ -99,13 +116,13 @@ def cmd_scan(args) -> int:
     if args.activity_days:
         os.environ["AISPM_ACTIVITY_DAYS"] = str(args.activity_days)
 
-    graph, tenant = _graph(args)
+    graph, tenant, token_scopes, token_kind = _graph_and_scopes(args)
     started = time.time()
 
     print(f"Tenant : {tenant}")
     print(f"Scope  : {args.scope} ({_SCOPE_HELP[args.scope]})")
 
-    rows = preflight.run(graph)
+    rows = preflight.run(graph, token_scopes, token_kind)
     blocking = preflight.blocking(rows)
     if blocking:
         print(preflight.format_text(rows))

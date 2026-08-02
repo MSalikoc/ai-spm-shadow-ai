@@ -75,6 +75,45 @@ def get_token_managed_identity() -> str:
     return token.token
 
 
+def decode_token_claims(token: str) -> dict:
+    """
+    Reads the claims out of an access token, WITHOUT verifying its signature.
+
+    That is safe here because nothing is authorized on the result — the claims are only
+    displayed, so an operator can see which Graph scopes their sign-in actually carries
+    instead of inferring it from a 403. Microsoft Graph still validates the real token
+    on every call; this is a mirror, not a gate.
+    """
+    import base64
+    import json
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)          # restore base64url padding
+        return json.loads(base64.urlsafe_b64decode(payload))
+    except (IndexError, ValueError, TypeError):
+        return {}
+
+
+def token_scopes(token: str) -> tuple[set[str], str]:
+    """
+    Returns (granted permissions, kind) for an access token.
+
+    A delegated token lists what the *user* consented the client to do in `scp`; an
+    application token lists its app roles in `roles`. The distinction matters: a
+    delegated sign-in can only ever carry scopes the client application is authorized
+    for, no matter which directory roles the user holds.
+    """
+    claims = decode_token_claims(token)
+    scp = claims.get("scp") or ""
+    if scp:
+        names = scp.split() if isinstance(scp, str) else list(scp)
+        return {n.lower() for n in names}, "delegated"
+    roles = claims.get("roles") or []
+    if roles:
+        return {r.lower() for r in roles}, "application"
+    return set(), "unknown"
+
+
 def get_token_client_credentials(tenant_id: str, client_id: str, client_secret: str) -> str:
     """Client credentials flow: as the application identity (no user)."""
     app = msal.ConfidentialClientApplication(
