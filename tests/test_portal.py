@@ -449,8 +449,8 @@ def test_the_portal_is_self_contained_for_email():
 
 def test_standalone_links_are_present_by_default():
     doc = portal.html_string([_oauth("ChatGPT", vendor="OpenAI (ChatGPT)")], "t")
-    assert "Standalone views" in doc
     assert 'href="report.html"' in doc
+    assert 'href="connectors.html"' in doc
 
 
 def test_the_email_attaches_the_portal_not_the_core_dashboard(monkeypatch):
@@ -511,3 +511,51 @@ def test_connector_status_survives_the_cached_assessment_shape():
     doc = portal.html_string([], "t", cached)
     assert "connected, 18 assets" in doc
     assert "Defender for Cloud Apps — not run in this scan" not in doc
+
+
+# --- navigation and tab order -----------------------------------------------
+def _tab_order(doc):
+    import re
+    return [m.group(1) for m in re.finditer(r'class="navlink[^"]*" data-tab="(\w+)"', doc)]
+
+
+def test_changes_is_the_last_tab():
+    """It answers "what happened since last time" — read after the current picture."""
+    order = _tab_order(portal.html_string([_oauth("A", vendor="Glean")], "t"))
+    assert order[0] == "estate"
+    assert order[-1] == "changes"
+
+
+def test_the_standalone_views_live_in_the_header_not_at_the_foot_of_a_tab():
+    doc = portal.html_string([_oauth("A", vendor="Glean")], "t")
+    header = doc.split("</header>")[0]
+    assert 'href="report.html"' in header
+    assert 'href="connectors.html"' in header
+    assert "Standalone views" not in doc          # the old bottom card is gone
+
+
+def test_the_header_links_still_disappear_when_the_portal_travels_alone():
+    doc = portal.html_string([_oauth("A", vendor="Glean")], "t", standalone_links=False)
+    header = doc.split("</header>")[0]
+    assert "report.html" not in header and "connectors.html" not in header
+
+
+def test_the_changes_tab_explains_itself_before_there_is_history():
+    doc = portal.html_string([_oauth("A", vendor="Glean")], "t")
+    assert "first scan is the baseline" in _sections(doc)["changes"]
+
+
+def test_governance_explains_itself_when_nothing_has_been_assigned():
+    """Four zeros and an empty list is accurate and tells the reader nothing."""
+    gov = _sections(portal.html_string([_oauth("A", vendor="Glean")], "t"))["governance"]
+    assert "Nothing assigned yet" in gov
+    assert "business_owner" in gov               # shows how to fill it
+    assert "persists across every future scan" in gov
+
+
+def test_the_governance_explainer_goes_away_once_something_is_governed():
+    app = _oauth("A", vendor="Glean")
+    app["lifecycle"] = {"status": "Approved"}
+    app["ownership"] = {"business_owner": "ops@contoso.com"}
+    gov = _sections(portal.html_string([app], "t"))["governance"]
+    assert "Nothing assigned yet" not in gov

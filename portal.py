@@ -382,6 +382,17 @@ details.explain[open] summary{margin-bottom:8px}
  color:var(--muted);border-radius:20px;padding:5px 13px;font-size:12px}
 .pfilters button.active{border-color:var(--accent);color:var(--accent);font-weight:600}
 .srcnav{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
+/* Ten tabs plus two links plus a tenant GUID will not fit on one line unless the
+   header gives ground: tighter tabs, a truncating tenant, and a logo that never wraps. */
+header{gap:10px}
+header h1{white-space:nowrap}
+header .tabs{gap:0;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
+header .tabs::-webkit-scrollbar{display:none}
+header .navlink{padding:8px 9px;white-space:nowrap}
+header .tenant{max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+ flex:0 1 auto}
+header .themebtn{white-space:nowrap;text-decoration:none;margin-left:4px;flex:0 0 auto}
+@media(max-width:1100px){header .tenant{display:none}}
 .srcnav a{flex:1;min-width:220px;text-decoration:none;color:inherit;border:1px solid var(--line);
  border-radius:10px;padding:14px 16px;background:var(--panel);transition:border-color .15s}
 .srcnav a:hover{border-color:var(--accent)}
@@ -468,16 +479,15 @@ def html_string(scored, tenant_id="", connectors_result=None, changes=None,
     rows = "".join(_vendor_row(v, i) for i, v in enumerate(vendors)) or \
         '<div class="empty">No AI vendors found in this scan.</div>'
 
-    standalone_block = f"""
-  <h3 style="margin:22px 4px 10px;font-size:13px;text-transform:uppercase;
-             letter-spacing:.03em;color:var(--muted)">Standalone views</h3>
-  <div class="srcnav">
-    <a href="{_esc(report_href)}"><b>Entra OAuth assessment &#8594;</b>
-      <span>The same sections as a standalone page, for sharing or printing</span></a>
-    <a href="{_esc(connectors_href)}"><b>Microsoft AI data sources &#8594;</b>
-      <span>The same sections as a standalone page, for sharing or printing</span></a>
-  </div>
-""" if standalone_links else ""
+    # In the header rather than at the foot of a tab: these are navigation, and burying
+    # navigation under the content it navigates away from made them easy to miss.
+    header_links = (
+        f'<a class="themebtn" href="{_esc(report_href)}" title="Entra OAuth assessment '
+        f'— per-application permissions, usage and governance">OAuth</a>'
+        f'<a class="themebtn" href="{_esc(connectors_href)}" title="Microsoft AI data '
+        f'sources — agents, Shadow AI traffic, sensitive data">Data&nbsp;sources</a>'
+    ) if standalone_links else ""
+    standalone_block = ""
 
     # With no sibling files to point at, these read as plain references to the tab that
     # holds the detail — a dead link is worse than no link.
@@ -653,11 +663,13 @@ def html_string(scored, tenant_id="", connectors_result=None, changes=None,
          + (ctabs.get("findings") or "")
          or missing("Findings", "No findings recorded in this scan.")),
         ("governance", "Governance", core_tabs.get("governance", "")),
-        ("changes", "Changes",
-         core_tabs.get("changes") or missing("Changes", "No change history yet — the "
-                                             "first scan is the baseline.")),
         ("gaps", "Gaps", ctabs.get("gaps") or missing(
             "Known gaps", "Connector coverage limits appear here once the connectors run.")),
+        ("changes", "Changes",
+         core_tabs.get("changes") or missing("Changes", "No change history yet — the "
+                                             "first scan is the baseline. From the second "
+                                             "scan on, everything that appeared, escalated "
+                                             "or disappeared is listed here.")),
     ]
 
     nav = "".join(
@@ -674,6 +686,7 @@ def html_string(scored, tenant_id="", connectors_result=None, changes=None,
   <nav class="tabs">{nav}</nav>
   <span class="spacer"></span>
   <span class="tenant">{_esc(tenant_id)}</span>
+  {header_links}
   <button id="tg" class="themebtn" title="Theme">&#9790;</button>
 </header>
 <main>

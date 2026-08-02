@@ -674,6 +674,8 @@ a.card:hover{border-color:var(--accent)}
 a.card .n{font-size:24px}
 .kpi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
 .na li{margin:5px 0}
+.gov-cmd{background:var(--track);border-radius:8px;padding:11px 13px;font-size:11.5px;
+ line-height:1.5;overflow-x:auto;margin:10px 0;color:var(--ink)}
 details.explain{border:1px solid var(--line);border-radius:9px;padding:10px 14px;
  margin:0 0 16px;background:var(--panel);font-size:13px;color:var(--muted);line-height:1.55}
 details.explain summary{cursor:pointer;font-weight:600;color:var(--ink);font-size:13px}
@@ -968,8 +970,31 @@ def _build(apps: list[dict], tenant_id: str, changes=None, findings=None,
     bu_opts = "".join(f'<option value="{html.escape(b)}">{html.escape(b)}</option>' for b in bus)
     sub_opts = "".join(f'<option value="{html.escape(s)}">{html.escape(s)}</option>' for s in subs)
 
+    # Governance is the only tab fed by data a human enters rather than the scan. Four
+    # zeros and an empty list is technically accurate and tells the reader nothing, so
+    # when nothing has been assigned yet the tab explains what it is and how to fill it.
+    governed_any = any(_lifecycle_status(a) not in ("Discovered", "Unknown", "", None)
+                       or (a.get("ownership") or {}).get("business_owner")
+                       for a in shadow)
+    governance_intro = "" if governed_any else """
+  <div class="card" style="margin-top:16px">
+    <h3>Nothing assigned yet</h3>
+    <p class="governed">Everything else in AI-SPM is discovered. This tab is the part
+    <b>you</b> decide: who owns each AI tool, whether it is approved, and when it is next
+    reviewed. Until someone records that, the counters below are all zero — which is an
+    honest reading of an ungoverned estate, not a bug.</p>
+    <p class="governed">Assign an owner and a lifecycle state per application, and it
+    persists across every future scan:</p>
+    <pre class="gov-cmd">curl -X POST "$REPORT_URL/../metadata?code=$KEY" -H "Content-Type: application/json" \\
+  -d '{"app_id":"&lt;APP_ID&gt;","ownership":{"business_owner":"finance-ops@contoso.com"},
+       "lifecycle":{"status":"Approved","next_review_date":"2027-01-31"}}'</pre>
+    <p class="governed">Then this tab tracks approvals, review dates that have fallen due,
+    and anything still unowned — and the Changes tab records each transition.</p>
+  </div>"""
+
     governance_section = f"""
   <h3 style="margin:22px 4px 10px;font-size:13px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)">Governance (ownership & lifecycle)</h3>
+  {governance_intro}
   <div class="grid cols-4">
     <div class="card kpi low"><span class="n">{approved}</span><span class="l">Approved</span></div>
     <div class="card kpi med"><span class="n">{under_review}</span><span class="l">Under Review</span></div>
