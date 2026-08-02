@@ -401,3 +401,113 @@ def test_the_scoring_model_is_documented_on_the_page():
     assert "75+ Critical" in doc
     assert "How to read this" in doc          # the scatter explainer
     assert "logarithmic" in doc
+
+
+# --- layout the operator asked for -----------------------------------------
+def test_the_landing_tab_is_called_overview():
+    doc = portal.html_string([_oauth("ChatGPT", vendor="OpenAI (ChatGPT)")], "t")
+    assert '<a class="navlink active" data-tab="estate">Overview</a>' in doc
+    assert ">Estate<" not in doc
+
+
+def test_data_sources_sit_at_the_bottom_of_the_overview_tab():
+    doc = portal.html_string([_oauth("ChatGPT", vendor="OpenAI (ChatGPT)")], "t")
+    overview = _sections(doc)["estate"]
+    assert "Data sources" in overview
+    # Last card before the standalone links, i.e. after the estate list and the bars.
+    assert overview.index("AI estate") < overview.index("Data sources")
+    assert overview.index("Highest-risk vendors") < overview.index("Data sources")
+
+
+def test_governance_no_longer_repeats_the_data_source_list():
+    """Two lists of the same thing had already drifted apart once."""
+    doc = portal.html_string([_oauth("ChatGPT", vendor="OpenAI (ChatGPT)")], "t")
+    governance = _sections(doc)["governance"]
+    assert "Coverage Overview" in governance
+    assert "Defender for Cloud Apps" not in governance
+    assert "portal" in governance          # points at where the list now lives
+
+
+# --- travelling by email ----------------------------------------------------
+def test_the_portal_is_self_contained_for_email():
+    """
+    Attached to a message there are no sibling files, so links to them must not be
+    drawn — but every tab still has to work from the single file.
+    """
+    doc = portal.html_string([_oauth("ChatGPT", vendor="OpenAI (ChatGPT)")], "t",
+                             _assessment(web=[_web("ChatGPT", users=400)]),
+                             standalone_links=False)
+    assert "Standalone views" not in doc
+    assert 'href="report.html"' not in doc
+    assert 'href="connectors.html"' not in doc
+
+    # All ten tabs and the switching script still travel with it.
+    assert len(_sections(doc)) == 10
+    assert "showTab" in doc
+    assert "ChatGPT" in _sections(doc)["shadow"]
+
+
+def test_standalone_links_are_present_by_default():
+    doc = portal.html_string([_oauth("ChatGPT", vendor="OpenAI (ChatGPT)")], "t")
+    assert "Standalone views" in doc
+    assert 'href="report.html"' in doc
+
+
+def test_the_email_attaches_the_portal_not_the_core_dashboard(monkeypatch):
+    import notify
+    captured = {}
+    monkeypatch.setenv("AISPM_MAIL_SENDER", "a@b.com")
+    monkeypatch.setenv("AISPM_MAIL_TO", "c@d.com")
+    monkeypatch.setattr(notify, "_send", lambda *a, **k: captured.update(body=a) or "sent",
+                        raising=False)
+    assert hasattr(notify.send_email_digest, "__call__")
+    import inspect
+    assert "connectors_result" in inspect.signature(notify.send_email_digest).parameters
+
+
+# --- getting back from a standalone view ------------------------------------
+def test_the_core_dashboard_offers_a_way_back_to_the_portal():
+    import report as core
+    doc = core.html_string([_oauth("A", vendor="Glean")], "t", portal_href="portal.html")
+    assert 'href="portal.html"' in doc
+    assert "Portal" in doc
+
+
+def test_the_connectors_dashboard_offers_a_way_back_to_the_portal():
+    import connectors_report
+    doc = connectors_report.html_string(_assessment(), "t", portal_href="portal.html")
+    assert 'href="portal.html"' in doc
+    assert "Portal" in doc
+
+
+def test_no_back_button_is_drawn_when_there_is_nowhere_to_go():
+    import report as core
+    assert 'id="portalLink"' not in core.html_string([_oauth("A", vendor="Glean")], "t")
+
+
+def test_the_excluded_card_points_at_a_tab_when_there_is_no_sibling_file():
+    args = ([_oauth("ChatGPT", vendor="OpenAI (ChatGPT)"),
+             _oauth("ProvisioningHealthPME", score=100, ai=False)], "t")
+    linked = portal.html_string(*args)
+    mailed = portal.html_string(*args, standalone_links=False)
+
+    assert 'href="report.html"' in linked
+    assert "href=" not in mailed.split("Deliberately not ranked above")[1].split("</div>")[0]
+    assert "Applications</b> tab above" in mailed
+
+
+def test_connector_status_survives_the_cached_assessment_shape():
+    """
+    A raw run keeps health under "health"; an assessment keeps it under
+    "data_source_coverage". Reading only the first made every source read
+    "not run in this scan" whenever the cached form was passed.
+    """
+    cached = _assessment(web=[_web("ChatGPT")])
+    cached.pop("health")
+    cached["data_source_coverage"] = [
+        {"name": "defender_cloud_apps", "label": "Defender for Cloud Apps",
+         "status": "CONNECTED", "count": 18},
+    ]
+    doc = portal.html_string([], "t", cached)
+    assert "connected, 18 assets" in doc
+    assert "Defender for Cloud Apps — not run in this scan" not in doc

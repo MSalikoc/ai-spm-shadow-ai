@@ -70,7 +70,8 @@ def _run_scan(source: str):
             connectors_drift.process(connectors_result)
             if connectors_result is not None:
                 storage.publish_connectors(
-                    connectors_report.html_string(connectors_result, tenant_id),
+                    connectors_report.html_string(connectors_result, tenant_id,
+                                                  portal_href="portal"),
                     connectors_report.json_string(connectors_result))
         except Exception:
             logging.exception("connector drift/dashboard error")
@@ -82,7 +83,8 @@ def _run_scan(source: str):
                 portal.json_string(scored, connectors_result, tenant_id))
         except Exception:
             logging.exception("portal render error")
-        published = storage.publish(scored, tenant_id, changes, finding_records)
+        published = storage.publish(scored, tenant_id, changes, finding_records,
+                                    (connectors_result or {}).get("health"))
         summ = pipeline.summary(scored)
 
         logging.info("AI-SPM scan (%s): %s findings, %s critical, %s high, %s changes → %s",
@@ -92,7 +94,8 @@ def _run_scan(source: str):
             storage.write_json("last_error.json", {})   # success → clear the previous error
         except Exception:
             pass
-        return {"summary": summ, "published": published, "tenant": tenant_id}, scored, tenant_id
+        return ({"summary": summ, "published": published, "tenant": tenant_id},
+                scored, tenant_id, connectors_result)
     except Exception as e:
         logging.exception("AI-SPM scan (%s) FAILED", source)
         try:
@@ -117,9 +120,9 @@ def daily_scan(timer: func.TimerRequest) -> None:
 @app.timer_trigger(schedule=EMAIL_SCHEDULE, arg_name="timer",
                    run_on_startup=False, use_monitor=True)
 def weekly_digest(timer: func.TimerRequest) -> None:
-    _, scored, tenant_id = _run_scan("weekly")
+    _, scored, tenant_id, connectors_result = _run_scan("weekly")
     weekly_changes = drift.recent(7)
-    outcome = notify.send_email_digest(scored, tenant_id, weekly_changes)
+    outcome = notify.send_email_digest(scored, tenant_id, weekly_changes, connectors_result)
     logging.info("AI-SPM weekly digest: %s (%s changes)", outcome, len(weekly_changes))
 
 
@@ -128,9 +131,9 @@ def scan_worker(msg: func.QueueMessage) -> None:
     source = msg.get_body().decode("utf-8") or "queue"
     result = _run_scan(source)
     if source == "digest":  # request queued from digest_now: send the email once the scan finishes
-        _, scored, tenant_id = result
+        _, scored, tenant_id, connectors_result = result
         weekly_changes = drift.recent(7)
-        outcome = notify.send_email_digest(scored, tenant_id, weekly_changes)
+        outcome = notify.send_email_digest(scored, tenant_id, weekly_changes, connectors_result)
         logging.info("AI-SPM on-demand digest (queue): %s (%s changes)",
                      outcome, len(weekly_changes))
 
@@ -151,7 +154,7 @@ def scan_now(req: func.HttpRequest) -> func.HttpResponse:
                 "message": "Scan queued, running in the background. Check /api/report and "
                            "/api/connectors again in a few minutes.",
             }, ensure_ascii=False), mimetype="application/json", status_code=202)
-        result, _, _ = _run_scan("http")
+        result, _, _, _ = _run_scan("http")
         return func.HttpResponse(json.dumps(result, ensure_ascii=False),
                                  mimetype="application/json", status_code=200)
     except Exception as e:
@@ -174,8 +177,8 @@ def digest_now(req: func.HttpRequest) -> func.HttpResponse:
                 "message": "Scan queued; the email will be sent automatically once it "
                            "finishes (may take a few minutes).",
             }, ensure_ascii=False), mimetype="application/json", status_code=202)
-        result, scored, tenant_id = _run_scan("digest")
-        outcome = notify.send_email_digest(scored, tenant_id, drift.recent(7))
+        result, scored, tenant_id, connectors_result = _run_scan("digest")
+        outcome = notify.send_email_digest(scored, tenant_id, drift.recent(7), connectors_result)
         return func.HttpResponse(
             json.dumps({"digest": outcome, "summary": result["summary"]}, ensure_ascii=False),
             mimetype="application/json", status_code=200)

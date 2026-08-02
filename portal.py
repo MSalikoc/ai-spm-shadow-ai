@@ -424,14 +424,21 @@ document.querySelectorAll('.pfilters button').forEach(function(b){
 
 def html_string(scored, tenant_id="", connectors_result=None, changes=None,
                 findings=None, report_href="report.html",
-                connectors_href="connectors.html", now=None) -> str:
+                connectors_href="connectors.html", now=None,
+                standalone_links=True) -> str:
+    """
+    `standalone_links` links out to the two dashboards as separate files. Turn it off
+    when the portal travels alone — as an email attachment, say — because those hrefs
+    point at sibling files that will not be there, and a dead link is worse than none.
+    The portal carries all of their content in its own tabs regardless.
+    """
     now = now or datetime.now(timezone.utc)
     estate = build_estate(scored, connectors_result)
     vendors = estate["vendors"]
     ts = now.strftime("%d.%m.%Y %H:%M UTC")
 
     counts = {lv: sum(1 for v in vendors if v["risk_level"] == lv) for lv in LEVELS}
-    health = (connectors_result or {}).get("health") if connectors_result else None
+    health = _health_of(connectors_result)
 
     with_web = [v for v in vendors if "web" in v["evidence"]]
     with_oauth = [v for v in vendors if "oauth" in v["evidence"]]
@@ -461,20 +468,37 @@ def html_string(scored, tenant_id="", connectors_result=None, changes=None,
     rows = "".join(_vendor_row(v, i) for i, v in enumerate(vendors)) or \
         '<div class="empty">No AI vendors found in this scan.</div>'
 
+    standalone_block = f"""
+  <h3 style="margin:22px 4px 10px;font-size:13px;text-transform:uppercase;
+             letter-spacing:.03em;color:var(--muted)">Standalone views</h3>
+  <div class="srcnav">
+    <a href="{_esc(report_href)}"><b>Entra OAuth assessment &#8594;</b>
+      <span>The same sections as a standalone page, for sharing or printing</span></a>
+    <a href="{_esc(connectors_href)}"><b>Microsoft AI data sources &#8594;</b>
+      <span>The same sections as a standalone page, for sharing or printing</span></a>
+  </div>
+""" if standalone_links else ""
+
+    # With no sibling files to point at, these read as plain references to the tab that
+    # holds the detail — a dead link is worse than no link.
+    def _ref(href, label, tab):
+        return f'<a href="{_esc(href)}">{label}</a>' if standalone_links \
+            else f"the <b>{tab}</b> tab above"
+
     excluded_rows = []
     if estate["non_ai_apps"]:
         worst = max(a.get("risk_score", 0) or 0 for a in estate["non_ai_apps"])
         excluded_rows.append(
             f'<b>{len(estate["non_ai_apps"])} consented applications</b> that did not match '
             f'the AI catalog (highest risk score {worst}/100). They hold real OAuth grants '
-            f'and are fully assessed on the '
-            f'<a href="{_esc(report_href)}">Entra OAuth assessment</a>.')
+            f'and are fully assessed on '
+            f'{_ref(report_href, "the Entra OAuth assessment", "Applications")}.')
     if estate["unattached_agents"]:
         sample = ", ".join(_esc(n) for n in estate["unattached_agents"][:4] if n)
         excluded_rows.append(
             f'<b>{len(estate["unattached_agents"])} registered agents and Teams packages</b> '
-            f'with no AI vendor match ({sample}…). Listed in full on the '
-            f'<a href="{_esc(connectors_href)}">AI data sources</a> view.')
+            f'with no AI vendor match ({sample}…). Listed in full on '
+            f'{_ref(connectors_href, "the AI data sources view", "Agents")}.')
     if estate["unattached_interactions"]:
         excluded_rows.append(
             f'<b>{estate["unattached_interactions"]} sensitive interactions</b> whose host '
@@ -578,10 +602,7 @@ def html_string(scored, tenant_id="", connectors_result=None, changes=None,
     {rows}
   </div>
 
-  <div class="grid cols-2" style="margin-top:16px">
-    <div class="card"><h3>Highest-risk vendors</h3>{top_bars}</div>
-    <div class="card"><h3>Data sources</h3><ul class="conn">{coverage}</ul></div>
-  </div>
+  <div class="card" style="margin-top:16px"><h3>Highest-risk vendors</h3>{top_bars}</div>
 
   <div class="card" style="margin-top:16px">
     <h3>Deliberately not ranked above</h3>
@@ -590,14 +611,14 @@ def html_string(scored, tenant_id="", connectors_result=None, changes=None,
     <ul class="conn">{excluded}</ul>
   </div>
 
-  <h3 style="margin:22px 4px 10px;font-size:13px;text-transform:uppercase;
-             letter-spacing:.03em;color:var(--muted)">Standalone views</h3>
-  <div class="srcnav">
-    <a href="{_esc(report_href)}"><b>Entra OAuth assessment &#8594;</b>
-      <span>The same sections as a standalone page, for sharing or printing</span></a>
-    <a href="{_esc(connectors_href)}"><b>Microsoft AI data sources &#8594;</b>
-      <span>The same sections as a standalone page, for sharing or printing</span></a>
+  <div class="card" style="margin-top:16px">
+    <h3>Data sources</h3>
+    <p class="governed" style="margin-top:-6px">Where everything above came from, and what
+    is not covered. A grey entry has no collector yet — that is a limit of this tool, not
+    of your tenant.</p>
+    <ul class="conn">{coverage}</ul>
   </div>
+{standalone_block}
 """
 
     # Both dashboards' own sections, composed here rather than reimplemented — the
@@ -620,7 +641,7 @@ def html_string(scored, tenant_id="", connectors_result=None, changes=None,
     ctabs = (conn or {}).get("tabs", {})
 
     panes = [
-        ("estate", "Estate", estate_body),
+        ("estate", "Overview", estate_body),
         ("apps", "Applications", core_tabs.get("apps", "")),
         ("usage", "Usage", core_tabs.get("usage", "")),
         ("agents", "Agents", ctabs.get("agents") or missing("Agents", no_conn)),
@@ -731,3 +752,24 @@ def _top_reason(rec) -> str:
         return "no scoring signal"
     pts, why = max(scoring, key=lambda x: x[0])
     return f"mostly: {why} (+{pts})"
+
+
+def _health_of(connectors_result):
+    """
+    Connector health, from either shape of input.
+
+    A raw run carries it under "health"; an assessment (the JSON cache, or anything that
+    has already been through connectors_report) carries the same facts under
+    "data_source_coverage". Reading only the first made every source read "not run in
+    this scan" whenever the cached form was passed.
+    """
+    if not connectors_result:
+        return None
+    health = connectors_result.get("health")
+    if health:
+        return health
+    rows = connectors_result.get("data_source_coverage")
+    if not rows:
+        return None
+    return {r.get("name"): {"status": r.get("status"), "count": r.get("count")}
+            for r in rows if r.get("name")}

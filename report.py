@@ -205,21 +205,20 @@ _CONN_DOT = {True: charts.SEVERITY["Low"], False: charts.SEVERITY["Critical"], N
 
 
 def _coverage_section(apps, connector_health=None):
+    """
+    Ownership coverage only. Data-source status moved to the portal's Overview, where it
+    belongs beside the estate it explains — repeating it here meant two lists to keep in
+    agreement, and they had already drifted apart once.
+    """
     import executive
     cov = executive.coverage(apps)
-    # `None` means "no collector exists for this yet" — grey, not red: a red dot invites
-    # someone to go and fix a connection that was never on offer.
-    conn_html = "".join(
-        f'<li><span class="dot" style="background:{_CONN_DOT[ok]}"></span>'
-        f'<b>{html.escape(name)}</b> '
-        f'<span class="governed">{html.escape(detail)}</span></li>'
-        for name, ok, detail in executive.connector_status(connector_health))
-    own_bar = _bars([("Owner coverage", f"{cov['owner_coverage']}%", cov["owner_coverage"], "#0f6cbd"),
-                     ("Agent purpose coverage", f"{cov['purpose_coverage']}%", cov["purpose_coverage"], "#7c3aed")],
-                    100)
+    own_bar = _bars([("Owner coverage", f"{cov['owner_coverage']}%", cov["owner_coverage"],
+                      charts.cat(0)),
+                     ("Agent purpose coverage", f"{cov['purpose_coverage']}%",
+                      cov["purpose_coverage"], charts.cat(6))], 100)
     return (f'<div class="card" style="margin-top:16px"><h3>Coverage Overview</h3>{own_bar}'
-            f'<h3 style="margin-top:14px">Data source / connector status</h3>'
-            f'<ul class="conn">{conn_html}</ul></div>')
+            f'<p class="governed">Data-source and connector status is on the portal\'s '
+            f'Overview tab.</p></div>')
 
 
 def _timeline_section(changes):
@@ -826,13 +825,13 @@ def build_tabs(apps: list[dict], tenant_id: str, changes=None, findings=None,
 
 
 def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None,
-                connector_health=None, connectors_href=None) -> str:
+                connector_health=None, connectors_href=None, portal_href=None) -> str:
     return _build(apps, tenant_id, changes, findings, connector_health,
-                  connectors_href)["page"]
+                  connectors_href, portal_href)["page"]
 
 
 def _build(apps: list[dict], tenant_id: str, changes=None, findings=None,
-           connector_health=None, connectors_href=None) -> dict:
+           connector_health=None, connectors_href=None, portal_href=None) -> dict:
     microsoft = [a for a in apps if a.get("first_party_microsoft")]
     shadow = [a for a in apps if not a.get("first_party_microsoft")]
     shadow.sort(key=lambda a: a["risk_score"], reverse=True)
@@ -1031,6 +1030,10 @@ def _build(apps: list[dict], tenant_id: str, changes=None, findings=None,
     ts = datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M UTC")
     local_link_attr = (f' data-local-href="{html.escape(connectors_href, quote=True)}"'
                        if connectors_href else "")
+    portal_link = (f'<a id="portalLink" class="themebtn" href="{html.escape(portal_href, quote=True)}" '
+                   f'style="display:inline-block;text-decoration:none;margin-right:6px" '
+                   f'title="Back to the AI-SPM portal">&#8592; Portal</a>'
+                   if portal_href else "")
 
     body = f"""
 <header>
@@ -1051,6 +1054,7 @@ def _build(apps: list[dict], tenant_id: str, changes=None, findings=None,
   </nav>
   <span class="spacer"></span>
   <span class="tenant">{html.escape(tenant_id)}</span>
+  {portal_link}
   <a id="aiDataSourcesLink" class="themebtn" href="#"{local_link_attr} style="display:inline-block;text-decoration:none" title="Go to the Microsoft AI Data Sources dashboard">AI Data Sources &#8594;</a>
   <button id="tg" class="themebtn" title="Theme">&#9790;</button>
 </header>

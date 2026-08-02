@@ -154,7 +154,8 @@ def cmd_scan(args) -> int:
     if connectors_result is not None:
         conn_path = os.path.join(args.out, "connectors.html")
         with open(conn_path, "w", encoding="utf-8") as f:
-            f.write(connectors_report.html_string(connectors_result, tenant))
+            f.write(connectors_report.html_string(connectors_result, tenant,
+                                                  portal_href="portal.html"))
         with open(os.path.join(args.out, "connectors.json"), "w", encoding="utf-8") as f:
             f.write(connectors_report.json_string(connectors_result))
 
@@ -166,7 +167,8 @@ def cmd_scan(args) -> int:
         f.write(report.html_string(
             scored, tenant,
             connector_health=(connectors_result or {}).get("health"),
-            connectors_href="connectors.html" if conn_path else None))
+            connectors_href="connectors.html" if conn_path else None,
+            portal_href="portal.html"))
     report.write_json(scored, os.path.join(args.out, "report.json"))
 
     # The portal is the landing page: one estate over both scans, with the two
