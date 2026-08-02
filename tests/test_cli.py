@@ -219,3 +219,18 @@ def test_device_code_mode_requires_its_arguments(monkeypatch):
 def test_missing_azure_cli_login_gets_an_actionable_message():
     hint = aispm._auth_hint(Exception("AzureCliCredential: Please run az login"))
     assert "az login" in hint
+
+
+def test_missing_azure_cli_tells_you_how_to_install_it():
+    """The very first thing a new user hits — it must name the fix, not the SDK error."""
+    hint = aispm._auth_hint(Exception("Azure CLI not found on path"))
+    assert "brew install azure-cli" in hint
+    assert "aka.ms/InstallAzureCLI" in hint
+    assert "--auth app" in hint          # the no-CLI alternative is offered too
+
+
+def test_not_signed_in_is_distinguished_from_not_installed():
+    hint = aispm._auth_hint(Exception("AzureCliCredential: Please run 'az login'"))
+    assert "az login" in hint
+    assert "brew install" not in hint    # they already have it; don't send them installing
+    assert "Global Reader" in hint       # says which role is enough

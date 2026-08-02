@@ -17,6 +17,7 @@ Other auth modes are there for automation:
     python aispm.py scan --auth managed
 """
 import argparse
+import logging
 import os
 import sys
 import time
@@ -51,12 +52,29 @@ def _graph(args):
     return GraphClient(token), tenant
 
 
+_INSTALL_HINT = ("Azure CLI is not installed. Install it, then sign in:\n\n"
+                 "    brew install azure-cli      # macOS\n"
+                 "    az login\n\n"
+                 "  Other platforms: https://aka.ms/InstallAzureCLI\n"
+                 "  Or skip the CLI entirely with an app registration:\n"
+                 "    python aispm.py doctor --auth app --tenant <ID> "
+                 "--client-id <ID> --client-secret <SECRET>")
+
+_LOGIN_HINT = ("Not signed in to Azure CLI. Run:\n\n"
+               "    az login\n\n"
+               "  Sign in with an account holding a read-only directory role\n"
+               "  (Global Reader or Security Reader is enough).\n"
+               "  Wrong tenant? Use:  az login --tenant <TENANT_ID>")
+
+
 def _auth_hint(e: Exception) -> str:
+    """Turns a credential failure into the command that fixes it."""
     text = str(e)
-    if "AzureCliCredential" in text or "az login" in text or "az account" in text:
-        return ("Azure CLI sign-in not found. Run:\n"
-                "    az login\n"
-                "  then try again, or pick another mode with --auth.")
+    low = text.lower()
+    if "not found on path" in low or "cli not found" in low or "installed" in low:
+        return _INSTALL_HINT
+    if "azureclicredential" in low or "az login" in low or "az account" in low:
+        return _LOGIN_HINT
     return text
 
 
@@ -200,6 +218,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    # azure-identity logs its own credential failure at WARNING before we get the
+    # exception, which prints a raw SDK line above the actionable message below it.
+    logging.getLogger("azure").setLevel(logging.ERROR)
+    logging.getLogger("azure.identity").setLevel(logging.ERROR)
+
     args = build_parser().parse_args(argv)
     handler = {"doctor": cmd_doctor, "scan": cmd_scan, "sample": cmd_sample}[args.command]
     try:
