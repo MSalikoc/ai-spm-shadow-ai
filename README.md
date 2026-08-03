@@ -57,7 +57,7 @@ git clone https://github.com/MSalikoc/ai-spm-shadow-ai.git && cd ai-spm-shadow-a
 ```
 
 ```bash
-pip install -r requirements.txt
+python3 -m pip install -r requirements.txt
 ```
 
 ```bash
@@ -78,15 +78,34 @@ Reader** — is enough.
 <details>
 <summary><b>PowerShell / Windows</b></summary>
 
-Same steps; Windows has `python`, not `python3`.
+Windows usually has none of Git, Python or the Azure CLI. Install all three with winget
+— it ships with Windows 10 and 11:
+
+```powershell
+winget install --id Git.Git -e
+winget install --id Python.Python.3.12 -e
+winget install --id Microsoft.AzureCLI -e
+```
+
+**Then close PowerShell and open a new window** — installers add to `PATH`, and the
+session you ran them in will not see it. Check it took:
+
+```powershell
+git --version; python --version; az version
+```
+
+Then the same five steps. Windows has `python`, not `python3`:
 
 ```powershell
 git clone https://github.com/MSalikoc/ai-spm-shadow-ai.git; cd ai-spm-shadow-ai
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 az login
 python aispm.py doctor
 python aispm.py scan --open
 ```
+
+`python -m pip` rather than `pip`, because a fresh Windows Python does not always put
+`pip` itself on `PATH`.
 </details>
 
 > In Cloud Shell, use `download out/portal.html` to get the file to your browser.
@@ -279,9 +298,12 @@ readable, denied, or not provisioned, and names the permission to grant.
 | Symptom | Fix |
 | --- | --- |
 | `command not found: python` | macOS ships no bare `python` — use `python3` (Windows uses `python`) |
+| Windows: `python` is not recognised, or opens the Microsoft Store | Python is not installed — `winget install --id Python.Python.3.12 -e`, then **open a new PowerShell window** |
+| Windows: `pip` is not recognised | Use `python -m pip` — a fresh Windows Python does not always put `pip` on `PATH` |
+| Windows: `git`/`az` not recognised right after installing | `PATH` only updates for new sessions — close and reopen PowerShell |
 | `curl: -s is not recognised` | PowerShell aliases `curl` to `Invoke-WebRequest` — use `Invoke-RestMethod`, or `curl.exe` |
 | `.ps1 cannot be loaded` | `Set-ExecutionPolicy -Scope Process RemoteSigned`, then re-run |
-| `No module named 'azure'` | `pip install -r requirements.txt` for *that* interpreter |
+| `No module named 'azure'` | `python3 -m pip install -r requirements.txt` — and make sure it is the same interpreter you run `aispm.py` with |
 | `Azure CLI is not installed` | `brew install azure-cli`, or use `--auth app` |
 | `no such file or directory: T` | A `<PLACEHOLDER>` pasted literally — use the `export` lines the script prints |
 | Only Entra sources connect | [See above](#why-only-entra-connects) — go to option 2 |
