@@ -22,10 +22,10 @@ Read-only. Runs from your laptop in two minutes, or on a schedule in Azure.
 
 | | |
 | --- | --- |
-| 🔑 **Consented AI apps** | Every third-party AI app holding an OAuth grant, and exactly which permissions |
-| 🌐 **Shadow AI** | AI used through the browser — who, how much data, sanctioned or not |
-| 🤖 **Agents** | Copilot agents and Entra agent identities, with owners and permissions |
-| 🔒 **Sensitive data** | What Purview saw reaching AI, blocked versus allowed |
+|  **Consented AI apps** | Every third-party AI app holding an OAuth grant, and exactly which permissions |
+|  **Shadow AI** | AI used through the browser — who, how much data, sanctioned or not |
+|  **Agents** | Copilot agents and Entra agent identities, with owners and permissions |
+|  **Sensitive data** | What Purview saw reaching AI, blocked versus allowed |
 
 Everything lands on **one page**: one row per vendor, whichever route it came in by.
 ChatGPT consented as an app *and* used in the browser is one row, not two. The two detail
