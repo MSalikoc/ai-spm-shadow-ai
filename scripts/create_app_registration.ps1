@@ -23,8 +23,16 @@
   ./scripts/create_app_registration.ps1 -AppName "AI-SPM Scanner (Prod)"
 
 .NOTES
-  Requires a role that can grant application permissions — Privileged Role Administrator
-  or Global Administrator — the same requirement postdeploy.sh has.
+  Requires a role that can grant application permissions — Privileged Role Administrator,
+  Cloud Application Administrator or Global Administrator — the same requirement
+  postdeploy.sh has.
+
+  Global Reader is NOT enough. It is read-only, so it can neither create the registration
+  nor consent the permissions, and the attempt fails partway through. Note that an
+  `az login` token may still *list* scopes like Application.ReadWrite.All: those describe
+  what the Azure CLI is allowed to ask for on your behalf, not what your directory role
+  permits. If you are a Global Reader, hand this script to an admin — they run it once,
+  and the values it prints are all you need afterwards.
 #>
 param(
   [string]$AppName = "AI-SPM Scanner"
@@ -52,7 +60,12 @@ try { az account show -o none 2>$null } catch { throw "Run 'az login' first." }
 if ($LASTEXITCODE -ne 0) { throw "Run 'az login' first." }
 
 $TenantId = az account show --query tenantId -o tsv
+$SignedInAs = az account show --query user.name -o tsv
 Write-Host "==> Tenant: $TenantId"
+Write-Host "==> Signed in as: $SignedInAs"
+Write-Host "    This needs a role that can grant application permissions (Privileged Role"
+Write-Host "    Administrator, Cloud Application Administrator or Global Administrator)."
+Write-Host "    Global Reader is read-only and cannot complete it."
 
 Write-Host "==> 1/4 Creating app registration: $AppName"
 $AppId = az ad app list --display-name $AppName --query "[0].appId" -o tsv 2>$null
@@ -140,7 +153,11 @@ Write-Host "============================================================"
 if ($Missing.Count -gt 0) {
   Write-Host ""
   Write-Host "NOTE: these permissions were not found in your tenant's Graph and were skipped:"
-  Write-Host "  $($Missing -join ', ')"
+  # Joined into a variable first: Windows PowerShell 5.1's parser mis-reads a
+  # single-quoted string nested inside $() inside a double-quoted string and dies with
+  # "The string is missing the terminator". 5.1 is still the default shell on Windows.
+  $MissingList = $Missing -join ", "
+  Write-Host "  $MissingList"
   Write-Host "That usually means the Microsoft feature is not provisioned at all (no"
   Write-Host "Microsoft 365 Copilot licence hides CopilotPackages.Read.All, for example)."
   Write-Host "doctor will report them as NOT_AVAILABLE — it never fabricates."

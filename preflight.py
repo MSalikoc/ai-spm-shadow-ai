@@ -184,7 +184,12 @@ which is why Entra discovery works — but not for the specialised connector sco
 below. Being a Global Administrator does not change this; the limit is on the client
 application, not on you.
 
-Two ways to get them, both using APPLICATION permissions instead:
+Two ways to get them, both using APPLICATION permissions instead. Both need a role that
+can GRANT application permissions — Privileged Role Administrator, Cloud Application
+Administrator or Global Administrator. Global Reader is read-only and cannot do either;
+if that is you, an admin runs step 1 once and hands you the three values.
+
+
 
   1. An app registration you own (stays local, no Azure resources):
          {script}

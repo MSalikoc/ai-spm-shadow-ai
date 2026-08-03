@@ -158,8 +158,21 @@ $env:AISPM_CLIENT_SECRET = "<SECRET>"
 ```
 </details>
 
-Needs a role that can grant application permissions — **Privileged Role Administrator**
-or **Global Administrator**.
+### Who can run this
+
+Creating the registration and consenting its permissions both write to the directory, so
+this needs **Privileged Role Administrator**, **Cloud Application Administrator** or
+**Global Administrator**.
+
+**Global Reader is not enough.** It is read-only — it runs option 1 perfectly well, but
+cannot create the registration or consent the permissions.
+
+An `az login` token may still *list* scopes like `Application.ReadWrite.All`. Those
+describe what the Azure CLI is allowed to ask for on your behalf, not what your directory
+role permits, so seeing them is not evidence you can complete this step.
+
+If you are a Global Reader: an admin runs the script once and gives you the three values
+it prints. Nothing else about your setup changes — you keep running the scans.
 
 <br>
 
@@ -308,6 +321,8 @@ readable, denied, or not provisioned, and names the permission to grant.
 | `Azure CLI is not installed` | `brew install azure-cli`, or use `--auth app` |
 | `no such file or directory: T` | A `<PLACEHOLDER>` pasted literally — use the `export` lines the script prints |
 | Only Entra sources connect | [See above](#why-only-entra-connects) — go to option 2 |
+| Option 2 fails partway with `Insufficient privileges` | Your role cannot grant application permissions — see [Who can run this](#who-can-run-this) |
+| Windows PowerShell 5.1: `The string is missing the terminator` | Fixed in current `main` — `git pull` |
 | A source shows `N/A` | Not provisioned in the tenant: a licensing question, not a permission one |
 | Purview "still running" | Audit searches take minutes — raise `PURVIEW_POLL_SECONDS` |
 | Fewer apps than expected | Default scope is `ai` — use `--scope consented` |
