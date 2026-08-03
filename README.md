@@ -75,6 +75,20 @@ python3 aispm.py scan --open
 Opens `out/portal.html`. A read-only directory role — **Global Reader** or **Security
 Reader** — is enough.
 
+<details>
+<summary><b>PowerShell / Windows</b></summary>
+
+Same steps; Windows has `python`, not `python3`.
+
+```powershell
+git clone https://github.com/MSalikoc/ai-spm-shadow-ai.git; cd ai-spm-shadow-ai
+pip install -r requirements.txt
+az login
+python aispm.py doctor
+python aispm.py scan --open
+```
+</details>
+
 > In Cloud Shell, use `download out/portal.html` to get the file to your browser.
 
 **Only Entra sources connect in this mode.** That is not a licensing problem — see
@@ -100,6 +114,30 @@ python3 aispm.py doctor --auth app
 ```bash
 python3 aispm.py scan --auth app --scope consented --open
 ```
+
+<details>
+<summary><b>PowerShell / Windows</b></summary>
+
+Use the PowerShell twin — it does the same work through the Azure CLI, so there is no
+extra module to install, and it prints `$env:` lines instead of `export` ones.
+
+```powershell
+.\scripts\create_app_registration.ps1
+```
+
+```powershell
+python aispm.py doctor --auth app
+python aispm.py scan --auth app --scope consented --open
+```
+
+Setting the credentials by hand instead:
+
+```powershell
+$env:AISPM_TENANT_ID = "<TENANT>"
+$env:AISPM_CLIENT_ID = "<APP_ID>"
+$env:AISPM_CLIENT_SECRET = "<SECRET>"
+```
+</details>
 
 Needs a role that can grant application permissions — **Privileged Role Administrator**
 or **Global Administrator**.
@@ -143,6 +181,25 @@ echo "https://$FUNCTION_APP.azurewebsites.net/api/portal?code=$KEY"
 ```
 
 Give it a few minutes — role propagation and the first scan both take a moment.
+
+<details>
+<summary><b>PowerShell / Windows</b></summary>
+
+`postdeploy.sh` is a Bash script, so run **step 3 in Cloud Shell's Bash** — it is a
+dropdown at the top of the Cloud Shell window, and `az` is already signed in there.
+
+Once deployed, the follow-up commands from PowerShell:
+
+```powershell
+$RG = "aispm-rg"; $FUNC = "aispm-xxxxxxxxxx"
+$KEY = az functionapp keys list -g $RG -n $FUNC --query functionKeys.default -o tsv
+Invoke-RestMethod "https://$FUNC.azurewebsites.net/api/scan?code=$KEY"
+Start-Process "https://$FUNC.azurewebsites.net/api/portal?code=$KEY"
+```
+
+`curl` in PowerShell is an alias for `Invoke-WebRequest` and does not take `-s`; use
+`Invoke-RestMethod`, or `curl.exe` if you want the real thing.
+</details>
 
 | Route | Serves |
 | --- | --- |
@@ -221,7 +278,9 @@ readable, denied, or not provisioned, and names the permission to grant.
 
 | Symptom | Fix |
 | --- | --- |
-| `command not found: python` | Use `python3` — macOS ships no bare `python` |
+| `command not found: python` | macOS ships no bare `python` — use `python3` (Windows uses `python`) |
+| `curl: -s is not recognised` | PowerShell aliases `curl` to `Invoke-WebRequest` — use `Invoke-RestMethod`, or `curl.exe` |
+| `.ps1 cannot be loaded` | `Set-ExecutionPolicy -Scope Process RemoteSigned`, then re-run |
 | `No module named 'azure'` | `pip install -r requirements.txt` for *that* interpreter |
 | `Azure CLI is not installed` | `brew install azure-cli`, or use `--auth app` |
 | `no such file or directory: T` | A `<PLACEHOLDER>` pasted literally — use the `export` lines the script prints |
