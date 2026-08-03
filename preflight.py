@@ -8,6 +8,8 @@ against a real endpoint, and the result says which of the two it was and what to
 
 Nothing here writes, and every probe is capped at one item.
 """
+import os
+
 from graph_client import GraphError
 
 OK = "OK"
@@ -68,6 +70,17 @@ def _probe(graph, path, beta):
         graph.get_all(path, {"$top": "1"}, max_items=1, beta=beta)
         return OK, ""
     except GraphError as e:
+        # Some collections reject a page size outright — /directoryRoles answers 400
+        # "This resource does not support custom page sizes". Without this retry the
+        # probe reported a perfectly readable source as absent from the tenant.
+        if e.status == 400 and "page size" in (e.body or "").lower():
+            try:
+                graph.get_all(path, None, max_items=1, beta=beta)
+                return OK, ""
+            except GraphError as retry:
+                e = retry
+            except Exception:
+                return FAILED, "retry without a page size also failed"
         if e.is_permission:
             return DENIED, e.body
         if e.is_missing:
@@ -146,7 +159,23 @@ def connector_flags(rows) -> dict[str, bool]:
 _ICON = {OK: "  OK  ", DENIED: "DENIED", UNAVAILABLE: " N/A  ", FAILED: " FAIL "}
 
 
-_DELEGATED_REMEDY = """
+def _remedy_text() -> str:
+    """
+    The fix, written for the shell the reader is actually in.
+
+    Printing `./scripts/create_app_registration.sh` to someone on Windows is advice they
+    cannot follow; the PowerShell twin and the `$env:` form are what work there.
+    """
+    windows = os.name == "nt"
+    script = (r".\scripts\create_app_registration.ps1" if windows
+              else "./scripts/create_app_registration.sh")
+    rerun = ("$env:AISPM_TENANT_ID / AISPM_CLIENT_ID / AISPM_CLIENT_SECRET, then:\n"
+             "         python aispm.py doctor --auth app" if windows
+             else "the values it prints, then:\n"
+                  "         python3 aispm.py doctor --auth app")
+    deploy = ("./scripts/postdeploy.sh <RESOURCE_GROUP> <FUNCTION_APP>"
+              + ("   (run this one in Cloud Shell Bash)" if windows else ""))
+    return f"""
 Why these are denied
 --------------------
 An `az login` sign-in is a DELEGATED token: it can only carry Graph scopes the Azure
@@ -158,12 +187,11 @@ application, not on you.
 Two ways to get them, both using APPLICATION permissions instead:
 
   1. An app registration you own (stays local, no Azure resources):
-         ./scripts/create_app_registration.sh
-     then re-run with the values it prints:
-         python aispm.py doctor --auth app --tenant <T> --client-id <C> --client-secret <S>
+         {script}
+     then set {rerun}
 
   2. Deploy, and let the Function's Managed Identity hold them:
-         ./scripts/postdeploy.sh <RESOURCE_GROUP> <FUNCTION_APP>
+         {deploy}
 
 Either way the scopes to grant are:
 """
@@ -189,7 +217,7 @@ def format_text(rows) -> str:
 
     absent = missing_scopes(rows)
     if absent and kind == "delegated":
-        lines.append(_DELEGATED_REMEDY.rstrip())
+        lines.append(_remedy_text().rstrip())
         lines.extend(f"     {s}" for s in absent)
         lines.append("")
 

@@ -395,3 +395,48 @@ def test_an_explicit_tenant_still_wins(monkeypatch):
     monkeypatch.setattr(auth, "get_token_azure_cli", lambda tenant=None: _jwt({"tid": "from-token"}))
     args = aispm.build_parser().parse_args(["doctor", "--tenant", "explicit"])
     assert aispm._token(args)[0] == "explicit"
+
+
+# --- probes must not mistake their own bad request for a missing feature ---
+def test_a_collection_that_rejects_a_page_size_is_still_readable(monkeypatch):
+    """
+    /directoryRoles answers 400 "This resource does not support custom page sizes".
+    Reading that as "not provisioned in this tenant" was the probe blaming the tenant
+    for its own query.
+    """
+    class PageSizeFussy(FakeTenant):
+        def get_all(self, path, params=None, max_items=None, beta=False):
+            if path == "/directoryRoles":
+                if params and "$top" in params:
+                    raise GraphError(400, path,
+                                     '{"error":{"code":"Request_UnsupportedQuery",'
+                                     '"message":"This resource does not support custom '
+                                     'page sizes. Please retry without a page size."}}')
+                return [{"id": "role-1"}]
+            return super().get_all(path, params, max_items, beta)
+
+    rows = {r["key"]: r for r in preflight.run(PageSizeFussy())}
+    assert rows["directory_roles"]["status"] == preflight.OK
+
+
+def test_a_real_400_is_still_reported_as_unavailable(monkeypatch):
+    """The retry must not paper over an endpoint that genuinely is not there."""
+    rows = {r["key"]: r for r in preflight.run(FakeTenant(missing=["/copilot/"]))}
+    assert rows["agent365"]["status"] == preflight.UNAVAILABLE
+
+
+def test_the_remedy_names_the_script_for_the_shell_you_are_in(monkeypatch):
+    denied = ["/security/", "/copilot/"]
+    scopes = {"Directory.Read.All", "Application.Read.All"}
+
+    monkeypatch.setattr(preflight.os, "name", "posix")
+    posix = preflight.format_text(preflight.run(FakeTenant(denied=denied), scopes, "delegated"))
+    assert "./scripts/create_app_registration.sh" in posix
+    assert "python3 aispm.py doctor --auth app" in posix
+
+    monkeypatch.setattr(preflight.os, "name", "nt")
+    win = preflight.format_text(preflight.run(FakeTenant(denied=denied), scopes, "delegated"))
+    assert r".\scripts\create_app_registration.ps1" in win
+    assert "$env:AISPM_TENANT_ID" in win
+    assert "Cloud Shell Bash" in win          # postdeploy.sh has no PowerShell twin
+    assert ".sh" not in win.split("1. An app registration")[1].split("2. Deploy")[0]
