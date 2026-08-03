@@ -204,6 +204,36 @@ def _executive_section(apps, changes, findings):
 _CONN_DOT = {True: charts.SEVERITY["Low"], False: charts.SEVERITY["Critical"], None: "#6b7280"}
 
 
+_VIEWS = [("portal", "Overview", "The AI estate — one row per vendor"),
+          ("report", "OAuth assessment", "Per-application permissions, usage, governance"),
+          ("connectors", "AI data sources", "Agents, Shadow AI traffic, sensitive data")]
+
+
+def view_switcher(current, portal_href=None, report_href=None, connectors_href=None):
+    """
+    The three-way nav carried by every page.
+
+    Each view keeps a fixed colour so the control reads the same everywhere; the page
+    you are on is filled rather than outlined. A destination with no href is dropped —
+    nothing worse than a nav button that goes nowhere.
+    """
+    hrefs = {"portal": portal_href, "report": report_href, "connectors": connectors_href}
+    colors = {"portal": charts.CATEGORICAL_LIGHT[6],
+              "report": charts.CATEGORICAL_LIGHT[0],
+              "connectors": charts.CATEGORICAL_LIGHT[1]}
+    out = []
+    for key, label, why in _VIEWS:
+        href = hrefs.get(key)
+        if key != current and not href:
+            continue
+        here = " here" if key == current else ""
+        target = html.escape(href or "#", quote=True)
+        out.append(f'<a class="{key}{here}" style="--vc:{colors[key]}" '
+                   f'href="{target}" title="{html.escape(why)}">'
+                   f'<i class="vd"></i><span class="vl">{html.escape(label)}</span></a>')
+    return f'<nav class="vswitch">{"".join(out)}</nav>' if len(out) > 1 else ""
+
+
 def _coverage_section(apps, connector_health=None):
     """
     Ownership coverage only. Data-source status moved to the portal's Overview, where it
@@ -674,6 +704,26 @@ a.card:hover{border-color:var(--accent)}
 a.card .n{font-size:24px}
 .kpi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
 .na li{margin:5px 0}
+/* The three-view switcher, shared by all three pages so the same control sits in the
+   same place wherever you are. Colour marks the destination, not the state. */
+/* A tab row, a tenant GUID and the three-view switcher will not share one line unless
+   the header gives ground: tighter tabs, a truncating tenant, a logo that never wraps. */
+header{gap:10px}
+header h1{white-space:nowrap}
+header .tabs{gap:0;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
+header .tabs::-webkit-scrollbar{display:none}
+header .navlink{padding:8px 9px;white-space:nowrap}
+header .tenant{max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+ flex:0 1 auto}
+@media(max-width:1150px){header .tenant{display:none}}
+.vswitch{display:flex;gap:6px;align-items:center;flex:0 0 auto}
+.vswitch a{display:inline-flex;align-items:center;gap:7px;text-decoration:none;
+ font-size:12.5px;font-weight:600;padding:6px 13px;border-radius:7px;white-space:nowrap;
+ border:1px solid var(--vc);color:var(--vc);transition:background .12s}
+.vswitch a:hover{background:color-mix(in srgb,var(--vc) 12%,transparent)}
+.vswitch a.here{background:var(--vc);color:#fff;cursor:default}
+.vswitch a .vd{width:7px;height:7px;border-radius:50%;background:currentColor;flex:0 0 auto}
+@media(max-width:820px){.vswitch a span.vl{display:none}.vswitch a{padding:6px 9px}}
 .gov-cmd{background:var(--track);border-radius:8px;padding:11px 13px;font-size:11.5px;
  line-height:1.5;overflow-x:auto;margin:10px 0;color:var(--ink)}
 details.explain{border:1px solid var(--line);border-radius:9px;padding:10px 14px;
@@ -1055,10 +1105,8 @@ def _build(apps: list[dict], tenant_id: str, changes=None, findings=None,
     ts = datetime.now(timezone.utc).strftime("%d.%m.%Y %H:%M UTC")
     local_link_attr = (f' data-local-href="{html.escape(connectors_href, quote=True)}"'
                        if connectors_href else "")
-    portal_link = (f'<a id="portalLink" class="themebtn" href="{html.escape(portal_href, quote=True)}" '
-                   f'style="display:inline-block;text-decoration:none;margin-right:6px" '
-                   f'title="Back to the AI-SPM portal">&#8592; Portal</a>'
-                   if portal_href else "")
+    switcher = view_switcher("report", portal_href=portal_href,
+                             report_href="#", connectors_href=connectors_href)
 
     body = f"""
 <header>
@@ -1079,8 +1127,7 @@ def _build(apps: list[dict], tenant_id: str, changes=None, findings=None,
   </nav>
   <span class="spacer"></span>
   <span class="tenant">{html.escape(tenant_id)}</span>
-  {portal_link}
-  <a id="aiDataSourcesLink" class="themebtn" href="#"{local_link_attr} style="display:inline-block;text-decoration:none" title="Go to the Microsoft AI Data Sources dashboard">AI Data Sources &#8594;</a>
+  {switcher}
   <button id="tg" class="themebtn" title="Theme">&#9790;</button>
 </header>
 <main>

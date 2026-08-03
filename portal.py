@@ -354,6 +354,13 @@ PORTAL_CSS = """
 .chip{display:inline-block;font-size:11px;background:var(--track);padding:2px 8px;
  border-radius:5px;margin:2px 4px 2px 0;font-family:ui-monospace,monospace}
 .muted{color:var(--muted)}
+.changes-list{list-style:none;margin:0;padding:0;font-size:13px}
+.changes-list li{display:flex;gap:10px;align-items:baseline;padding:7px 0;
+ border-top:1px solid var(--line);line-height:1.45}
+.changes-list li:first-child{border-top:0}
+.cdot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;margin-top:5px}
+ul.na{margin:0;padding-left:18px;font-size:13px}
+ul.na li{margin:6px 0;line-height:1.45}
 .calc{list-style:none;margin:10px 0 0;padding:0;font-size:13px}
 .calc li{display:flex;gap:12px;align-items:baseline;padding:5px 0;
  border-top:1px solid var(--line)}
@@ -382,17 +389,6 @@ details.explain[open] summary{margin-bottom:8px}
  color:var(--muted);border-radius:20px;padding:5px 13px;font-size:12px}
 .pfilters button.active{border-color:var(--accent);color:var(--accent);font-weight:600}
 .srcnav{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px}
-/* Ten tabs plus two links plus a tenant GUID will not fit on one line unless the
-   header gives ground: tighter tabs, a truncating tenant, and a logo that never wraps. */
-header{gap:10px}
-header h1{white-space:nowrap}
-header .tabs{gap:0;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none}
-header .tabs::-webkit-scrollbar{display:none}
-header .navlink{padding:8px 9px;white-space:nowrap}
-header .tenant{max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
- flex:0 1 auto}
-header .themebtn{white-space:nowrap;text-decoration:none;margin-left:4px;flex:0 0 auto}
-@media(max-width:1100px){header .tenant{display:none}}
 .srcnav a{flex:1;min-width:220px;text-decoration:none;color:inherit;border:1px solid var(--line);
  border-radius:10px;padding:14px 16px;background:var(--panel);transition:border-color .15s}
 .srcnav a:hover{border-color:var(--accent)}
@@ -479,14 +475,10 @@ def html_string(scored, tenant_id="", connectors_result=None, changes=None,
     rows = "".join(_vendor_row(v, i) for i, v in enumerate(vendors)) or \
         '<div class="empty">No AI vendors found in this scan.</div>'
 
-    # In the header rather than at the foot of a tab: these are navigation, and burying
-    # navigation under the content it navigates away from made them easy to miss.
-    header_links = (
-        f'<a class="themebtn" href="{_esc(report_href)}" title="Entra OAuth assessment '
-        f'— per-application permissions, usage and governance">OAuth</a>'
-        f'<a class="themebtn" href="{_esc(connectors_href)}" title="Microsoft AI data '
-        f'sources — agents, Shadow AI traffic, sensitive data">Data&nbsp;sources</a>'
-    ) if standalone_links else ""
+    switcher = report.view_switcher(
+        "portal",
+        report_href=report_href if standalone_links else None,
+        connectors_href=connectors_href if standalone_links else None)
     standalone_block = ""
 
     # With no sibling files to point at, these read as plain references to the tab that
@@ -494,6 +486,9 @@ def html_string(scored, tenant_id="", connectors_result=None, changes=None,
     def _ref(href, label, tab):
         return f'<a href="{_esc(href)}">{label}</a>' if standalone_links \
             else f"the <b>{tab}</b> tab above"
+
+    attention = _attention_card(scored, changes, findings, health)
+    change_card = _changes_card(changes)
 
     excluded_rows = []
     if estate["non_ai_apps"]:
@@ -569,6 +564,11 @@ def html_string(scored, tenant_id="", connectors_result=None, changes=None,
     </div>
   </div>
 
+  <div class="grid cols-2" style="margin-top:16px">
+    <div class="card"><h3>Needs attention</h3>{attention}</div>
+    <div class="card"><h3>What changed since the last scan</h3>{change_card}</div>
+  </div>
+
   <div class="card" style="margin-top:16px">
     <h3>AI estate — {len(vendors)} vendors</h3>
     <p class="governed" style="margin-top:-6px">One row per vendor. Badges show how it was
@@ -631,75 +631,29 @@ def html_string(scored, tenant_id="", connectors_result=None, changes=None,
 {standalone_block}
 """
 
-    # Both dashboards' own sections, composed here rather than reimplemented — the
-    # portal is the union of the two, not a summary sitting on top of them.
-    core_tabs = report.build_tabs(scored, tenant_id, changes, findings, health)
-    conn = None
-    if connectors_result:
-        try:
-            import connectors_report
-            conn = connectors_report.build_tabs(connectors_result, tenant_id, now)
-        except Exception:
-            conn = None
-
-    def missing(what, why):
-        return (f'<div class="card"><h3>{_esc(what)}</h3>'
-                f'<p class="governed">{_esc(why)}</p></div>')
-
-    no_conn = "The Microsoft AI data source connectors did not run in this scan. " \
-              "Run `aispm.py doctor` to see which are reachable."
-    ctabs = (conn or {}).get("tabs", {})
-
-    panes = [
-        ("estate", "Overview", estate_body),
-        ("apps", "Applications", core_tabs.get("apps", "")),
-        ("usage", "Usage", core_tabs.get("usage", "")),
-        ("agents", "Agents", ctabs.get("agents") or missing("Agents", no_conn)),
-        ("shadow", "Shadow AI", ctabs.get("shadow") or missing("Shadow AI", no_conn)),
-        ("sensitive", "Sensitive Data",
-         ctabs.get("sensitive") or missing("Sensitive Data", no_conn)),
-        ("findings", "Findings",
-         (core_tabs.get("findings") or "")
-         + (ctabs.get("findings") or "")
-         or missing("Findings", "No findings recorded in this scan.")),
-        ("governance", "Governance", core_tabs.get("governance", "")),
-        ("gaps", "Gaps", ctabs.get("gaps") or missing(
-            "Known gaps", "Connector coverage limits appear here once the connectors run.")),
-        ("changes", "Changes",
-         core_tabs.get("changes") or missing("Changes", "No change history yet — the "
-                                             "first scan is the baseline. From the second "
-                                             "scan on, everything that appeared, escalated "
-                                             "or disappeared is listed here.")),
-    ]
-
-    nav = "".join(
-        f'<a class="navlink{" active" if key == "estate" else ""}" data-tab="{key}">{label}</a>'
-        for key, label, _ in panes)
-    sections = "".join(
-        f'<section class="tab{" active" if key == "estate" else ""}" data-tab="{key}">{content}</section>'
-        for key, _, content in panes)
-
+    # One page. The two dashboards keep their own tabs and are one click away; putting
+    # ten tabs here as well made the portal a second copy of them rather than the place
+    # you start. What the removed tabs carried that belongs in an overview — the
+    # narratives and the change summary — is folded into the page below.
     page_body = f"""
 <header>
   {_LOGO}
   <h1>AI-SPM</h1>
-  <nav class="tabs">{nav}</nav>
   <span class="spacer"></span>
   <span class="tenant">{_esc(tenant_id)}</span>
-  {header_links}
+  {switcher}
   <button id="tg" class="themebtn" title="Theme">&#9790;</button>
 </header>
 <main>
-  {sections}
+  {estate_body}
   <div class="foot">AI-SPM · read-only · {ts}</div>
 </main>
-{(conn or {}).get("detail_panel", "")}
-<script>{THEME_JS}{PORTAL_JS}{charts.JS}{(conn or {}).get("script", "")}</script>
+<script>{THEME_JS}{PORTAL_JS}{charts.JS}</script>
 """
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>AI-SPM · AI Estate</title>'
-            f'<style>{CSS}{charts.CSS}{PORTAL_CSS}{(conn or {}).get("css", "")}</style>'
+            f'<style>{CSS}{charts.CSS}{PORTAL_CSS}</style>'
             f'</head><body>{page_body}</body></html>')
 
 
@@ -786,3 +740,53 @@ def _health_of(connectors_result):
         return None
     return {r.get("name"): {"status": r.get("status"), "count": r.get("count")}
             for r in rows if r.get("name")}
+
+
+_CHANGE_COLOR = {"Critical": charts.SEVERITY["Critical"], "High": charts.SEVERITY["High"],
+                 "Medium": charts.SEVERITY["Medium"], "Low": charts.SEVERITY["Low"],
+                 "Info": "#6b7280"}
+
+
+def _attention_card(scored, changes, findings, health) -> str:
+    """
+    The executive narratives, which used to sit behind the Overview tab of the core
+    dashboard. On a single-page portal they belong on the page, not one click away.
+    """
+    try:
+        lines = executive.needs_attention(scored or [], changes or [], findings or [], health)
+    except Exception:
+        lines = []
+    # Connector coverage is stated in full, per source and with its real status, in the
+    # Data sources card at the foot of this page. Restating it as "needs attention"
+    # would put seven duplicate lines above the estate narratives that are the point.
+    lines = [l for l in lines if "not connected" not in l]
+    if not lines:
+        return ('<p class="governed">Nothing flagged. Every discovered application has an '
+                'owner, a classification and a lifecycle state, and no findings are '
+                'overdue.</p>')
+    return ('<ul class="na">'
+            + "".join(f"<li>{_esc(l)}</li>" for l in lines[:8]) + "</ul>")
+
+
+def _changes_card(changes, top=7) -> str:
+    """
+    What a follow-up scan found, most important first.
+
+    The first question anyone asks of a second scan is what moved, so it is answered on
+    the page rather than behind a tab. Full history stays on the OAuth assessment.
+    """
+    if not changes:
+        return ('<p class="governed">This is the baseline scan. From the next one on, '
+                'everything that appears, escalates or disappears is listed here — new '
+                'applications, permission escalations, admin consent granted, usage '
+                'jumps.</p>')
+    order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Info": 4}
+    ranked = sorted(changes, key=lambda e: order.get(e.get("importance"), 5))
+    rows = "".join(
+        f'<li><span class="cdot" style="background:'
+        f'{_CHANGE_COLOR.get(e.get("importance"), "#6b7280")}"></span>'
+        f'<span><b>{_esc(e.get("asset_name"))}</b> — {_esc(e.get("description"))}</span></li>'
+        for e in ranked[:top])
+    more = (f'<p class="governed">{len(changes) - top} more on the OAuth assessment.</p>'
+            if len(changes) > top else "")
+    return f'<ul class="changes-list">{rows}</ul>{more}'

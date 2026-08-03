@@ -155,7 +155,8 @@ def cmd_scan(args) -> int:
         conn_path = os.path.join(args.out, "connectors.html")
         with open(conn_path, "w", encoding="utf-8") as f:
             f.write(connectors_report.html_string(connectors_result, tenant,
-                                                  portal_href="portal.html"))
+                                                  portal_href="portal.html",
+                                                  report_href="report.html"))
         with open(os.path.join(args.out, "connectors.json"), "w", encoding="utf-8") as f:
             f.write(connectors_report.json_string(connectors_result))
 

@@ -71,7 +71,8 @@ def _run_scan(source: str):
             if connectors_result is not None:
                 storage.publish_connectors(
                     connectors_report.html_string(connectors_result, tenant_id,
-                                                  portal_href="portal"),
+                                                  portal_href="portal",
+                                                  report_href="report"),
                     connectors_report.json_string(connectors_result))
         except Exception:
             logging.exception("connector drift/dashboard error")

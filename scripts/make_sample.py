@@ -190,7 +190,8 @@ def main():
     conn = os.path.join(docs, "sample-connectors.html")
     with open(conn, "w", encoding="utf-8") as f:
         f.write(connectors_report.html_string(result, TENANT,
-                                              portal_href="sample-portal.html"))
+                                              portal_href="sample-portal.html",
+                                              report_href="sample-report.html"))
 
     hub = os.path.join(docs, "sample-portal.html")
     with open(hub, "w", encoding="utf-8") as f:

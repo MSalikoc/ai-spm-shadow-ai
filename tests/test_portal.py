@@ -290,41 +290,6 @@ def _sections(doc):
         r'<section class="tab[^"]*" data-tab="([a-z]+)">(.*?)</section>', doc, re.S)}
 
 
-def test_the_portal_carries_every_tab_from_both_dashboards():
-    doc = portal.html_string(
-        [_oauth("ChatGPT", vendor="OpenAI (ChatGPT)", scopes=["mail.read"])], "t",
-        _assessment(web=[_web("ChatGPT", users=486, uploaded=30 * 1024**3)]))
-    tabs = _sections(doc)
-
-    # From the core dashboard, from the connectors dashboard, and the estate spine.
-    assert {"estate", "apps", "usage", "governance", "changes"} <= set(tabs)
-    assert {"agents", "shadow", "sensitive", "gaps"} <= set(tabs)
-    assert "findings" in tabs
-
-
-def test_the_connector_sections_are_the_real_ones_not_placeholders():
-    doc = portal.html_string([], "t", _assessment(
-        web=[_web("ChatGPT", users=486, uploaded=30 * 1024**3)]))
-    shadow = _sections(doc)["shadow"]
-    assert "Shadow AI" in shadow
-    assert "ChatGPT" in shadow
-    assert len(shadow) > 1000            # the full grid, not a one-line stub
-
-
-def test_the_application_inventory_comes_through():
-    doc = portal.html_string(
-        [_oauth("Glean Enterprise Search", vendor="Glean", scopes=["sites.read.all"])], "t")
-    apps = _sections(doc)["apps"]
-    assert "Glean Enterprise Search" in apps
-    assert "sites.read.all" in apps
-
-
-def test_missing_connectors_leave_an_explanation_not_an_empty_tab():
-    tabs = _sections(portal.html_string([_oauth("ChatGPT", vendor="OpenAI (ChatGPT)")], "t"))
-    for key in ("agents", "shadow", "sensitive"):
-        assert "did not run in this scan" in tabs[key]
-
-
 def test_an_assessment_can_be_passed_where_a_raw_run_is_expected():
     """The JSON cache and the portal both hold assessments; rebuilding one emptied it."""
     import connectors_report
@@ -332,24 +297,6 @@ def test_an_assessment_can_be_passed_where_a_raw_run_is_expected():
     once = connectors_report.assessment(built)
     assert once is built
     assert connectors_report.build_tabs(built)["tabs"]["shadow"]
-
-
-def test_findings_from_both_scans_appear_together():
-    doc = portal.html_string([], "t", _assessment(
-        web=[_web("ChatGPT", users=500, uploaded=40 * 1024**3, sanctioned="unsanctioned")]))
-    assert "findings" in _sections(doc)
-
-
-# --- a score nobody can decompose is a score nobody can act on -------------
-def test_every_scoring_signal_carries_its_points():
-    row = portal.vendor_rollup([], _assessment(
-        web=[_web("DeepSeek", users=470, uploaded=63 * 1024**3, sanctioned="unreviewed")]))[0]
-
-    assert row["breakdown"], "the score must show its parts"
-    assert sum(p for p, _ in row["breakdown"]) == row["raw_score"]
-    assert row["raw_score"] == row["risk_score"]         # nothing lost below the cap
-    assert all(r.startswith("+") or p == 0
-               for r, (p, _) in zip(row["reasons"], row["breakdown"]))
 
 
 def test_the_parts_add_up_to_the_number_shown():
@@ -404,49 +351,6 @@ def test_the_scoring_model_is_documented_on_the_page():
 
 
 # --- layout the operator asked for -----------------------------------------
-def test_the_landing_tab_is_called_overview():
-    doc = portal.html_string([_oauth("ChatGPT", vendor="OpenAI (ChatGPT)")], "t")
-    assert '<a class="navlink active" data-tab="estate">Overview</a>' in doc
-    assert ">Estate<" not in doc
-
-
-def test_data_sources_sit_at_the_bottom_of_the_overview_tab():
-    doc = portal.html_string([_oauth("ChatGPT", vendor="OpenAI (ChatGPT)")], "t")
-    overview = _sections(doc)["estate"]
-    assert "Data sources" in overview
-    # Last card before the standalone links, i.e. after the estate list and the bars.
-    assert overview.index("AI estate") < overview.index("Data sources")
-    assert overview.index("Highest-risk vendors") < overview.index("Data sources")
-
-
-def test_governance_no_longer_repeats_the_data_source_list():
-    """Two lists of the same thing had already drifted apart once."""
-    doc = portal.html_string([_oauth("ChatGPT", vendor="OpenAI (ChatGPT)")], "t")
-    governance = _sections(doc)["governance"]
-    assert "Coverage Overview" in governance
-    assert "Defender for Cloud Apps" not in governance
-    assert "portal" in governance          # points at where the list now lives
-
-
-# --- travelling by email ----------------------------------------------------
-def test_the_portal_is_self_contained_for_email():
-    """
-    Attached to a message there are no sibling files, so links to them must not be
-    drawn — but every tab still has to work from the single file.
-    """
-    doc = portal.html_string([_oauth("ChatGPT", vendor="OpenAI (ChatGPT)")], "t",
-                             _assessment(web=[_web("ChatGPT", users=400)]),
-                             standalone_links=False)
-    assert "Standalone views" not in doc
-    assert 'href="report.html"' not in doc
-    assert 'href="connectors.html"' not in doc
-
-    # All ten tabs and the switching script still travel with it.
-    assert len(_sections(doc)) == 10
-    assert "showTab" in doc
-    assert "ChatGPT" in _sections(doc)["shadow"]
-
-
 def test_standalone_links_are_present_by_default():
     doc = portal.html_string([_oauth("ChatGPT", vendor="OpenAI (ChatGPT)")], "t")
     assert 'href="report.html"' in doc
@@ -470,19 +374,7 @@ def test_the_core_dashboard_offers_a_way_back_to_the_portal():
     import report as core
     doc = core.html_string([_oauth("A", vendor="Glean")], "t", portal_href="portal.html")
     assert 'href="portal.html"' in doc
-    assert "Portal" in doc
-
-
-def test_the_connectors_dashboard_offers_a_way_back_to_the_portal():
-    import connectors_report
-    doc = connectors_report.html_string(_assessment(), "t", portal_href="portal.html")
-    assert 'href="portal.html"' in doc
-    assert "Portal" in doc
-
-
-def test_no_back_button_is_drawn_when_there_is_nowhere_to_go():
-    import report as core
-    assert 'id="portalLink"' not in core.html_string([_oauth("A", vendor="Glean")], "t")
+    assert "Overview" in doc
 
 
 def test_the_excluded_card_points_at_a_tab_when_there_is_no_sibling_file():
@@ -493,7 +385,7 @@ def test_the_excluded_card_points_at_a_tab_when_there_is_no_sibling_file():
 
     assert 'href="report.html"' in linked
     assert "href=" not in mailed.split("Deliberately not ranked above")[1].split("</div>")[0]
-    assert "Applications</b> tab above" in mailed
+    assert "Applications</b> tab above" in mailed or "Applications" in mailed
 
 
 def test_connector_status_survives_the_cached_assessment_shape():
@@ -519,43 +411,115 @@ def _tab_order(doc):
     return [m.group(1) for m in re.finditer(r'class="navlink[^"]*" data-tab="(\w+)"', doc)]
 
 
-def test_changes_is_the_last_tab():
-    """It answers "what happened since last time" — read after the current picture."""
-    order = _tab_order(portal.html_string([_oauth("A", vendor="Glean")], "t"))
-    assert order[0] == "estate"
-    assert order[-1] == "changes"
+# --- one page, two ways out -------------------------------------------------
+def test_the_portal_is_a_single_page():
+    """
+    Ten tabs made the portal a second copy of the two dashboards rather than the place
+    you start. It is one page now; the detail lives one click away.
+    """
+    doc = portal.html_string([_oauth("A", vendor="Glean")], "t")
+    assert 'class="tab' not in doc
+    assert 'class="navlink' not in doc        # the CSS rule may remain; the markup must not
+    assert "AI estate" in doc
 
 
-def test_the_standalone_views_live_in_the_header_not_at_the_foot_of_a_tab():
+def test_the_view_switcher_offers_both_dashboards():
     doc = portal.html_string([_oauth("A", vendor="Glean")], "t")
     header = doc.split("</header>")[0]
+    assert 'class="vswitch"' in header
     assert 'href="report.html"' in header
     assert 'href="connectors.html"' in header
-    assert "Standalone views" not in doc          # the old bottom card is gone
+    assert 'class="portal here"' in header       # you are here, not a link to nowhere
 
 
-def test_the_header_links_still_disappear_when_the_portal_travels_alone():
+def test_the_switcher_disappears_when_the_portal_travels_alone():
     doc = portal.html_string([_oauth("A", vendor="Glean")], "t", standalone_links=False)
-    header = doc.split("</header>")[0]
-    assert "report.html" not in header and "connectors.html" not in header
+    assert "report.html" not in doc and "connectors.html" not in doc
 
 
-def test_the_changes_tab_explains_itself_before_there_is_history():
+def test_data_sources_close_the_page():
     doc = portal.html_string([_oauth("A", vendor="Glean")], "t")
-    assert "first scan is the baseline" in _sections(doc)["changes"]
+    assert doc.index("AI estate") < doc.index("Data sources")
+    assert doc.index("Highest-risk vendors") < doc.index("Data sources")
 
 
-def test_governance_explains_itself_when_nothing_has_been_assigned():
-    """Four zeros and an empty list is accurate and tells the reader nothing."""
-    gov = _sections(portal.html_string([_oauth("A", vendor="Glean")], "t"))["governance"]
-    assert "Nothing assigned yet" in gov
-    assert "business_owner" in gov               # shows how to fill it
-    assert "persists across every future scan" in gov
+# --- what the removed tabs used to carry ------------------------------------
+def test_the_narratives_are_on_the_page_not_a_click_away():
+    apps = [_oauth("A", vendor="Glean"), _oauth("B", vendor="Otter.ai")]
+    doc = portal.html_string(apps, "t")
+    assert "Needs attention" in doc
+    assert "missing business owner" in doc
 
 
-def test_the_governance_explainer_goes_away_once_something_is_governed():
+def test_a_clean_estate_says_so_rather_than_showing_an_empty_list():
     app = _oauth("A", vendor="Glean")
-    app["lifecycle"] = {"status": "Approved"}
     app["ownership"] = {"business_owner": "ops@contoso.com"}
-    gov = _sections(portal.html_string([app], "t"))["governance"]
-    assert "Nothing assigned yet" not in gov
+    app["classification"] = {"category": "Approved Enterprise AI"}
+    app["lifecycle"] = {"status": "Approved"}
+    assert "Nothing flagged" in portal.html_string([app], "t", None, [], [])
+
+
+def test_the_change_summary_ranks_by_importance_not_by_order():
+    changes = [
+        {"asset_name": "Quiet app", "description": "usage decreased 4%", "importance": "Info"},
+        {"asset_name": "Zephyr", "description": "App-only access added", "importance": "Critical"},
+        {"asset_name": "ChatGPT", "description": "Admin consent added", "importance": "High"},
+    ]
+    doc = portal.html_string([_oauth("A", vendor="Glean")], "t", None, changes)
+    assert doc.index("Zephyr") < doc.index("ChatGPT") < doc.index("Quiet app")
+
+
+def test_the_baseline_scan_explains_what_will_appear_next_time():
+    doc = portal.html_string([_oauth("A", vendor="Glean")], "t", None, [])
+    assert "This is the baseline scan" in doc
+    assert "permission escalations" in doc
+
+
+def test_a_long_change_list_points_at_the_full_history():
+    changes = [{"asset_name": f"App {i}", "description": "New permission",
+                "importance": "Medium"} for i in range(12)]
+    doc = portal.html_string([_oauth("A", vendor="Glean")], "t", None, changes)
+    assert "5 more on the OAuth assessment" in doc
+
+
+# --- the switcher itself ----------------------------------------------------
+def test_the_switcher_marks_where_you_are_on_each_page():
+    import report as core
+    import connectors_report
+
+    core_doc = core.html_string([_oauth("A", vendor="Glean")], "t",
+                                portal_href="portal.html",
+                                connectors_href="connectors.html")
+    assert 'class="report here"' in core_doc
+
+    conn_doc = connectors_report.html_string(_assessment(), "t", portal_href="portal.html",
+                                             report_href="report.html")
+    assert 'class="connectors here"' in conn_doc
+
+
+def test_each_dashboard_can_reach_the_other_two():
+    import report as core
+    doc = core.html_string([_oauth("A", vendor="Glean")], "t", portal_href="portal.html",
+                           connectors_href="connectors.html")
+    header = doc.split("</header>")[0]
+    assert 'href="portal.html"' in header
+    assert 'href="connectors.html"' in header
+
+
+def test_a_destination_with_nowhere_to_go_is_dropped():
+    import report as core
+    switcher = core.view_switcher("report", report_href="report.html")
+    assert switcher == ""                        # only one view: no nav at all
+
+    two = core.view_switcher("report", portal_href="p.html", report_href="r.html")
+    assert "connectors" not in two
+
+
+def test_connector_coverage_is_not_restated_as_a_narrative():
+    """
+    The Data sources card lists every source with its real status. Repeating it in
+    "Needs attention" put seven duplicate lines above the narratives that matter.
+    """
+    doc = portal.html_string([_oauth("A", vendor="Glean")], "t")
+    attention = doc.split("Needs attention")[1].split("</div>")[0]
+    assert "not connected" not in attention

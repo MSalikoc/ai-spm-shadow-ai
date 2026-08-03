@@ -1482,7 +1482,8 @@ _DETAIL_PANEL = """
 </aside>"""
 
 
-def html_string(result: dict, tenant_id: str = "", now=None, portal_href=None) -> str:
+def html_string(result: dict, tenant_id: str = "", now=None, portal_href=None,
+                report_href=None) -> str:
     built = build_tabs(result, tenant_id, now)
     a = built["assessment"]
     t = built["tabs"]
@@ -1493,10 +1494,9 @@ def html_string(result: dict, tenant_id: str = "", now=None, portal_href=None) -
         f'<a class="navlink{" active" if x == "overview" else ""}" data-tab="{x}">{label}</a>'
         for x, label in (("overview", "Overview"), ("agents", "Agents"), ("shadow", "Shadow AI"),
                         ("sensitive", "Sensitive Data"), ("findings", "Findings"), ("gaps", "Gaps")))
-    portal_link = (f'<a class="themebtn" href="{_esc(portal_href)}" '
-                   f'style="display:inline-block;text-decoration:none;margin-left:10px" '
-                   f'title="Back to the AI-SPM portal">&#8592; Portal</a>'
-                   if portal_href else "")
+    import report as _core
+    switcher = _core.view_switcher("connectors", portal_href=portal_href,
+                                   report_href=report_href, connectors_href="#")
 
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <title>AI-SPM — Microsoft AI Data Sources Assessment</title>
@@ -1504,7 +1504,7 @@ def html_string(result: dict, tenant_id: str = "", now=None, portal_href=None) -
 <header>{_MS_LOGO_SVG}<h1>AI-SPM</h1>
 <nav class="tabs">{nav}</nav>
 <div class="spacer"></div><div class="tenant">{_esc(tenant_id)}</div>
-{portal_link}<a id="coreDashboardLink" class="themebtn" href="#" style="display:inline-block;text-decoration:none;margin-left:10px" title="Go to the Core (OAuth-consent) dashboard">&#8592; Core Dashboard</a>
+{switcher}
 </header>
 <main>
 <section class="tab active" data-tab="overview">{overview}</section>

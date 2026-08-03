@@ -27,8 +27,9 @@ Read-only. Runs from your laptop in two minutes, or on a schedule in Azure.
 | 🤖 **Agents** | Copilot agents and Entra agent identities, with owners and permissions |
 | 🔒 **Sensitive data** | What Purview saw reaching AI, blocked versus allowed |
 
-Everything lands on **one portal**: one row per vendor, whichever route it came in by.
-ChatGPT consented as an app *and* used in the browser is one row, not two.
+Everything lands on **one page**: one row per vendor, whichever route it came in by.
+ChatGPT consented as an app *and* used in the browser is one row, not two. The two detail
+dashboards are one click away, and every page carries the same three-way switch.
 
 > **100% read-only.** AI-SPM never revokes a permission, deletes an app, or changes a
 > setting. It observes, scores and reports — remediation stays with your team.
@@ -159,7 +160,7 @@ Rendered from a synthetic tenant, through the real scoring and charting code.
 
 | | |
 | --- | --- |
-| **[▶ Portal](https://htmlpreview.github.io/?https://github.com/MSalikoc/ai-spm-shadow-ai/blob/main/docs/sample-portal.html)** | 27 AI vendors, 8 seen through two routes, and a **Changes** tab showing a week of drift |
+| **[▶ Portal](https://htmlpreview.github.io/?https://github.com/MSalikoc/ai-spm-shadow-ai/blob/main/docs/sample-portal.html)** | 27 AI vendors, 8 seen through two routes, and a week of drift |
 | [Entra OAuth assessment](https://htmlpreview.github.io/?https://github.com/MSalikoc/ai-spm-shadow-ai/blob/main/docs/sample-report.html) | Per-application permissions and usage |
 | [AI data sources](https://htmlpreview.github.io/?https://github.com/MSalikoc/ai-spm-shadow-ai/blob/main/docs/sample-connectors.html) | Agents, Shadow AI traffic, sensitive data |
 
