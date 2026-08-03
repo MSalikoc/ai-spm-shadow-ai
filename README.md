@@ -168,32 +168,15 @@ Regenerate them with `python3 aispm.py sample`.
 
 ---
 
-## How much to look at
+## Reading the results
 
-The default assesses only apps matching the AI catalog — precise, but blind to any AI
-vendor the catalog has not heard of.
+Only apps matching the AI catalog are assessed by default — precise, but blind to any
+vendor the catalog has not heard of. Widen it with `--scope consented` (every app holding
+a real OAuth grant) or `--scope all`. Apps pulled in by scope rather than a catalog hit
+are tagged `ai_match: false`; being in scope is never dressed up as an AI detection.
 
-```bash
-python3 aispm.py scan --scope consented
-```
-
-| `--scope` | Assesses |
-| --- | --- |
-| `ai` *(default)* | Apps matching the AI catalog |
-| `consented` | **+ every app holding a real OAuth grant** — the honest consent surface |
-| `all` | Every third-party app |
-
-Apps pulled in by scope rather than a catalog hit are tagged `ai_match: false`. Being in
-scope is never dressed up as an AI detection.
-
-On a deployment, set `AISPM_SCAN_SCOPE` instead.
-
----
-
-## Scores you can check
-
-No black boxes. Every score is a sum of named signals, and the page shows the
-arithmetic — open any vendor row:
+Every score is a sum of named signals, and the page shows the arithmetic — open any
+vendor row:
 
 ```
 +18   424 people reached it through the browser
@@ -203,134 +186,80 @@ arithmetic — open any vendor row:
  65   Risk score out of 100
 ```
 
-**Bands:** 75+ Critical · 50–74 High · 25–49 Medium · under 25 Low.
-
-A DLP *block* scores nothing — that is the control working. Permission weights live in
-[`config.py`](config.py); the AI catalog in [`catalog.json`](catalog.json), overridable
-with `AISPM_CATALOG_PATH`.
+**Bands:** 75+ Critical · 50–74 High · 25–49 Medium · under 25 Low. A DLP *block* scores
+nothing — that is the control working.
 
 ---
 
 ## Permissions
 
-All read-only. `create_app_registration.sh` and `postdeploy.sh` grant these for you.
+All read-only, and granted for you by `create_app_registration.sh` or `postdeploy.sh`.
 
-| Permission | Unlocks | Needed |
-| --- | --- | --- |
-| `Application.Read.All` | App and service principal inventory | Always |
-| `Directory.Read.All` | OAuth grants, owners | Always |
-| `AuditLog.Read.All` | Usage and activity *(also needs Entra ID P1)* | Optional |
-| `CloudApp-Discovery.Read.All` | Shadow AI web traffic | Optional |
-| `CopilotPackages.Read.All` | Agent 365 catalogue | Optional |
-| `AuditLogsQuery.Read.All` | Purview sensitive interactions | Optional |
+| Permission | Unlocks |
+| --- | --- |
+| `Application.Read.All`, `Directory.Read.All` | App inventory, OAuth grants, owners — **required** |
+| `AuditLog.Read.All` | Usage and activity *(also needs Entra ID P1)* |
+| `CloudApp-Discovery.Read.All` | Shadow AI web traffic |
+| `CopilotPackages.Read.All` | Agent 365 catalogue |
+| `AuditLogsQuery.Read.All` | Purview sensitive interactions |
 
 ### Why only Entra connects
 
 With `az login` you get a **delegated** token, which can only carry Graph scopes the
 *Azure CLI application* is authorised for. Directory reads are in that set — which is
-why Entra discovery works. The three connector scopes are not, so they are simply
-absent from the token. **Being Global Administrator does not change this**; the limit is
-on the client application, not on your account.
-
-`doctor` prints the scopes your token actually carries and says so directly:
-
-```
-[DENIED] Defender for Cloud Apps
-         the sign-in does not carry this scope at all — the client application
-         is not authorized for it, so no directory role will change this
-```
-
-Use option 2 or 3, both of which use application permissions instead.
-
----
-
-## Configuration
-
-Set by the setup scripts; listed for reference.
-
-| Setting | Purpose |
-| --- | --- |
-| `AISPM_TENANT_ID` | Tenant to scan |
-| `AISPM_SCAN_SCOPE` | `ai` / `consented` / `all` |
-| `AISPM_ACTIVITY_DAYS` | Sign-in history window, 7–90 (default 90) |
-| `AISPM_CATALOG_PATH` | Your own AI vendor catalog |
-| `PURVIEW_AUDIT_DAYS`, `PURVIEW_POLL_SECONDS` | Purview window, and how long to wait for the search |
-| `SCAN_SCHEDULE`, `EMAIL_SCHEDULE` | Timers (default: daily 06:00 UTC, Monday 08:00 UTC) |
-| `STORE_RAW_AI_CONTENT` | Leave **off** — prompt/response text is never kept unless this is `true` |
-| `AISPM_MAIL_SENDER`, `AISPM_MAIL_TO`, `AISPM_REPORT_URL` | Weekly email digest |
-
-### Weekly email digest *(optional)*
-
-Sent by the Managed Identity via Graph `sendMail` — no SMTP secrets. The full portal
-travels as a single self-contained attachment, so every tab still works offline.
-
-```bash
-az functionapp config appsettings set -g "$RESOURCE_GROUP" -n "$FUNCTION_APP" --settings \
-  AISPM_MAIL_SENDER="secops@contoso.com" \
-  AISPM_MAIL_TO="team@contoso.com" \
-  AISPM_REPORT_URL="https://$FUNCTION_APP.azurewebsites.net/api/portal?code=$KEY"
-```
-
-`Mail.Send` can send as any mailbox — restrict it to your sender with
-[`New-ApplicationAccessPolicy`](https://learn.microsoft.com/en-us/powershell/module/exchange/new-applicationaccesspolicy).
+why Entra discovery works. The three connector scopes are not, so they are simply absent
+from the token. **Being Global Administrator does not change this**; the limit is on the
+client application, not on your account. Option 2 or 3 fixes it — both use application
+permissions instead.
 
 ---
 
 ## Troubleshooting
 
-| Symptom | Cause | Fix |
-| --- | --- | --- |
-| `command not found: python` | macOS ships `python3` only | Use `python3` |
-| `No module named 'azure'` | Wrong interpreter | `pip install -r requirements.txt` for that one |
-| `Azure CLI is not installed` | No `az` | `brew install azure-cli`, or use `--auth app` |
-| `no such file or directory: T` | A `<PLACEHOLDER>` pasted literally | Use the `export` lines the script prints |
-| Only Entra sources connect | Delegated token limit | [See above](#why-only-entra-connects) — go to option 2 |
-| A source shows `N/A` | Not provisioned in the tenant | A licensing question, not a permission one |
-| Purview "still running" | Audit searches take minutes | Raise `PURVIEW_POLL_SECONDS` |
-| Fewer apps than expected | Default scope is `ai` | `--scope consented` |
-| Slow on a large tenant | Sign-in history window | `--activity-days 30` |
+Start with `python3 aispm.py doctor` (or `/api/doctor`). It reports every source as
+readable, denied, or not provisioned, and names the permission to grant.
 
-Not sure which? `python3 aispm.py doctor` — or `/api/doctor` on a deployment — reports
-every source as readable, denied, or not provisioned, and names the permission to grant.
+| Symptom | Fix |
+| --- | --- |
+| `command not found: python` | Use `python3` — macOS ships no bare `python` |
+| `No module named 'azure'` | `pip install -r requirements.txt` for *that* interpreter |
+| `Azure CLI is not installed` | `brew install azure-cli`, or use `--auth app` |
+| `no such file or directory: T` | A `<PLACEHOLDER>` pasted literally — use the `export` lines the script prints |
+| Only Entra sources connect | [See above](#why-only-entra-connects) — go to option 2 |
+| A source shows `N/A` | Not provisioned in the tenant: a licensing question, not a permission one |
+| Purview "still running" | Audit searches take minutes — raise `PURVIEW_POLL_SECONDS` |
+| Fewer apps than expected | Default scope is `ai` — use `--scope consented` |
+| Slow on a large tenant | `--activity-days 30` |
 
 ---
 
-## How it works
+## Configuration
 
-```
-aispm.py          CLI — doctor / scan / sample
-preflight.py      "can this identity read X?" probes
-pipeline.py       scan flow: discovery → permissions → activity → scoring
-collectors.py     OAuth-consent discovery        scoring.py             risk scoring
-connectors/       the four Microsoft data sources + correlation
-portal.py         the unified estate view        charts.py              inline-SVG charts
-report.py         Entra OAuth dashboard          connectors_report.py   AI data sources
-drift.py          change tracking                findings.py            managed findings
-function_app.py   Azure Function entry points    notify.py              weekly digest
-```
+Set by the setup scripts. Change these on a deployment with
+`az functionapp config appsettings set`.
 
-The portal groups by **vendor**, not by ID. Defender's records carry no appId and no
-domain, so nothing can merge them with the Entra side by identifier — forcing it would
-invent a correlation the data cannot support. Both sides go through the same AI catalog
-instead, and every row states how it was seen.
-
-### Local testing
-
-```bash
-pip install -r requirements.txt pytest && pytest
-```
-
-CI runs the same checks on every pull request and before every deploy.
+| Setting | Purpose |
+| --- | --- |
+| `AISPM_SCAN_SCOPE` | `ai` / `consented` / `all` |
+| `AISPM_ACTIVITY_DAYS` | Sign-in history window, 7–90 (default 90) |
+| `AISPM_CATALOG_PATH` | Your own AI vendor catalog |
+| `PURVIEW_POLL_SECONDS` | How long to wait for a Purview audit search (default 300) |
+| `SCAN_SCHEDULE`, `EMAIL_SCHEDULE` | Timers — daily 06:00 UTC, Monday 08:00 UTC |
+| `STORE_RAW_AI_CONTENT` | Leave **off**; prompt and response text is never kept unless this is `true` |
+| `AISPM_MAIL_SENDER`, `AISPM_MAIL_TO`, `AISPM_REPORT_URL` | Weekly email digest — sent by the Managed Identity via Graph, with the portal attached as one self-contained file |
 
 ---
 
 ## Security & privacy
 
-- **Read-only** — nothing is revoked, deleted or changed.
+- **Read-only.** Nothing is revoked, deleted or changed.
 - **No stored secrets** on a deployment — Managed Identity only.
 - **Your data stays in your tenant** — reports go to your own Storage account.
-- **No raw AI content** — sensitive-interaction records keep metadata only, never
-  prompt or response text, unless `STORE_RAW_AI_CONTENT` is explicitly turned on.
+- **No raw AI content.** Sensitive-interaction records keep metadata only, never prompt
+  or response text, unless `STORE_RAW_AI_CONTENT` is explicitly turned on.
+
+Contributions welcome — `pytest` runs the full suite, and CI runs it on every pull
+request.
 
 ## License
 
