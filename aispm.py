@@ -317,7 +317,10 @@ def _reject_placeholders(args) -> None:
     names neither the flag nor the real problem. Quoted, it reaches us verbatim
     instead. Either way, say what actually needs doing.
     """
-    for flag, value in (("--tenant", args.tenant), ("--client-id", getattr(args, "client_id", None)),
+    # getattr on every one of them: `sample` needs no tenant, so its parser carries none
+    # of these flags, and reading args.tenant directly crashed it outright.
+    for flag, value in (("--tenant", getattr(args, "tenant", None)),
+                        ("--client-id", getattr(args, "client_id", None)),
                         ("--client-secret", getattr(args, "client_secret", None))):
         text = (value or "").strip()
         if text.startswith("<") and text.endswith(">"):

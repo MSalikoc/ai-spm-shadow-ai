@@ -1,6 +1,7 @@
 """The local CLI and its preflight — the path that needs no Azure deployment."""
 import json
 import os
+import pathlib
 
 import pytest
 
@@ -322,3 +323,32 @@ def test_a_real_value_that_merely_looks_odd_is_not_rejected(monkeypatch):
     args = aispm.build_parser().parse_args(
         ["scan", "--tenant", "af80ebe6-b601-49c4-89b9-381499b97ba6"])
     aispm._reject_placeholders(args)             # does not raise
+
+
+def test_sample_needs_no_tenant_flags_to_parse():
+    """
+    `sample` takes no --tenant/--client-id, so its Namespace has neither. Reading
+    args.tenant directly in the placeholder guard crashed the one command the README
+    tells people to run to regenerate the published samples.
+    """
+    args = aispm.build_parser().parse_args(["sample"])
+    assert not hasattr(args, "tenant")
+    aispm._reject_placeholders(args)              # must not raise
+
+
+def test_sample_generates_the_published_pages(tmp_path, monkeypatch):
+    """The samples always land in the repo's own docs/, wherever it is invoked from."""
+    import scripts.make_sample as make_sample
+    monkeypatch.chdir(tmp_path)
+    assert aispm.main(["sample"]) == 0
+
+    docs = pathlib.Path(make_sample.ROOT) / "docs"
+    for page in ("sample-portal.html", "sample-report.html", "sample-connectors.html"):
+        assert (docs / page).exists(), page
+    assert "AI estate" in (docs / "sample-portal.html").read_text(encoding="utf-8")
+
+
+def test_the_placeholder_guard_still_fires_on_commands_that_do_take_flags():
+    import pytest as _pytest
+    with _pytest.raises(SystemExit, match="placeholder"):
+        aispm.main(["scan", "--tenant", "<T>"])
