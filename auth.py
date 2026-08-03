@@ -125,3 +125,29 @@ def get_token_client_credentials(tenant_id: str, client_id: str, client_secret: 
     if "access_token" not in result:
         raise RuntimeError(f"Could not obtain token: {result.get('error_description')}")
     return result["access_token"]
+
+
+def identity_from_token(token: str) -> dict:
+    """
+    Who this token belongs to, read from its own claims.
+
+    A delegated token names the signed-in person (`upn`/`preferred_username`); an
+    application token names the app (`app_displayname`) and its client id. Reported so
+    the report says whose view it is — the same tenant looks different depending on who
+    ran the scan, and a page that does not say which is hard to trust later.
+    """
+    claims = decode_token_claims(token)
+    scp, kind = token_scopes(token)
+    user = (claims.get("upn") or claims.get("preferred_username")
+            or claims.get("unique_name") or claims.get("email"))
+    app = claims.get("app_displayname") or claims.get("appid") or claims.get("azp")
+    return {
+        "kind": kind,
+        "user": user,
+        "display_name": claims.get("name"),
+        "app_name": claims.get("app_displayname"),
+        "client_id": claims.get("appid") or claims.get("azp"),
+        "scope_count": len(scp),
+        # `roles` on a delegated token are the signed-in user's directory roles.
+        "directory_roles": claims.get("roles") if kind == "delegated" else None,
+    }

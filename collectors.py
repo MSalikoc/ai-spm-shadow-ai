@@ -538,3 +538,34 @@ def enrich_with_signin_activity(graph, discovered, now=None):
         except Exception:
             logging.exception("usage computation failed for %s", aid)
             app["usage"] = None
+
+
+def tenant_profile(graph) -> dict:
+    """
+    Descriptive facts about the tenant being scanned, for the report header.
+
+    Read-only and best-effort: a tenant that will not answer /organization still gets a
+    scan, it just gets fewer facts. Nothing here is inferred — a field absent from the
+    response is absent from the report.
+    """
+    try:
+        orgs = graph.get_all("/organization", {"$select": "id,displayName,verifiedDomains,"
+                                                          "createdDateTime,countryLetterCode,"
+                                                          "tenantType"})
+    except Exception:
+        logging.info("tenant profile unavailable (needs Organization.Read.All or "
+                     "Directory.Read.All)")
+        return {}
+    if not orgs:
+        return {}
+    org = orgs[0]
+    domains = org.get("verifiedDomains") or []
+    default = next((d.get("name") for d in domains if d.get("isDefault")), None)
+    return {
+        "display_name": org.get("displayName"),
+        "primary_domain": default or (domains[0].get("name") if domains else None),
+        "domain_count": len(domains),
+        "created": org.get("createdDateTime"),
+        "country": org.get("countryLetterCode"),
+        "tenant_type": org.get("tenantType"),
+    }

@@ -21,6 +21,21 @@ sys.path.insert(0, os.path.join(ROOT, "tests"))
 NOW = datetime(2026, 8, 1, 9, 0, 0, tzinfo=timezone.utc)
 TENANT = "contoso-sample-0000-0000-000000000000"
 
+# What a real `--auth app` run reports about itself.
+SAMPLE_CONTEXT = {
+    "auth_mode": "app",
+    "identity": {"kind": "application", "app_name": "AI-SPM Scanner",
+                 "client_id": "04ca4c1c-0000-0000-0000-000000000000", "scope_count": 6},
+    "scan_scope": "consented",
+    "activity_days": 90,
+    "duration_s": 74,
+    "graph": {"requests": 412, "batch_calls": 18, "batched_requests": 344, "throttled": 3},
+    "tenant_profile": {"display_name": "Contoso Ltd", "primary_domain": "contoso.com",
+                       "domain_count": 4, "country": "GB"},
+    "subscription_name": "Contoso Security — Production",
+    "subscription_id": "8d1f2c77-0000-0000-0000-9a4b2e5c1d33",
+}
+
 # (name, vendor, publisher, verified, scopes, app_perms, consent, users, active30, trend)
 FLEET = [
     ("MeetingNotes AI Bot", "Otter.ai", "notecorp-io", False,
@@ -197,7 +212,8 @@ def main():
     with open(hub, "w", encoding="utf-8") as f:
         f.write(portal.html_string(scored, TENANT, result, changes,
                                    report_href="sample-report.html",
-                                   connectors_href="sample-connectors.html"))
+                                   connectors_href="sample-connectors.html",
+                                   context=SAMPLE_CONTEXT))
 
     counts = {lv: sum(1 for a in scored if a["risk_level"] == lv)
               for lv in ("Critical", "High", "Medium", "Low")}

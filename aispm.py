@@ -63,7 +63,31 @@ def _graph_and_scopes(args):
         raise SystemExit(
             "Could not determine the tenant. Run `az login`, or pass --tenant <ID>.")
     scopes, kind = auth.token_scopes(token)
-    return GraphClient(token), tenant, scopes, kind
+    client = GraphClient(token)
+    client.identity = auth.identity_from_token(token)
+    return client, tenant, scopes, kind
+
+
+def _azure_context():
+    """
+    Subscription and account context from the Azure CLI, when there is any.
+
+    A Graph tenant scan has no subscription of its own, so this is reported only when
+    `az` actually knows one — never invented to fill the card out.
+    """
+    import json
+    import subprocess
+    try:
+        out = subprocess.run(["az", "account", "show", "-o", "json"],
+                             capture_output=True, text=True, timeout=20)
+        if out.returncode != 0:
+            return {}
+        acct = json.loads(out.stdout) or {}
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return {}
+    return {"subscription_name": acct.get("name"), "subscription_id": acct.get("id"),
+            "cloud": acct.get("environmentName"),
+            "signed_in_as": (acct.get("user") or {}).get("name")}
 
 
 _INSTALL_HINT = ("Azure CLI is not installed. Install it, then sign in:\n\n"
@@ -138,6 +162,11 @@ def cmd_scan(args) -> int:
         print(f"Sources: {', '.join(usable) if usable else 'core Entra/OAuth only'}")
 
     print("\nScanning (discovery -> permissions -> activity -> scoring)...", flush=True)
+    tenant_profile = collectors.tenant_profile(graph)
+    if tenant_profile.get("display_name"):
+        print(f"Org    : {tenant_profile['display_name']}"
+              + (f" ({tenant_profile['primary_domain']})"
+                 if tenant_profile.get("primary_domain") else ""))
     scored = pipeline.run(graph, tenant)
 
     connectors_result = None
@@ -172,6 +201,17 @@ def cmd_scan(args) -> int:
             portal_href="portal.html"))
     report.write_json(scored, os.path.join(args.out, "report.json"))
 
+    context = {
+        "auth_mode": args.auth,
+        "identity": getattr(graph, "identity", None),
+        "scan_scope": args.scope,
+        "activity_days": collectors.activity_days(),
+        "duration_s": round(time.time() - started),
+        "graph": graph.telemetry(),
+        "tenant_profile": tenant_profile,
+        **(_azure_context() if args.auth == "azure-cli" else {}),
+    }
+
     # The portal is the landing page: one estate over both scans, with the two
     # dashboards above as its detail views.
     import portal
@@ -179,7 +219,7 @@ def cmd_scan(args) -> int:
     with open(portal_path, "w", encoding="utf-8") as f:
         f.write(portal.html_string(scored, tenant, connectors_result,
                                    connectors_href="connectors.html" if conn_path
-                                   else "report.html"))
+                                   else "report.html", context=context))
     with open(os.path.join(args.out, "portal.json"), "w", encoding="utf-8") as f:
         f.write(portal.json_string(scored, connectors_result, tenant))
 

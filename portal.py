@@ -354,6 +354,17 @@ PORTAL_CSS = """
 .chip{display:inline-block;font-size:11px;background:var(--track);padding:2px 8px;
  border-radius:5px;margin:2px 4px 2px 0;font-family:ui-monospace,monospace}
 .muted{color:var(--muted)}
+.hero{grid-template-columns:1.35fr 1fr 1.05fr;align-items:start}
+/* The context card is fifteen rows now; without this the four tiles beside it stretch
+   to match its height and become mostly whitespace. */
+.hero .tiles{grid-auto-rows:min-content}
+.hero .tile{padding:15px 18px}
+.hero .tile .n{font-size:27px}
+.tenant-facts{grid-template-columns:auto 1fr;gap:7px 18px;align-items:baseline}
+.tenant-facts b{color:var(--muted);font-weight:600;font-size:11.5px;white-space:nowrap}
+.tenant-facts span{font-size:12.5px;word-break:break-word}
+header .vswitch{margin-left:14px}
+@media(max-width:960px){.hero{grid-template-columns:1fr}}
 .changes-list{list-style:none;margin:0;padding:0;font-size:13px}
 .changes-list li{display:flex;gap:10px;align-items:baseline;padding:7px 0;
  border-top:1px solid var(--line);line-height:1.45}
@@ -432,7 +443,7 @@ document.querySelectorAll('.pfilters button').forEach(function(b){
 def html_string(scored, tenant_id="", connectors_result=None, changes=None,
                 findings=None, report_href="report.html",
                 connectors_href="connectors.html", now=None,
-                standalone_links=True) -> str:
+                standalone_links=True, context=None) -> str:
     """
     `standalone_links` links out to the two dashboards as separate files. Turn it off
     when the portal travels alone — as an email attachment, say — because those hrefs
@@ -487,6 +498,11 @@ def html_string(scored, tenant_id="", connectors_result=None, changes=None,
         return f'<a href="{_esc(href)}">{label}</a>' if standalone_links \
             else f"the <b>{tab}</b> tab above"
 
+    ctx = context or {}
+    prof = ctx.get("tenant_profile") or {}
+    org_label = prof.get("display_name") or tenant_id or "—"
+    context_facts = _context_card(ctx, tenant_id, vendors, ts)
+
     attention = _attention_card(scored, changes, findings, health)
     change_card = _changes_card(changes)
 
@@ -520,13 +536,8 @@ def html_string(scored, tenant_id="", connectors_result=None, changes=None,
     estate_body = f"""
   <div class="hero">
     <div class="card">
-      <h3>Tenant</h3>
-      <div class="tenant-facts">
-        <b>Tenant</b><span>{_esc(tenant_id) or "—"}</span>
-        <b>AI vendors</b><span>{len(vendors)}</span>
-        <b>Consented apps</b><span>{sum(len(v["oauth_apps"]) for v in vendors)}</span>
-        <b>Scan</b><span>{ts}</span>
-      </div>
+      <h3>Scan context</h3>
+      {context_facts}
     </div>
     <div class="tiles">
       <div class="card tile"><span class="n">{len(with_oauth)}</span><span class="l">With OAuth consent</span></div>
@@ -639,9 +650,9 @@ def html_string(scored, tenant_id="", connectors_result=None, changes=None,
 <header>
   {_LOGO}
   <h1>AI-SPM</h1>
-  <span class="spacer"></span>
-  <span class="tenant">{_esc(tenant_id)}</span>
   {switcher}
+  <span class="spacer"></span>
+  <span class="tenant">{_esc(org_label)}</span>
   <button id="tg" class="themebtn" title="Theme">&#9790;</button>
 </header>
 <main>
@@ -790,3 +801,61 @@ def _changes_card(changes, top=7) -> str:
     more = (f'<p class="governed">{len(changes) - top} more on the OAuth assessment.</p>'
             if len(changes) > top else "")
     return f'<ul class="changes-list">{rows}</ul>{more}'
+
+
+def _context_card(ctx, tenant_id, vendors, ts) -> str:
+    """
+    Who ran this, against what, with which permissions and how wide.
+
+    A dashboard read weeks later, or forwarded to someone who did not run it, needs to
+    say whose view it is: a delegated scan by a Security Reader and an application scan
+    with all six permissions produce very different pages from the same tenant. Every
+    row is omitted when unknown rather than filled with a placeholder.
+    """
+    prof = ctx.get("tenant_profile") or {}
+    ident = ctx.get("identity") or {}
+    graph = ctx.get("graph") or {}
+
+    who = ident.get("user") or ident.get("app_name") or ident.get("client_id")
+    kind = {"delegated": "delegated — the signed-in user's permissions",
+            "application": "application — the app registration's own permissions",
+            }.get(ident.get("kind"), ident.get("kind"))
+
+    rows = [
+        ("Organisation", prof.get("display_name")),
+        ("Primary domain", prof.get("primary_domain")),
+        ("Tenant ID", tenant_id),
+        ("Subscription", ctx.get("subscription_name")),
+        ("Subscription ID", ctx.get("subscription_id")),
+        ("Scanned by", who),
+        ("Token type", kind),
+        ("Graph permissions", ident.get("scope_count") or None),
+        ("Scan scope", _SCOPE_LABEL.get(ctx.get("scan_scope"), ctx.get("scan_scope"))),
+        ("Activity window", f"{ctx['activity_days']} days" if ctx.get("activity_days") else None),
+        ("AI vendors", len(vendors)),
+        ("Consented apps", sum(len(v["oauth_apps"]) for v in vendors)),
+        ("Scan finished", ts),
+        ("Duration", f"{ctx['duration_s']}s" if ctx.get("duration_s") is not None else None),
+        ("Graph calls", _graph_summary(graph)),
+    ]
+    facts = "".join(f"<b>{_esc(k)}</b><span>{_esc(v)}</span>"
+                    for k, v in rows if v not in (None, "", 0))
+    return f'<div class="tenant-facts">{facts}</div>'
+
+
+_SCOPE_LABEL = {
+    "ai": "AI catalog matches only",
+    "consented": "every app holding an OAuth grant",
+    "all": "every third-party app",
+}
+
+
+def _graph_summary(graph) -> str:
+    if not graph or not graph.get("requests"):
+        return ""
+    parts = [f"{graph['requests']} requests"]
+    if graph.get("batch_calls"):
+        parts.append(f"{graph['batched_requests']} batched")
+    if graph.get("throttled"):
+        parts.append(f"{graph['throttled']} throttled")
+    return " · ".join(parts)

@@ -523,3 +523,73 @@ def test_connector_coverage_is_not_restated_as_a_narrative():
     doc = portal.html_string([_oauth("A", vendor="Glean")], "t")
     attention = doc.split("Needs attention")[1].split("</div>")[0]
     assert "not connected" not in attention
+
+
+# --- scan context: whose view is this? --------------------------------------
+def _ctx(**kw):
+    base = {"auth_mode": "app", "scan_scope": "consented", "activity_days": 90,
+            "duration_s": 42, "graph": {"requests": 318, "batch_calls": 12,
+                                        "batched_requests": 240, "throttled": 2},
+            "identity": {"kind": "application", "app_name": "AI-SPM Scanner",
+                         "scope_count": 6},
+            "tenant_profile": {"display_name": "Contoso Ltd",
+                               "primary_domain": "contoso.com"}}
+    base.update(kw)
+    return base
+
+
+def test_the_context_card_says_who_ran_the_scan_and_how():
+    """
+    A delegated Security Reader scan and an application scan produce very different
+    pages from the same tenant; read weeks later the page has to say which it was.
+    """
+    doc = portal.html_string([], "tenant-123", context=_ctx())
+    assert "Contoso Ltd" in doc and "contoso.com" in doc
+    assert "AI-SPM Scanner" in doc
+    assert "application — the app registration" in doc
+    assert "every app holding an OAuth grant" in doc
+    assert "90 days" in doc
+    assert "318 requests" in doc and "240 batched" in doc
+
+
+def test_a_delegated_scan_names_the_person():
+    doc = portal.html_string([], "t", context=_ctx(
+        identity={"kind": "delegated", "user": "admin@contoso.com", "scope_count": 3}))
+    assert "admin@contoso.com" in doc
+    assert "delegated — the signed-in user" in doc
+
+
+def test_the_subscription_appears_only_when_azure_knows_one():
+    """A Graph tenant scan has no subscription; the row must not be invented."""
+    without = portal.html_string([], "t", context=_ctx())
+    assert "Subscription" not in without
+
+    with_sub = portal.html_string([], "t", context=_ctx(
+        subscription_name="Visual Studio Enterprise", subscription_id="abc-123"))
+    assert "Visual Studio Enterprise" in with_sub and "abc-123" in with_sub
+
+
+def test_unknown_facts_are_left_out_rather_than_shown_blank():
+    doc = portal.html_string([], "t", context={"tenant_profile": {}, "identity": {}})
+    for label in ("Organisation", "Primary domain", "Scanned by", "Subscription",
+                  "Activity window", "Duration"):
+        assert f"<b>{label}</b>" not in doc
+    assert "Tenant ID" in doc                    # what we do know is still shown
+
+
+def test_the_portal_still_renders_with_no_context_at_all():
+    doc = portal.html_string([_oauth("A", vendor="Glean")], "t")
+    assert "Scan context" in doc
+    assert "Tenant ID" in doc
+
+
+def test_the_switcher_sits_on_the_left_of_the_header():
+    doc = portal.html_string([_oauth("A", vendor="Glean")], "t")
+    header = doc.split("</header>")[0]
+    assert header.index("vswitch") < header.index('class="spacer"')
+
+
+def test_the_header_names_the_organisation_when_it_is_known():
+    doc = portal.html_string([], "tenant-123", context=_ctx())
+    header = doc.split("</header>")[0]
+    assert "Contoso Ltd" in header
