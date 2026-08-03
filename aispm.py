@@ -43,7 +43,10 @@ def _token(args):
     tenant = args.tenant
     if args.auth == "azure-cli":
         tenant = tenant or auth.tenant_id_from_cli()
-        return tenant, auth.get_token_azure_cli(tenant)
+        token = auth.get_token_azure_cli(tenant)
+        # The token names its own tenant in `tid`. Asking it is more reliable than
+        # shelling out to az, and it is the fallback when that shell-out cannot run.
+        return tenant or auth.decode_token_claims(token).get("tid"), token
     if args.auth == "device-code":
         if not (args.client_id and tenant):
             raise SystemExit("--auth device-code needs --tenant and --client-id")
@@ -75,15 +78,8 @@ def _azure_context():
     A Graph tenant scan has no subscription of its own, so this is reported only when
     `az` actually knows one — never invented to fill the card out.
     """
-    import json
-    import subprocess
-    try:
-        out = subprocess.run(["az", "account", "show", "-o", "json"],
-                             capture_output=True, text=True, timeout=20)
-        if out.returncode != 0:
-            return {}
-        acct = json.loads(out.stdout) or {}
-    except (OSError, ValueError, subprocess.SubprocessError):
+    acct = auth.az_json("account", "show", timeout=20)
+    if not acct:
         return {}
     return {"subscription_name": acct.get("name"), "subscription_id": acct.get("id"),
             "cloud": acct.get("environmentName"),

@@ -5,6 +5,7 @@ import os
 import pytest
 
 import aispm
+import auth
 import preflight
 from graph_client import GraphError
 
@@ -339,3 +340,58 @@ def test_the_placeholder_guard_still_fires_on_commands_that_do_take_flags():
     import pytest as _pytest
     with _pytest.raises(SystemExit, match="placeholder"):
         aispm.main(["scan", "--tenant", "<T>"])
+
+
+# --- Windows: `az` is a .cmd, which changes how it must be launched --------
+def _jwt(payload):
+    import base64
+    import json
+    body = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+    return f"h.{body}.s"
+
+
+def test_az_is_resolved_before_launching_it(monkeypatch):
+    """
+    On Windows `az` is az.cmd and CreateProcess does not apply PATHEXT, so
+    subprocess.run(["az", ...]) raises FileNotFoundError there. Resolving the path
+    first is what makes the shell-out work on all three platforms.
+    """
+    import subprocess as sp
+    seen = {}
+    monkeypatch.setattr("shutil.which",
+                        lambda name: r"C:\Program Files\az.cmd" if name == "az" else None)
+
+    def fake_run(cmd, **kw):
+        seen["cmd"] = cmd
+        return sp.CompletedProcess(cmd, 0, stdout='{"tenantId":"t-1"}', stderr="")
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    assert auth.tenant_id_from_cli() == "t-1"
+    assert seen["cmd"][0].endswith("az.cmd"), "must launch the resolved path, not 'az'"
+
+
+def test_no_az_on_path_degrades_quietly(monkeypatch):
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+    assert auth.az_json("account", "show") is None
+    assert auth.tenant_id_from_cli() is None
+
+
+def test_the_tenant_falls_back_to_the_token_when_az_cannot_be_shelled_out(monkeypatch):
+    """
+    The symptom this fixes: signed in with az, yet told to run `az login`. The token
+    already names its tenant in `tid`, so the shell-out is not the only source.
+    """
+    monkeypatch.setattr(auth, "tenant_id_from_cli", lambda: None)
+    monkeypatch.setattr(auth, "get_token_azure_cli",
+                        lambda tenant=None: _jwt({"tid": "tenant-from-token",
+                                                  "scp": "Directory.Read.All"}))
+    args = aispm.build_parser().parse_args(["doctor"])
+    tenant, _token = aispm._token(args)
+    assert tenant == "tenant-from-token"
+
+
+def test_an_explicit_tenant_still_wins(monkeypatch):
+    monkeypatch.setattr(auth, "tenant_id_from_cli", lambda: "from-cli")
+    monkeypatch.setattr(auth, "get_token_azure_cli", lambda tenant=None: _jwt({"tid": "from-token"}))
+    args = aispm.build_parser().parse_args(["doctor", "--tenant", "explicit"])
+    assert aispm._token(args)[0] == "explicit"

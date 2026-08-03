@@ -29,18 +29,35 @@ def get_token_azure_cli(tenant_id: str | None = None) -> str:
     return cred.get_token("https://graph.microsoft.com/.default").token
 
 
-def tenant_id_from_cli() -> str | None:
-    """The tenant `az login` is currently pointed at, so it need not be typed out."""
+def az_json(*args, timeout=30):
+    """
+    Runs an `az` command and parses its JSON, or returns None.
+
+    The executable is resolved with shutil.which first. On Windows `az` is a batch file
+    (`az.cmd`) and subprocess cannot launch it from the bare name — CreateProcess does
+    not apply PATHEXT — so `subprocess.run(["az", ...])` raises FileNotFoundError there
+    while working fine on macOS and Linux. That failure is what left a signed-in Windows
+    user being told to run `az login` when they already had.
+    """
     import json
+    import shutil
     import subprocess
+    exe = shutil.which("az")
+    if not exe:
+        return None
     try:
-        out = subprocess.run(["az", "account", "show", "-o", "json"],
-                             capture_output=True, text=True, timeout=30)
+        out = subprocess.run([exe, *args, "-o", "json"],
+                             capture_output=True, text=True, timeout=timeout)
         if out.returncode != 0:
             return None
-        return (json.loads(out.stdout) or {}).get("tenantId")
+        return json.loads(out.stdout) or None
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
+
+
+def tenant_id_from_cli() -> str | None:
+    """The tenant `az login` is currently pointed at, so it need not be typed out."""
+    return (az_json("account", "show") or {}).get("tenantId")
 
 
 def get_token_device_code(tenant_id: str, client_id: str) -> str:
