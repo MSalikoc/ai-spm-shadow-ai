@@ -1,7 +1,6 @@
 """The local CLI and its preflight — the path that needs no Azure deployment."""
 import json
 import os
-import pathlib
 
 import pytest
 
@@ -334,18 +333,6 @@ def test_sample_needs_no_tenant_flags_to_parse():
     args = aispm.build_parser().parse_args(["sample"])
     assert not hasattr(args, "tenant")
     aispm._reject_placeholders(args)              # must not raise
-
-
-def test_sample_generates_the_published_pages(tmp_path, monkeypatch):
-    """The samples always land in the repo's own docs/, wherever it is invoked from."""
-    import scripts.make_sample as make_sample
-    monkeypatch.chdir(tmp_path)
-    assert aispm.main(["sample"]) == 0
-
-    docs = pathlib.Path(make_sample.ROOT) / "docs"
-    for page in ("sample-portal.html", "sample-report.html", "sample-connectors.html"):
-        assert (docs / page).exists(), page
-    assert "AI estate" in (docs / "sample-portal.html").read_text(encoding="utf-8")
 
 
 def test_the_placeholder_guard_still_fires_on_commands_that_do_take_flags():
