@@ -22,6 +22,7 @@ import os
 import sys
 import time
 import webbrowser
+from datetime import datetime, timezone
 
 import auth
 from graph_client import GraphClient
@@ -181,7 +182,8 @@ def cmd_scan(args) -> int:
         with open(conn_path, "w", encoding="utf-8") as f:
             f.write(connectors_report.html_string(connectors_result, tenant,
                                                   portal_href="portal.html",
-                                                  report_href="report.html"))
+                                                  report_href="report.html",
+                                                  assessment_href="assessment.html"))
         with open(os.path.join(args.out, "connectors.json"), "w", encoding="utf-8") as f:
             f.write(connectors_report.json_string(connectors_result))
 
@@ -194,7 +196,7 @@ def cmd_scan(args) -> int:
             scored, tenant,
             connector_health=(connectors_result or {}).get("health"),
             connectors_href="connectors.html" if conn_path else None,
-            portal_href="portal.html"))
+            portal_href="portal.html", assessment_href="assessment.html"))
     report.write_json(scored, os.path.join(args.out, "report.json"))
 
     context = {
@@ -208,8 +210,6 @@ def cmd_scan(args) -> int:
         **(_azure_context() if args.auth == "azure-cli" else {}),
     }
 
-    # The portal is the landing page: one estate over both scans, with the two
-    # dashboards above as its detail views.
     import portal
     portal_path = os.path.join(args.out, "portal.html")
     with open(portal_path, "w", encoding="utf-8") as f:
@@ -218,6 +218,24 @@ def cmd_scan(args) -> int:
                                    else "report.html", context=context))
     with open(os.path.join(args.out, "portal.json"), "w", encoding="utf-8") as f:
         f.write(portal.json_string(scored, connectors_result, tenant))
+
+    # The assessment is the landing page: the same scan read as a list of controls to
+    # fix rather than an inventory to browse. The three older pages stay as its detail
+    # views — nothing was removed, the entry point moved.
+    import assessment
+    import assessment_report
+    estate = portal.build_estate(scored, connectors_result)
+    health = (connectors_result or {}).get("health")
+    context["finished"] = datetime.now(timezone.utc).strftime("%d %B %Y, %H:%M UTC")
+    results = assessment.run(scored, estate, health)
+    assess_path = os.path.join(args.out, "assessment.html")
+    with open(assess_path, "w", encoding="utf-8") as f:
+        f.write(assessment_report.html_string(
+            results, scored, tenant, estate=estate, health=health, context=context,
+            portal_href="portal.html", report_href="report.html",
+            connectors_href="connectors.html" if conn_path else None))
+    with open(os.path.join(args.out, "assessment.json"), "w", encoding="utf-8") as f:
+        f.write(assessment_report.json_string(results))
 
     summary = pipeline.summary(scored)
     ai_matched = sum(1 for a in scored if a.get("ai_match"))
@@ -237,7 +255,13 @@ def cmd_scan(args) -> int:
     print(f"  {len(vendors)} AI vendors across all sources"
           + (f", {len(both)} seen through both consent and web traffic" if both else ""))
 
-    print(f"\n  {portal_path}   <- start here")
+    asum = assessment.summary(results)
+    print(f"  {asum['by_status'][assessment.FAILED]} of {asum['total']} assessment tests failed"
+          + (f", {asum['by_status'][assessment.NOT_ASSESSED]} could not be assessed"
+             if asum["by_status"][assessment.NOT_ASSESSED] else ""))
+
+    print(f"\n  {assess_path}   <- start here")
+    print(f"  {portal_path}")
     print(f"  {core_path}")
     if conn_path:
         print(f"  {conn_path}")
@@ -247,7 +271,7 @@ def cmd_scan(args) -> int:
               f"  ({', '.join(sorted(v['evidence'])) or 'no evidence'})")
 
     if args.open:
-        webbrowser.open(f"file://{os.path.abspath(portal_path)}")
+        webbrowser.open(f"file://{os.path.abspath(assess_path)}")
     return 0
 
 

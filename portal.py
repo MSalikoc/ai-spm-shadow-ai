@@ -443,7 +443,8 @@ document.querySelectorAll('.pfilters button').forEach(function(b){
 def html_string(scored, tenant_id="", connectors_result=None, changes=None,
                 findings=None, report_href="report.html",
                 connectors_href="connectors.html", now=None,
-                standalone_links=True, context=None) -> str:
+                standalone_links=True, context=None,
+                assessment_href="assessment.html") -> str:
     """
     `standalone_links` links out to the two dashboards as separate files. Turn it off
     when the portal travels alone — as an email attachment, say — because those hrefs
@@ -489,7 +490,8 @@ def html_string(scored, tenant_id="", connectors_result=None, changes=None,
     switcher = report.view_switcher(
         "portal",
         report_href=report_href if standalone_links else None,
-        connectors_href=connectors_href if standalone_links else None)
+        connectors_href=connectors_href if standalone_links else None,
+        assessment_href=assessment_href if standalone_links else None)
     standalone_block = ""
 
     # With no sibling files to point at, these read as plain references to the tab that

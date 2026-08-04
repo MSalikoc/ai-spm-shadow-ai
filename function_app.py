@@ -72,18 +72,38 @@ def _run_scan(source: str):
                 storage.publish_connectors(
                     connectors_report.html_string(connectors_result, tenant_id,
                                                   portal_href="portal",
-                                                  report_href="report"),
+                                                  report_href="report",
+                                                  assessment_href="assessment"),
                     connectors_report.json_string(connectors_result))
         except Exception:
             logging.exception("connector drift/dashboard error")
-        try:  # the unified portal — one estate over both scans, the landing page
+        try:  # the unified portal — one estate over both scans
             import portal
             storage.publish_portal(
                 portal.html_string(scored, tenant_id, connectors_result,
-                                   report_href="report", connectors_href="connectors"),
+                                   report_href="report", connectors_href="connectors",
+                                   assessment_href="assessment"),
                 portal.json_string(scored, connectors_result, tenant_id))
         except Exception:
             logging.exception("portal render error")
+        try:  # the assessment — the landing page, rendered from the same scan
+            import assessment
+            import assessment_report
+            import portal as _portal
+            estate = _portal.build_estate(scored, connectors_result)
+            health = (connectors_result or {}).get("health")
+            results = assessment.run(scored, estate, health)
+            storage.publish_assessment(
+                assessment_report.html_string(
+                    results, scored, tenant_id, estate=estate, health=health,
+                    context={"tenant_profile": _tenant_profile(graph),
+                             "finished": datetime.now(timezone.utc)
+                             .strftime("%d %B %Y, %H:%M UTC")},
+                    portal_href="portal", report_href="report",
+                    connectors_href="connectors" if connectors_result else None),
+                assessment_report.json_string(results))
+        except Exception:
+            logging.exception("assessment render error")
         published = storage.publish(scored, tenant_id, changes, finding_records,
                                     (connectors_result or {}).get("health"))
         summ = pipeline.summary(scored)
@@ -189,6 +209,14 @@ def digest_now(req: func.HttpRequest) -> func.HttpResponse:
                                  mimetype="application/json", status_code=500)
 
 
+def _tenant_profile(graph) -> dict:
+    """The org's own name for the page header. Never worth failing a scan over."""
+    try:
+        return collectors.tenant_profile(graph)
+    except Exception:
+        return {}
+
+
 def _last_scan_error_note() -> str:
     """Returns a readable note if the last `_run_scan` attempt failed (else "").
     Lets you see why a scan failed directly in /api/report and /api/connectors without
@@ -256,16 +284,31 @@ def connectors_now(req: func.HttpRequest) -> func.HttpResponse:
 
 @app.route(route="portal", auth_level=func.AuthLevel.FUNCTION)
 def portal_view(req: func.HttpRequest) -> func.HttpResponse:
-    """
-    The landing page: one AI estate over both scans, with /api/report and
-    /api/connectors as its detail views. Pre-computed by _run_scan.
-    """
+    """One AI estate over both scans, with /api/report and /api/connectors as its
+    detail views. Pre-computed by _run_scan."""
     doc = storage.read_latest("portal_latest.html")
     if doc is None:
         return func.HttpResponse(
             "No portal yet. Run /api/scan first." + _last_scan_error_note(),
             status_code=404, mimetype="text/plain")
     return func.HttpResponse(doc, mimetype="text/html", status_code=200)
+
+
+@app.route(route="assessment", auth_level=func.AuthLevel.FUNCTION)
+def assessment_view(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    The landing page: the scan read as a list of controls with a pass or a fail against
+    each. ?format=json returns the same verdicts as data. Pre-computed by _run_scan.
+    """
+    as_json = (req.params.get("format") or "").lower() == "json"
+    doc = storage.read_latest("assessment_latest.json" if as_json
+                              else "assessment_latest.html")
+    if doc is None:
+        return func.HttpResponse(
+            "No assessment yet. Run /api/scan first." + _last_scan_error_note(),
+            status_code=404, mimetype="text/plain")
+    return func.HttpResponse(doc, status_code=200,
+                             mimetype="application/json" if as_json else "text/html")
 
 
 @app.route(route="doctor", auth_level=func.AuthLevel.FUNCTION)

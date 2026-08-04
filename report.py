@@ -204,12 +204,14 @@ def _executive_section(apps, changes, findings):
 _CONN_DOT = {True: charts.SEVERITY["Low"], False: charts.SEVERITY["Critical"], None: "#6b7280"}
 
 
-_VIEWS = [("portal", "Overview", "The AI estate — one row per vendor"),
+_VIEWS = [("assessment", "Assessment", "Every control tested, with a pass or a fail"),
+          ("portal", "AI estate", "One row per vendor, whichever route it came in by"),
           ("report", "OAuth assessment", "Per-application permissions, usage, governance"),
           ("connectors", "AI data sources", "Agents, Shadow AI traffic, sensitive data")]
 
 
-def view_switcher(current, portal_href=None, report_href=None, connectors_href=None):
+def view_switcher(current, portal_href=None, report_href=None, connectors_href=None,
+                  assessment_href=None):
     """
     The three-way nav carried by every page.
 
@@ -217,8 +219,10 @@ def view_switcher(current, portal_href=None, report_href=None, connectors_href=N
     you are on is filled rather than outlined. A destination with no href is dropped —
     nothing worse than a nav button that goes nowhere.
     """
-    hrefs = {"portal": portal_href, "report": report_href, "connectors": connectors_href}
-    colors = {"portal": charts.CATEGORICAL_LIGHT[6],
+    hrefs = {"portal": portal_href, "report": report_href, "connectors": connectors_href,
+             "assessment": assessment_href}
+    colors = {"assessment": charts.CATEGORICAL_LIGHT[2],
+              "portal": charts.CATEGORICAL_LIGHT[6],
               "report": charts.CATEGORICAL_LIGHT[0],
               "connectors": charts.CATEGORICAL_LIGHT[1]}
     out = []
@@ -877,13 +881,15 @@ def build_tabs(apps: list[dict], tenant_id: str, changes=None, findings=None,
 
 
 def html_string(apps: list[dict], tenant_id: str, changes=None, findings=None,
-                connector_health=None, connectors_href=None, portal_href=None) -> str:
+                connector_health=None, connectors_href=None, portal_href=None,
+                assessment_href=None) -> str:
     return _build(apps, tenant_id, changes, findings, connector_health,
-                  connectors_href, portal_href)["page"]
+                  connectors_href, portal_href, assessment_href)["page"]
 
 
 def _build(apps: list[dict], tenant_id: str, changes=None, findings=None,
-           connector_health=None, connectors_href=None, portal_href=None) -> dict:
+           connector_health=None, connectors_href=None, portal_href=None,
+           assessment_href=None) -> dict:
     microsoft = [a for a in apps if a.get("first_party_microsoft")]
     shadow = [a for a in apps if not a.get("first_party_microsoft")]
     shadow.sort(key=lambda a: a["risk_score"], reverse=True)
@@ -1106,7 +1112,8 @@ def _build(apps: list[dict], tenant_id: str, changes=None, findings=None,
     local_link_attr = (f' data-local-href="{html.escape(connectors_href, quote=True)}"'
                        if connectors_href else "")
     switcher = view_switcher("report", portal_href=portal_href,
-                             report_href="#", connectors_href=connectors_href)
+                             report_href="#", connectors_href=connectors_href,
+                             assessment_href=assessment_href)
 
     body = f"""
 <header>

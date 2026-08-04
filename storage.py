@@ -142,7 +142,8 @@ def publish(scored: list[dict], tenant_id: str, changes=None, findings=None,
             connector_health=None) -> dict:
     html = report.html_string(scored, tenant_id, changes, findings,
                               connector_health=connector_health,
-                              connectors_href="connectors", portal_href="portal")
+                              connectors_href="connectors", portal_href="portal",
+                              assessment_href="assessment")
     js = report.json_string(scored)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
@@ -194,6 +195,11 @@ def publish_portal(html: str, js: str) -> dict:
     Consumption plan's ~230s HTTP limit.
     """
     return _publish_pair("portal_latest", html, js)
+
+
+def publish_assessment(html: str, js: str) -> dict:
+    """Writes the assessment as `assessment_latest.html/json` — same pre-compute pattern."""
+    return _publish_pair("assessment_latest", html, js)
 
 
 def _publish_pair(stem: str, html: str, js: str) -> dict:

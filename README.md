@@ -27,9 +27,13 @@ Read-only. Runs from your laptop in two minutes, or on a schedule in Azure.
 |  **Agents** | Copilot agents and Entra agent identities, with owners and permissions |
 |  **Sensitive data** | What Purview saw reaching AI, blocked versus allowed |
 
-Everything lands on **one page**: one row per vendor, whichever route it came in by.
-ChatGPT consented as an app *and* used in the browser is one row, not two. The two detail
-dashboards are one click away, and every page carries the same three-way switch.
+It lands as an **assessment**: 26 tests across five pillars, each with a pass, a fail, or
+an honest *Not assessed* when the source behind it is not connected. A failing test names
+the applications that failed it and what to do about them.
+
+Behind that sit the three detail views — one row per AI vendor whichever route it came in
+by, the per-application OAuth assessment, and the AI data sources correlation. Every page
+carries the same switch.
 
 > **100% read-only.** AI-SPM never revokes a permission, deletes an app, or changes a
 > setting. It observes, scores and reports — remediation stays with your team.
@@ -72,7 +76,7 @@ python3 aispm.py doctor
 python3 aispm.py scan --open
 ```
 
-Opens `out/portal.html`. A read-only directory role — **Global Reader** or **Security
+Opens `out/assessment.html`. A read-only directory role — **Global Reader** or **Security
 Reader** — is enough.
 
 <details>
@@ -108,7 +112,7 @@ python aispm.py scan --open
 `pip` itself on `PATH`.
 </details>
 
-> In Cloud Shell, use `download out/portal.html` to get the file to your browser.
+> In Cloud Shell, use `download out/assessment.html` to get the file to your browser.
 
 **Only Entra sources connect in this mode.** That is not a licensing problem — see
 [Why only Entra connects](#why-only-entra-connects). Step 2 fixes it.
@@ -209,7 +213,7 @@ curl -s "https://$FUNCTION_APP.azurewebsites.net/api/scan?code=$KEY" ; echo
 ```
 
 ```bash
-echo "https://$FUNCTION_APP.azurewebsites.net/api/portal?code=$KEY"
+echo "https://$FUNCTION_APP.azurewebsites.net/api/assessment?code=$KEY"
 ```
 
 Give it a few minutes — role propagation and the first scan both take a moment.
@@ -226,7 +230,7 @@ Once deployed, the follow-up commands from PowerShell:
 $RG = "aispm-rg"; $FUNC = "aispm-xxxxxxxxxx"
 $KEY = az functionapp keys list -g $RG -n $FUNC --query functionKeys.default -o tsv
 Invoke-RestMethod "https://$FUNC.azurewebsites.net/api/scan?code=$KEY"
-Start-Process "https://$FUNC.azurewebsites.net/api/portal?code=$KEY"
+Start-Process "https://$FUNC.azurewebsites.net/api/assessment?code=$KEY"
 ```
 
 `curl` in PowerShell is an alias for `Invoke-WebRequest` and does not take `-s`; use
@@ -235,7 +239,8 @@ Start-Process "https://$FUNC.azurewebsites.net/api/portal?code=$KEY"
 
 | Route | Serves |
 | --- | --- |
-| `/api/portal` | The portal — **start here** |
+| `/api/assessment` | The assessment — **start here** |
+| `/api/portal` | The AI estate, one row per vendor |
 | `/api/report` | Entra OAuth assessment |
 | `/api/connectors?format=html` | Microsoft AI data sources |
 | `/api/doctor` | What the Managed Identity can read |
@@ -249,7 +254,8 @@ Rendered from a synthetic tenant, through the real scoring and charting code.
 
 | | |
 | --- | --- |
-| **[▶ Portal](https://htmlpreview.github.io/?https://github.com/MSalikoc/ai-spm-shadow-ai/blob/main/docs/sample-portal.html)** | 27 AI vendors, 8 seen through two routes, and a week of drift |
+| **[▶ Assessment](https://htmlpreview.github.io/?https://github.com/MSalikoc/ai-spm-shadow-ai/blob/main/docs/sample-assessment.html)** | 26 tests — what to fix, worst first, each with its affected applications |
+| [AI estate](https://htmlpreview.github.io/?https://github.com/MSalikoc/ai-spm-shadow-ai/blob/main/docs/sample-portal.html) | 27 AI vendors, 8 seen through two routes, and a week of drift |
 | [Entra OAuth assessment](https://htmlpreview.github.io/?https://github.com/MSalikoc/ai-spm-shadow-ai/blob/main/docs/sample-report.html) | Per-application permissions and usage |
 | [AI data sources](https://htmlpreview.github.io/?https://github.com/MSalikoc/ai-spm-shadow-ai/blob/main/docs/sample-connectors.html) | Agents, Shadow AI traffic, sensitive data |
 

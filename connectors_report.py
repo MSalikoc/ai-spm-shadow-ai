@@ -1483,7 +1483,7 @@ _DETAIL_PANEL = """
 
 
 def html_string(result: dict, tenant_id: str = "", now=None, portal_href=None,
-                report_href=None) -> str:
+                report_href=None, assessment_href=None) -> str:
     built = build_tabs(result, tenant_id, now)
     a = built["assessment"]
     t = built["tabs"]
@@ -1496,7 +1496,8 @@ def html_string(result: dict, tenant_id: str = "", now=None, portal_href=None,
                         ("sensitive", "Sensitive Data"), ("findings", "Findings"), ("gaps", "Gaps")))
     import report as _core
     switcher = _core.view_switcher("connectors", portal_href=portal_href,
-                                   report_href=report_href, connectors_href="#")
+                                   report_href=report_href, connectors_href="#",
+                                   assessment_href=assessment_href)
 
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <title>AI-SPM — Microsoft AI Data Sources Assessment</title>

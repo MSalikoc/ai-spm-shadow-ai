@@ -213,7 +213,20 @@ def main():
         f.write(portal.html_string(scored, TENANT, result, changes,
                                    report_href="sample-report.html",
                                    connectors_href="sample-connectors.html",
+                                   assessment_href="sample-assessment.html",
                                    context=SAMPLE_CONTEXT))
+
+    import assessment
+    import assessment_report
+    estate_for_tests = portal.build_estate(scored, result)
+    results = assessment.run(scored, estate_for_tests, health, changes, now=NOW)
+    assess = os.path.join(docs, "sample-assessment.html")
+    with open(assess, "w", encoding="utf-8") as f:
+        f.write(assessment_report.html_string(
+            results, scored, TENANT, estate=estate_for_tests, health=health,
+            context=dict(SAMPLE_CONTEXT, finished=NOW.strftime("%d %B %Y, %H:%M UTC")),
+            portal_href="sample-portal.html", report_href="sample-report.html",
+            connectors_href="sample-connectors.html"))
 
     counts = {lv: sum(1 for a in scored if a["risk_level"] == lv)
               for lv in ("Critical", "High", "Medium", "Low")}
@@ -223,6 +236,9 @@ def main():
     print(f"{len(changes)} changes since the previous scan")
     print(f"{len(estate['vendors'])} AI vendors, {len(both)} seen through both routes")
     print(f"  {len(estate['unattached_agents'])} agents/packages held out of the estate")
+    asum = assessment.summary(results)
+    print(f"{asum['total']} assessment tests — {asum['by_status']}")
+    print(f"  assessment : {assess}")
     print(f"  portal     : {hub}")
     print(f"  core       : {core}")
     print(f"  connectors : {conn}")
