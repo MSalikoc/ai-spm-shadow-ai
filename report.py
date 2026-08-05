@@ -240,9 +240,11 @@ def view_switcher(current, portal_href=None, report_href=None, connectors_href=N
 
 def _coverage_section(apps, connector_health=None):
     """
-    Ownership coverage only. Data-source status moved to the portal's Overview, where it
-    belongs beside the estate it explains — repeating it here meant two lists to keep in
-    agreement, and they had already drifted apart once.
+    Ownership coverage only — how much of the estate a human has claimed.
+
+    Which data source answered is a different question with a different answer, and it is
+    rendered beside this one on the detail page's Coverage tab rather than repeated here.
+    Keeping two copies of that list is exactly how they drifted apart once before.
     """
     import executive
     cov = executive.coverage(apps)
@@ -251,8 +253,8 @@ def _coverage_section(apps, connector_health=None):
                      ("Agent purpose coverage", f"{cov['purpose_coverage']}%",
                       cov["purpose_coverage"], charts.cat(6))], 100)
     return (f'<div class="card" style="margin-top:16px"><h3>Coverage Overview</h3>{own_bar}'
-            f'<p class="governed">Data-source and connector status is on the portal\'s '
-            f'Overview tab.</p></div>')
+            f'<p class="governed">This is what people have recorded. What the tool itself '
+            f'can see is the next section.</p></div>')
 
 
 def _timeline_section(changes):
@@ -1131,6 +1133,7 @@ def _build(apps: list[dict], tenant_id: str, changes=None, findings=None,
     <a class="navlink" data-tab="governance">Governance</a>
     <a class="navlink" data-tab="findings">Findings</a>
     <a class="navlink" data-tab="changes">Changes</a>
+    <a class="navlink" data-tab="coverage">Coverage</a>
   </nav>
   <span class="spacer"></span>
   <span class="tenant">{html.escape(tenant_id)}</span>
@@ -1259,7 +1262,8 @@ def _build(apps: list[dict], tenant_id: str, changes=None, findings=None,
   </section>
 
   <section class="tab" data-tab="usage">{usage_section}</section>
-  <section class="tab" data-tab="governance">{governance_section}{_coverage_section(apps, connector_health)}</section>
+  <section class="tab" data-tab="governance">{governance_section}</section>
+  <section class="tab" data-tab="coverage">{_coverage_section(apps, connector_health)}</section>
   <section class="tab" data-tab="findings">{_findings_section(findings)}</section>
   <section class="tab" data-tab="changes">{_timeline_section(changes)}{new_bu_section}</section>
 

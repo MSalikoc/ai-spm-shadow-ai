@@ -176,29 +176,6 @@ def cmd_scan(args) -> int:
 
     os.makedirs(args.out, exist_ok=True)
 
-    conn_path = None
-    if connectors_result is not None:
-        conn_path = os.path.join(args.out, "connectors.html")
-        with open(conn_path, "w", encoding="utf-8") as f:
-            f.write(connectors_report.html_string(connectors_result, tenant,
-                                                  portal_href="portal.html",
-                                                  report_href="report.html",
-                                                  assessment_href="assessment.html"))
-        with open(os.path.join(args.out, "connectors.json"), "w", encoding="utf-8") as f:
-            f.write(connectors_report.json_string(connectors_result))
-
-    # Written after the connectors run so the core dashboard can report their real
-    # status, and link to the sibling file rather than to an /api/ route that does not
-    # exist for a page opened off disk.
-    core_path = os.path.join(args.out, "report.html")
-    with open(core_path, "w", encoding="utf-8") as f:
-        f.write(report.html_string(
-            scored, tenant,
-            connector_health=(connectors_result or {}).get("health"),
-            connectors_href="connectors.html" if conn_path else None,
-            portal_href="portal.html", assessment_href="assessment.html"))
-    report.write_json(scored, os.path.join(args.out, "report.json"))
-
     context = {
         "auth_mode": args.auth,
         "identity": getattr(graph, "identity", None),
@@ -207,35 +184,43 @@ def cmd_scan(args) -> int:
         "duration_s": round(time.time() - started),
         "graph": graph.telemetry(),
         "tenant_profile": tenant_profile,
+        "finished": datetime.now(timezone.utc).strftime("%d %B %Y, %H:%M UTC"),
         **(_azure_context() if args.auth == "azure-cli" else {}),
     }
 
-    import portal
-    portal_path = os.path.join(args.out, "portal.html")
-    with open(portal_path, "w", encoding="utf-8") as f:
-        f.write(portal.html_string(scored, tenant, connectors_result,
-                                   connectors_href="connectors.html" if conn_path
-                                   else "report.html", context=context))
-    with open(os.path.join(args.out, "portal.json"), "w", encoding="utf-8") as f:
-        f.write(portal.json_string(scored, connectors_result, tenant))
-
-    # The assessment is the landing page: the same scan read as a list of controls to
-    # fix rather than an inventory to browse. The three older pages stay as its detail
-    # views — nothing was removed, the entry point moved.
+    # Two pages, not four. The assessment answers "what do I fix" and carries the estate
+    # with it; everything behind that answer — permissions, usage, governance, agents,
+    # observed traffic, findings, changes, coverage — is one detail page.
     import assessment
     import assessment_report
+    import detail_report
+    import portal
+
     estate = portal.build_estate(scored, connectors_result)
     health = (connectors_result or {}).get("health")
-    context["finished"] = datetime.now(timezone.utc).strftime("%d %B %Y, %H:%M UTC")
     results = assessment.run(scored, estate, health)
+
+    detail_path = os.path.join(args.out, "detail.html")
+    with open(detail_path, "w", encoding="utf-8") as f:
+        f.write(detail_report.html_string(scored, tenant,
+                                          connectors_result=connectors_result,
+                                          assessment_href="assessment.html"))
+
     assess_path = os.path.join(args.out, "assessment.html")
     with open(assess_path, "w", encoding="utf-8") as f:
         f.write(assessment_report.html_string(
             results, scored, tenant, estate=estate, health=health, context=context,
-            portal_href="portal.html", report_href="report.html",
-            connectors_href="connectors.html" if conn_path else None))
+            detail_href="detail.html"))
+
+    # The data behind both pages, for anything that would rather read JSON than HTML.
     with open(os.path.join(args.out, "assessment.json"), "w", encoding="utf-8") as f:
         f.write(assessment_report.json_string(results))
+    report.write_json(scored, os.path.join(args.out, "report.json"))
+    with open(os.path.join(args.out, "estate.json"), "w", encoding="utf-8") as f:
+        f.write(portal.json_string(scored, connectors_result, tenant))
+    if connectors_result is not None:
+        with open(os.path.join(args.out, "connectors.json"), "w", encoding="utf-8") as f:
+            f.write(connectors_report.json_string(connectors_result))
 
     summary = pipeline.summary(scored)
     ai_matched = sum(1 for a in scored if a.get("ai_match"))
@@ -261,10 +246,7 @@ def cmd_scan(args) -> int:
              if asum["by_status"][assessment.NOT_ASSESSED] else ""))
 
     print(f"\n  {assess_path}   <- start here")
-    print(f"  {portal_path}")
-    print(f"  {core_path}")
-    if conn_path:
-        print(f"  {conn_path}")
+    print(f"  {detail_path}")
 
     for v in vendors[:5]:
         print(f"    [{v['risk_score']:>3} {v['risk_level']:<8}] {v['vendor']}"

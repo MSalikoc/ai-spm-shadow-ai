@@ -140,9 +140,10 @@ def read_latest(name: str = "latest.html") -> str | None:
 
 def publish(scored: list[dict], tenant_id: str, changes=None, findings=None,
             connector_health=None) -> dict:
+    # The per-scan archive copy. Its only live link is back to the assessment; the two
+    # pages it used to sit beside no longer exist as pages of their own.
     html = report.html_string(scored, tenant_id, changes, findings,
                               connector_health=connector_health,
-                              connectors_href="connectors", portal_href="portal",
                               assessment_href="assessment")
     js = report.json_string(scored)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -195,6 +196,11 @@ def publish_portal(html: str, js: str) -> dict:
     Consumption plan's ~230s HTTP limit.
     """
     return _publish_pair("portal_latest", html, js)
+
+
+def publish_detail(html: str, js: str) -> dict:
+    """Writes the detail page as `detail_latest.html/json`."""
+    return _publish_pair("detail_latest", html, js)
 
 
 def publish_assessment(html: str, js: str) -> dict:

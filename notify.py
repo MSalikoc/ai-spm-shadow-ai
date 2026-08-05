@@ -98,7 +98,7 @@ def _digest_html(scored, tenant_id, report_url, changes=None):
   <table style="border-collapse:collapse;width:100%">{rows}</table>
   <p style="background:#eef4fb;border-radius:8px;padding:12px 14px;margin:20px 0 0;
      font:13px Segoe UI,sans-serif;color:#0f4c81">
-    📎 <b>Full report attached:</b> <code>ai-spm-portal.html</code> — open it in a browser
+    📎 <b>Full report attached:</b> <code>ai-spm-assessment.html</code> — open it in a browser
     to see all findings, reasons, and remediation steps in the interactive dashboard.</p>
   <p style="color:#8b98a6;font-size:12px;margin-top:16px">
     AI-SPM · read-only Entra/Graph scan. This email was generated automatically.</p>
@@ -119,20 +119,26 @@ def send_email_digest(scored, tenant_id, changes=None, connectors_result=None):
 
     body = _digest_html(scored, tenant_id, _report_url(), changes)
 
-    # Attach the full dashboard as an HTML attachment (readability)
-    # The portal, not the core dashboard: it carries every tab in one file, so tab
-    # switching works from the attachment. Its links out to the two standalone pages are
-    # suppressed — nothing is attached beside it for them to point at.
+    # The assessment travels well: one self-contained file, and the only page whose
+    # first screen answers the question the email is asking. It is attached with no
+    # outbound links — nothing is attached beside it for them to point at.
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     try:
+        import assessment
+        import assessment_report
         import portal
-        dashboard = portal.html_string(scored, tenant_id, connectors_result,
-                                       standalone_links=False)
+        estate = portal.build_estate(scored, connectors_result)
+        results = assessment.run(scored, estate,
+                                 (connectors_result or {}).get("health"))
+        dashboard = assessment_report.html_string(results, scored, tenant_id,
+                                                  estate=estate,
+                                                  health=(connectors_result or {}).get("health"))
     except Exception:
         dashboard = report.html_string(scored, tenant_id)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+
     attachment = {
         "@odata.type": "#microsoft.graph.fileAttachment",
-        "name": f"shadow-ai-report-{stamp}.html",
+        "name": f"ai-spm-assessment-{stamp}.html",
         "contentType": "text/html",
         "contentBytes": base64.b64encode(dashboard.encode("utf-8")).decode("ascii"),
     }

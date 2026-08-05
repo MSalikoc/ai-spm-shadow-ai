@@ -196,37 +196,26 @@ def main():
     result = pipeline.run_connectors(SampleGraph())
     health = (result or {}).get("health")
 
-    core = os.path.join(docs, "sample-report.html")
-    with open(core, "w", encoding="utf-8") as f:
-        f.write(report.html_string(scored, TENANT, changes, connector_health=health,
-                                   connectors_href="sample-connectors.html",
-                                   portal_href="sample-portal.html"))
-
-    conn = os.path.join(docs, "sample-connectors.html")
-    with open(conn, "w", encoding="utf-8") as f:
-        f.write(connectors_report.html_string(result, TENANT,
-                                              portal_href="sample-portal.html",
-                                              report_href="sample-report.html"))
-
-    hub = os.path.join(docs, "sample-portal.html")
-    with open(hub, "w", encoding="utf-8") as f:
-        f.write(portal.html_string(scored, TENANT, result, changes,
-                                   report_href="sample-report.html",
-                                   connectors_href="sample-connectors.html",
-                                   assessment_href="sample-assessment.html",
-                                   context=SAMPLE_CONTEXT))
-
+    # Two pages, the same two a scan writes.
     import assessment
     import assessment_report
+    import detail_report
+
     estate_for_tests = portal.build_estate(scored, result)
     results = assessment.run(scored, estate_for_tests, health, changes, now=NOW)
+
+    detail = os.path.join(docs, "sample-detail.html")
+    with open(detail, "w", encoding="utf-8") as f:
+        f.write(detail_report.html_string(scored, TENANT, changes,
+                                          connectors_result=result, now=NOW,
+                                          assessment_href="sample-assessment.html"))
+
     assess = os.path.join(docs, "sample-assessment.html")
     with open(assess, "w", encoding="utf-8") as f:
         f.write(assessment_report.html_string(
             results, scored, TENANT, estate=estate_for_tests, health=health,
             context=dict(SAMPLE_CONTEXT, finished=NOW.strftime("%d %B %Y, %H:%M UTC")),
-            portal_href="sample-portal.html", report_href="sample-report.html",
-            connectors_href="sample-connectors.html"))
+            detail_href="sample-detail.html"))
 
     counts = {lv: sum(1 for a in scored if a["risk_level"] == lv)
               for lv in ("Critical", "High", "Medium", "Low")}
@@ -239,9 +228,7 @@ def main():
     asum = assessment.summary(results)
     print(f"{asum['total']} assessment tests — {asum['by_status']}")
     print(f"  assessment : {assess}")
-    print(f"  portal     : {hub}")
-    print(f"  core       : {core}")
-    print(f"  connectors : {conn}")
+    print(f"  detail     : {detail}")
 
 
 

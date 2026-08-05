@@ -152,7 +152,8 @@ def test_page_renders_the_table_and_the_panel():
     assert 'data-f="pillar"' in doc and 'data-f="status"' in doc
     assert "What was checked" in doc              # the panel payload rides on the row
     assert "AISPM-1001" in doc
-    assert doc.count('data-panel="') == len(results)   # every row carries its own panel
+    # Every test row carries its own panel; the estate rows on the third tab carry theirs.
+    assert doc.count('data-panel="') == len(results) + len(_estate()["vendors"])
 
 
 def test_page_shows_a_dash_not_a_zero_for_a_source_it_cannot_read():
@@ -163,13 +164,33 @@ def test_page_shows_a_dash_not_a_zero_for_a_source_it_cannot_read():
     assert "How to make this test answerable" in doc
 
 
-def test_page_drops_nav_links_it_was_not_given():
+def test_page_drops_the_detail_link_it_was_not_given():
     apps = [_app()]
     results = assessment.run(apps, _estate(), CONNECTED)
-    doc = assessment_report.html_string(results, apps, "t", estate=_estate(),
-                                        health=CONNECTED, portal_href="portal.html")
-    assert "portal.html" in doc
-    assert "AI data sources" not in doc          # no href given → no dead nav button
+    with_link = assessment_report.html_string(results, apps, "t", estate=_estate(),
+                                              health=CONNECTED, detail_href="detail.html")
+    assert 'href="detail.html"' in with_link
+
+    alone = assessment_report.html_string(results, apps, "t", estate=_estate(),
+                                          health=CONNECTED)
+    assert 'class="out"' not in alone          # no href given → no dead nav button
+
+
+def test_the_estate_tab_carries_the_vendors_and_their_arithmetic():
+    apps = [_app()]
+    est = _estate()
+    est["vendors"][0]["breakdown"] = [(18, "424 people reached it"), (0, "no DLP block")]
+    results = assessment.run(apps, est, CONNECTED)
+    doc = assessment_report.html_string(results, apps, "t", estate=est, health=CONNECTED)
+    assert "AI estate" in doc and "1 vendors" in doc
+    assert "424 people reached it" in doc       # the score shows its own sum
+    assert 'id="t-estate"' in doc
+
+
+def test_the_estate_tab_survives_a_tenant_with_no_vendors():
+    results = assessment.run([], {"vendors": [], "unattached_agents": []}, {})
+    doc = assessment_report.html_string(results, [], "t")
+    assert "No AI vendors were found" in doc
 
 
 def test_json_is_the_same_verdicts_as_data():

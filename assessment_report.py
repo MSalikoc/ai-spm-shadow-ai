@@ -411,25 +411,131 @@ def _flow(ctx, estate):
     return sankey(stages, links), cap
 
 
-def _nav(current, links):
-    """
-    Two internal views, then the detail dashboards as outbound links.
+VENDOR_LEVEL_COLOR = {"Critical": "#8b0f2b", "High": "#c4314b",
+                      "Medium": "#c07000", "Low": "#0f7b0f"}
 
-    The estate table is not reproduced here: portal.py already groups vendors by the
-    rules it learned on a real tenant, and a second table built from the same data is a
-    second thing to keep in agreement.
+
+def _estate_view(estate):
+    """
+    One row per AI vendor, the arithmetic behind its score in the panel.
+
+    This is the estate table that used to be its own page. It moved here rather than
+    being rebuilt: grouping is still portal.build_estate's, which follows two rules
+    learned by breaking them on a real tenant — only AI creates a vendor row, and agents
+    attach to a vendor but never create one.
+    """
+    vendors = sorted(estate.get("vendors", []),
+                     key=lambda v: v.get("risk_score", 0), reverse=True)
+    if not vendors:
+        return ('<h1>AI estate</h1><div class="card">'
+                '<div class="empty">No AI vendors were found in this scan.</div></div>')
+
+    rows = []
+    for v in vendors:
+        level = v.get("risk_level", "Low")
+        color = VENDOR_LEVEL_COLOR.get(level, "#5f6b7a")
+        evidence = " + ".join(sorted(v.get("evidence", set()))) or "no evidence recorded"
+
+        calc = "".join(
+            "<tr><td>+%s</td><td>%s</td></tr>" % (pts, esc(why))
+            for pts, why in v.get("breakdown", []) if pts)
+        calc = ('<h4>How this score is built</h4><table class="alist">%s'
+                '<tr><td><b>%s</b></td><td><b>Risk score out of 100</b></td></tr>'
+                "</table>" % (calc, v.get("risk_score", 0))
+                if calc else "<h4>How this score is built</h4><p>No notable signal.</p>")
+
+        apps = "".join(
+            "<tr><td>%s</td><td>%s &middot; %s</td></tr>"
+            % (esc(a.get("display_name")), a.get("risk_score", 0),
+               esc(a.get("consent_type") or "no consent recorded"))
+            for a in sorted(v.get("oauth_apps", []),
+                            key=lambda x: -(x.get("risk_score") or 0)))
+        apps = ('<h4>Consented applications</h4><table class="alist">%s</table>' % apps
+                if apps else "")
+
+        web = v.get("web") or {}
+        seen = []
+        if web.get("users"):
+            seen.append("%s people reached through the browser" % web["users"])
+        if web.get("uploaded_bytes"):
+            seen.append("%.0f MB uploaded" % (web["uploaded_bytes"] / 1048576.0))
+        if v.get("agents"):
+            seen.append("%d agent(s)" % len(v["agents"]))
+        if v.get("interactions"):
+            seen.append("%d sensitive interaction(s)" % v["interactions"])
+        if v.get("blocked"):
+            seen.append("%d blocked by DLP" % v["blocked"])
+        seen_html = ("<h4>Also seen as</h4><ul class=\"acts\">%s</ul>"
+                     % "".join("<li>%s</li>" % esc(s) for s in seen) if seen else "")
+
+        sens = sorted(v.get("sensitive_types") or [])
+        sens_html = ('<h4>Sensitive information types recorded</h4><p>%s</p>'
+                     % esc(", ".join(sens)) if sens else "")
+
+        panel = (
+            "<h2>%s</h2>" % esc(v["vendor"])
+            + '<div class="card"><div class="meta">'
+            + '<div><span>Risk score:</span> <b style="color:%s">%s &middot; %s</b></div>'
+              % (color, v.get("risk_score", 0), esc(level))
+            + "<div><span>Seen through:</span> <b>%s</b></div>" % esc(evidence)
+            + "<div><span>People reached:</span> <b>%s</b></div>" % v.get("users", 0)
+            + "<div><span>Consented applications:</span> <b>%d</b></div>"
+              % len(v.get("oauth_apps", []))
+            + "</div></div>"
+            + '<div class="card">%s</div>' % calc
+            + ('<div class="card">%s%s%s</div>' % (apps, seen_html, sens_html)
+               if (apps or seen_html or sens_html) else ""))
+
+        rows.append(
+            '<tr data-name="%s" data-panel="%s">'
+            '<td class="tname">%s<span class="tid">%s</span></td>'
+            '<td class="risk" style="color:%s"><i>&#8593;</i>%s</td>'
+            '<td><span class="badge" style="background:%s">%s</span></td></tr>'
+            % (esc(v["vendor"].lower()), html.escape(panel, quote=True),
+               esc(v["vendor"]), esc(evidence), color, esc(level), color,
+               v.get("risk_score", 0)))
+
+    held = estate.get("unattached_agents") or []
+    held_note = ""
+    if held:
+        held_note = ('<p class="cap">%d agent(s) were discovered but could not be '
+                     "attributed to a known AI vendor, so they are counted rather than "
+                     "ranked here — an agent joins a vendor, it never invents one. They "
+                     "are listed on the detail page.</p>" % len(held))
+
+    return """
+<h1>AI estate</h1>
+<div class="card">
+  <h2>%d vendors</h2>
+  <p class="sub">One row per vendor, whichever route it came in by. A vendor consented as
+  an application <i>and</i> used in the browser is one row, not two. Open a row for the
+  arithmetic behind its score — every point is a named signal.</p>
+  <div class="tbl-wrap"><table id="t-estate"><thead><tr>
+    <th data-sort="0">Vendor &#8645;</th><th data-sort="1">Risk &#8645;</th>
+    <th data-sort="2">Score &#8645;</th></tr></thead>
+  <tbody>%s</tbody></table></div>
+  %s
+</div>
+""" % (len(vendors), "".join(rows), held_note)
+
+
+def _nav(current, detail_href=None):
+    """
+    Three views on one page, and one link out.
+
+    There is exactly one outbound destination now. The estate table lives here rather
+    than on a page of its own, and the two dashboards behind it were folded into a single
+    detail page — four entry points for one tenant was three copies of the same overview
+    to keep in agreement.
     """
     out = []
-    for key, label in (("overview", "Overview"), ("assessment", "Assessment results")):
-        cls = " class=\"on\"" if key == current else ""
+    for key, label in (("overview", "Overview"), ("assessment", "Assessment results"),
+                       ("estate", "AI estate")):
+        cls = ' class="on"' if key == current else ""
         out.append('<a data-view="%s"%s>%s</a>' % (key, cls, label))
-    ext = [("portal", "AI estate"), ("report", "OAuth assessment"),
-           ("connectors", "AI data sources")]
-    shown = [(k, l) for k, l in ext if links.get(k)]
-    if shown:
+    if detail_href:
         out.append('<span class="navsep"></span>')
-        out.extend('<a href="%s" class="out">%s<i>&#8599;</i></a>' % (esc(links[k]), esc(l))
-                   for k, l in shown)
+        out.append('<a href="%s" class="out">Detail<i>&#8599;</i></a>' % esc(detail_href))
     return "".join(out)
 
 
@@ -576,7 +682,7 @@ def _assessment_view(results):
   </div>
   <div class="filters"><span class="lbl" style="margin-left:0">Pillar:</span>%(pchips)s</div>
   <div class="count" id="count"></div>
-  <div class="tbl-wrap"><table><thead><tr>
+  <div class="tbl-wrap"><table id="t-tests"><thead><tr>
     <th data-sort="0">Name &#8645;</th><th data-sort="1">Risk &#8645;</th>
     <th data-sort="2">Status &#8645;</th></tr></thead>
   <tbody id="tbody">%(rows)s</tbody></table></div>
@@ -631,7 +737,8 @@ apply();
 var order={};
 document.querySelectorAll('th[data-sort]').forEach(function(th){
   th.onclick=function(){
-    var i=+th.getAttribute('data-sort'),body=$('#tbody'),dir=order[i]=-(order[i]||-1);
+    var i=+th.getAttribute('data-sort'),body=th.closest('table').querySelector('tbody'),
+        key=th.closest('table').id+i,dir=order[key]=-(order[key]||-1);
     var rows=[].slice.call(body.querySelectorAll('tr'));
     rows.sort(function(a,b){
       var x=a.children[i].innerText.trim(),y=b.children[i].innerText.trim();
@@ -641,7 +748,7 @@ document.querySelectorAll('th[data-sort]').forEach(function(th){
   };
 });
 function closePanel(){$('#panel').classList.remove('on');$('#scrim').classList.remove('on');}
-document.querySelectorAll('#tbody tr').forEach(function(tr){
+document.querySelectorAll('tr[data-panel]').forEach(function(tr){
   tr.onclick=function(){
     $('#pbody').innerHTML=tr.getAttribute('data-panel');
     $('#panel').classList.add('on');$('#scrim').classList.add('on');$('#panel').scrollTop=0;
@@ -665,11 +772,10 @@ if(location.pathname.indexOf('/api/')===0){
 
 
 def html_string(results, apps, tenant_id, estate=None, health=None, context=None,
-                portal_href=None, report_href=None, connectors_href=None) -> str:
+                detail_href=None) -> str:
     """The whole page, self-contained."""
     estate = estate or {"vendors": [], "unattached_agents": []}
     ctx = assessment.context(apps, estate, health)
-    links = {"portal": portal_href, "report": report_href, "connectors": connectors_href}
     return """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -686,6 +792,7 @@ def html_string(results, apps, tenant_id, estate=None, health=None, context=None
 <div class="wrap">
   <div class="view on" id="v-overview">%(overview)s</div>
   <div class="view" id="v-assessment">%(assessment)s</div>
+  <div class="view" id="v-estate">%(estate)s</div>
   <footer>
     <div><b>AI-SPM</b> &#8212; read-only. It observes, scores and reports; remediation
     stays with your team.</div>
@@ -697,11 +804,12 @@ def html_string(results, apps, tenant_id, estate=None, health=None, context=None
   <div id="pbody"></div></div>
 <script>%(js)s</script>
 </body></html>
-""" % {"css": CSS, "js": JS, "nav": _nav("overview", links),
+""" % {"css": CSS, "js": JS, "nav": _nav("overview", detail_href),
        "org": esc(((context or {}).get("tenant_profile") or {}).get("display_name")
                   or "AI-SPM"),
        "overview": _overview(ctx, results, apps, estate, tenant_id, context),
        "assessment": _assessment_view(results),
+       "estate": _estate_view(estate),
        "finished": esc((context or {}).get("finished") or "")}
 
 

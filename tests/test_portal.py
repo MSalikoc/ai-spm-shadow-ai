@@ -257,20 +257,53 @@ def test_detail_links_carry_the_function_key_when_served_from_the_api():
     assert "code=" in doc
 
 
-def test_function_app_serves_the_portal(monkeypatch):
+def test_retired_routes_redirect_rather_than_404(monkeypatch):
+    """
+    /api/portal, /api/report and /api/connectors were in bookmarks, in the weekly email
+    and in at least one customer runbook before the four pages became two. They keep
+    answering, and they carry the function key with them or the destination is unreachable.
+    """
+    import function_app
+
+    class Req:
+        params = {"code": "secret-key"}
+
+    for view, target in ((function_app.portal_view, "/api/assessment"),
+                         (function_app.report_view, "/api/detail"),
+                         (function_app.connectors_now, "/api/detail")):
+        resp = view(Req())
+        assert resp.status_code == 302, view.__name__
+        assert resp.headers["Location"] == target + "?code=secret-key", view.__name__
+
+
+def test_connector_json_still_answers_for_whatever_is_reading_it(monkeypatch):
+    """A page moved; a payload something may be polling did not."""
     import function_app
     monkeypatch.setattr(function_app.storage, "read_latest",
-                        lambda name: "<html>portal</html>" if name == "portal_latest.html" else None)
+                        lambda name: '{"ok":1}' if name == "detail_latest.json" else None)
+
+    class Req:
+        params = {"format": "json"}
+
+    resp = function_app.connectors_now(Req())
+    assert resp.status_code == 200
+    assert resp.get_body().decode() == '{"ok":1}'
+
+
+def test_function_app_serves_the_two_pages(monkeypatch):
+    import function_app
+    pages = {"assessment_latest.html": "<html>assessment</html>",
+             "detail_latest.html": "<html>detail</html>"}
+    monkeypatch.setattr(function_app.storage, "read_latest", lambda name: pages.get(name))
 
     class Req:
         params = {}
 
-    resp = function_app.portal_view(Req())
-    assert resp.status_code == 200
-    assert "portal" in resp.get_body().decode()
+    assert "assessment" in function_app.assessment_view(Req()).get_body().decode()
+    assert "detail" in function_app.detail_view(Req()).get_body().decode()
 
 
-def test_function_app_portal_says_so_before_the_first_scan(monkeypatch):
+def test_pages_say_so_before_the_first_scan(monkeypatch):
     import function_app
     monkeypatch.setattr(function_app.storage, "read_latest", lambda name: None)
     monkeypatch.setattr(function_app.storage, "read_json", lambda name: {})
@@ -278,9 +311,10 @@ def test_function_app_portal_says_so_before_the_first_scan(monkeypatch):
     class Req:
         params = {}
 
-    resp = function_app.portal_view(Req())
-    assert resp.status_code == 404
-    assert "Run /api/scan first" in resp.get_body().decode()
+    for view in (function_app.assessment_view, function_app.detail_view):
+        resp = view(Req())
+        assert resp.status_code == 404
+        assert "Run /api/scan first" in resp.get_body().decode()
 
 
 # --- the portal is the union of both dashboards, not a summary above them ---

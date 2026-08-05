@@ -31,9 +31,12 @@ It lands as an **assessment**: 26 tests across five pillars, each with a pass, a
 an honest *Not assessed* when the source behind it is not connected. A failing test names
 the applications that failed it and what to do about them.
 
-Behind that sit the three detail views — one row per AI vendor whichever route it came in
-by, the per-application OAuth assessment, and the AI data sources correlation. Every page
-carries the same switch.
+The AI estate sits on the same page: one row per vendor, whichever route it came in by.
+ChatGPT consented as an app *and* used in the browser is one row, not two.
+
+Everything behind that answer — permissions, usage, governance, agents, observed traffic,
+findings, changes and coverage — is on **one** detail page, one click away. Two pages in
+total, and nothing is said on both.
 
 > **100% read-only.** AI-SPM never revokes a permission, deletes an app, or changes a
 > setting. It observes, scores and reports — remediation stays with your team.
@@ -239,10 +242,8 @@ Start-Process "https://$FUNC.azurewebsites.net/api/assessment?code=$KEY"
 
 | Route | Serves |
 | --- | --- |
-| `/api/assessment` | The assessment — **start here** |
-| `/api/portal` | The AI estate, one row per vendor |
-| `/api/report` | Entra OAuth assessment |
-| `/api/connectors?format=html` | Microsoft AI data sources |
+| `/api/assessment` | The assessment and the AI estate — **start here** |
+| `/api/detail` | Everything behind it, on one page |
 | `/api/doctor` | What the Managed Identity can read |
 | `/api/scan` | Trigger a scan |
 
@@ -254,10 +255,8 @@ Rendered from a synthetic tenant, through the real scoring and charting code.
 
 | | |
 | --- | --- |
-| **[▶ Assessment](https://htmlpreview.github.io/?https://github.com/MSalikoc/ai-spm-shadow-ai/blob/main/docs/sample-assessment.html)** | 26 tests — what to fix, worst first, each with its affected applications |
-| [AI estate](https://htmlpreview.github.io/?https://github.com/MSalikoc/ai-spm-shadow-ai/blob/main/docs/sample-portal.html) | 27 AI vendors, 8 seen through two routes, and a week of drift |
-| [Entra OAuth assessment](https://htmlpreview.github.io/?https://github.com/MSalikoc/ai-spm-shadow-ai/blob/main/docs/sample-report.html) | Per-application permissions and usage |
-| [AI data sources](https://htmlpreview.github.io/?https://github.com/MSalikoc/ai-spm-shadow-ai/blob/main/docs/sample-connectors.html) | Agents, Shadow AI traffic, sensitive data |
+| **[▶ Assessment](https://htmlpreview.github.io/?https://github.com/MSalikoc/ai-spm-shadow-ai/blob/main/docs/sample-assessment.html)** | 26 tests and 27 AI vendors — what to fix, worst first, each with its affected applications |
+| [Detail](https://htmlpreview.github.io/?https://github.com/MSalikoc/ai-spm-shadow-ai/blob/main/docs/sample-detail.html) | Permissions, usage, governance, agents, traffic, findings, changes, coverage |
 
 Regenerate them with `python3 aispm.py sample`.
 

@@ -1453,8 +1453,14 @@ def build_tabs(result: dict, tenant_id: str = "", now=None) -> dict:
 
     return {
         "assessment": a,
+        # `coverage` is also the tail of the overview tab. It is exposed on its own
+        # because the consolidated detail page drops that overview but must not drop
+        # this: which source answered, and what it needs if it did not, is the one
+        # section that tells a reader whether a quiet section means "clean" or "blind".
         "tabs": {"overview": overview, "agents": agents_tab, "shadow": shadow_tab,
-                 "sensitive": sensitive_tab, "findings": findings_tab, "gaps": gaps_tab},
+                 "sensitive": sensitive_tab, "findings": findings_tab, "gaps": gaps_tab,
+                 "coverage": ('<div class="card"><h3>Data source coverage</h3>'
+                              + _coverage_html(a["data_source_coverage"]) + "</div>")},
         "detail_panel": _DETAIL_PANEL,
         "css": _ZT_CSS,
         "script": _ZT_SCRIPT,

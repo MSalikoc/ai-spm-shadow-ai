@@ -64,46 +64,40 @@ def _run_scan(source: str):
             logging.exception("findings error")
             finding_records = []
         connectors_result = None
-        try:  # connector drift (Step 8) + AI Data Sources dashboard cache (Step 7) — both
-              # are no-ops if the flag is off (run_connectors returns None)
+        try:  # connector drift (Step 8) — a no-op when the flags are off
             connectors_result = pipeline.run_connectors(graph)
             connectors_drift.process(connectors_result)
-            if connectors_result is not None:
-                storage.publish_connectors(
-                    connectors_report.html_string(connectors_result, tenant_id,
-                                                  portal_href="portal",
-                                                  report_href="report",
-                                                  assessment_href="assessment"),
-                    connectors_report.json_string(connectors_result))
         except Exception:
-            logging.exception("connector drift/dashboard error")
-        try:  # the unified portal — one estate over both scans
-            import portal
-            storage.publish_portal(
-                portal.html_string(scored, tenant_id, connectors_result,
-                                   report_href="report", connectors_href="connectors",
-                                   assessment_href="assessment"),
-                portal.json_string(scored, connectors_result, tenant_id))
-        except Exception:
-            logging.exception("portal render error")
-        try:  # the assessment — the landing page, rendered from the same scan
+            logging.exception("connector drift error")
+
+        # Two pages. The assessment answers "what do I fix" and carries the estate;
+        # the detail page carries everything behind that answer, composed from the same
+        # two builders that used to render a page each.
+        try:
             import assessment
             import assessment_report
-            import portal as _portal
-            estate = _portal.build_estate(scored, connectors_result)
+            import detail_report
+            import portal
+
+            estate = portal.build_estate(scored, connectors_result)
             health = (connectors_result or {}).get("health")
             results = assessment.run(scored, estate, health)
+            storage.publish_detail(
+                detail_report.html_string(scored, tenant_id, changes, finding_records,
+                                          connectors_result,
+                                          assessment_href="assessment"),
+                connectors_report.json_string(connectors_result) if connectors_result
+                else "{}")
             storage.publish_assessment(
                 assessment_report.html_string(
                     results, scored, tenant_id, estate=estate, health=health,
                     context={"tenant_profile": _tenant_profile(graph),
                              "finished": datetime.now(timezone.utc)
                              .strftime("%d %B %Y, %H:%M UTC")},
-                    portal_href="portal", report_href="report",
-                    connectors_href="connectors" if connectors_result else None),
+                    detail_href="detail"),
                 assessment_report.json_string(results))
         except Exception:
-            logging.exception("assessment render error")
+            logging.exception("page render error")
         published = storage.publish(scored, tenant_id, changes, finding_records,
                                     (connectors_result or {}).get("health"))
         summ = pipeline.summary(scored)
@@ -228,77 +222,12 @@ def _last_scan_error_note() -> str:
            f"time: {err.get('timestamp')}\nError: {err.get('error')}")
 
 
-@app.route(route="report", auth_level=func.AuthLevel.FUNCTION)
-def report_view(req: func.HttpRequest) -> func.HttpResponse:
-    """Serves the latest dashboard as live HTML (open in a browser)."""
-    doc = storage.read_latest("latest.html")
-    if doc is None:
-        return func.HttpResponse(
-            "No report yet. Run /api/scan first." + _last_scan_error_note(),
-            status_code=404, mimetype="text/plain")
-    return func.HttpResponse(doc, mimetype="text/html", status_code=200)
-
-
-@app.route(route="connectors", auth_level=func.AuthLevel.FUNCTION)
-def connectors_now(req: func.HttpRequest) -> func.HttpResponse:
-    """
-    Serves the Microsoft AI Data Sources dashboard. First tries the copy pre-computed by
-    `_run_scan` and written to Blob (fast path — see `storage.publish_connectors`); if
-    not found (scan_worker hasn't run yet / is still queued), falls back to the OLD LIVE
-    COMPUTE behavior — this keeps AI Data Sources data visible regardless of whether
-    scan_worker has processed its queue messages yet (large tenants still risk exceeding
-    the Consumption plan's ~230s HTTP limit, but that's better than showing no data at
-    all — making connectors_now depend on scan_worker was a regression found in live
-    testing, this fallback fixes it).
-
-    Returns a NOT_CONFIGURED JSON if no ENABLE_* flag is on (the default) — not even a
-    Graph call is made. ?format=html returns a standalone HTML page.
-    """
-    if not pipeline.connectors_enabled():
-        return func.HttpResponse(
-            json.dumps({"status": "NOT_CONFIGURED",
-                       "message": "None of ENABLE_AGENT365/ENABLE_ENTRA_AGENT_ID/"
-                                  "ENABLE_DEFENDER_CLOUD_APPS/ENABLE_PURVIEW_AUDIT/"
-                                  "PURVIEW_DSPM_IMPORT_PATH is enabled."},
-                      ensure_ascii=False),
-            mimetype="application/json", status_code=200)
-    html_fmt = (req.params.get("format") or "").lower() == "html"
-    doc = storage.read_latest("connectors_latest.html" if html_fmt else "connectors_latest.json")
-    if doc is not None:
-        return func.HttpResponse(doc, mimetype="text/html" if html_fmt else "application/json",
-                                 status_code=200)
-    try:
-        tenant_id = os.environ.get("AISPM_TENANT_ID", "")
-        graph = GraphClient(auth.get_token_managed_identity()) if tenant_id else None
-        result = pipeline.run_connectors(graph)
-        if html_fmt:
-            return func.HttpResponse(connectors_report.html_string(result, tenant_id),
-                                     mimetype="text/html", status_code=200)
-        return func.HttpResponse(connectors_report.json_string(result),
-                                 mimetype="application/json", status_code=200)
-    except Exception as e:
-        logging.exception("connectors_now (live fallback) error")
-        return func.HttpResponse(json.dumps({"error": str(e)}, ensure_ascii=False),
-                                 mimetype="application/json", status_code=500)
-
-
-@app.route(route="portal", auth_level=func.AuthLevel.FUNCTION)
-def portal_view(req: func.HttpRequest) -> func.HttpResponse:
-    """One AI estate over both scans, with /api/report and /api/connectors as its
-    detail views. Pre-computed by _run_scan."""
-    doc = storage.read_latest("portal_latest.html")
-    if doc is None:
-        return func.HttpResponse(
-            "No portal yet. Run /api/scan first." + _last_scan_error_note(),
-            status_code=404, mimetype="text/plain")
-    return func.HttpResponse(doc, mimetype="text/html", status_code=200)
-
-
 @app.route(route="assessment", auth_level=func.AuthLevel.FUNCTION)
 def assessment_view(req: func.HttpRequest) -> func.HttpResponse:
     """
     The landing page: the scan read as a list of controls with a pass or a fail against
-    each. ?format=json returns the same verdicts as data. Pre-computed by _run_scan.
+    each, with the AI estate on its own tab. ?format=json returns the same verdicts as
+    data. Pre-computed by _run_scan.
     """
     as_json = (req.params.get("format") or "").lower() == "json"
     doc = storage.read_latest("assessment_latest.json" if as_json
@@ -309,6 +238,57 @@ def assessment_view(req: func.HttpRequest) -> func.HttpResponse:
             status_code=404, mimetype="text/plain")
     return func.HttpResponse(doc, status_code=200,
                              mimetype="application/json" if as_json else "text/html")
+
+
+@app.route(route="detail", auth_level=func.AuthLevel.FUNCTION)
+def detail_view(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Everything behind the assessment on one page: permissions, usage, governance, agents,
+    observed traffic, findings, changes, coverage. Pre-computed by _run_scan.
+    """
+    doc = storage.read_latest("detail_latest.html")
+    if doc is None:
+        return func.HttpResponse(
+            "No detail page yet. Run /api/scan first." + _last_scan_error_note(),
+            status_code=404, mimetype="text/plain")
+    return func.HttpResponse(doc, mimetype="text/html", status_code=200)
+
+
+# The four pages became two. These three routes were in circulation — in bookmarks, in
+# the weekly email, in a customer's runbook — so they keep answering rather than 404ing,
+# and send the reader to whichever page now holds what they came for.
+@app.route(route="report", auth_level=func.AuthLevel.FUNCTION)
+def report_view(req: func.HttpRequest) -> func.HttpResponse:
+    """Was the OAuth assessment; its tabs are now part of /api/detail."""
+    return _moved("detail", req)
+
+
+@app.route(route="portal", auth_level=func.AuthLevel.FUNCTION)
+def portal_view(req: func.HttpRequest) -> func.HttpResponse:
+    """Was the AI estate; it is now a tab on /api/assessment."""
+    return _moved("assessment", req)
+
+
+@app.route(route="connectors", auth_level=func.AuthLevel.FUNCTION)
+def connectors_now(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Was the AI data sources dashboard; its tabs are now part of /api/detail.
+
+    ?format=json still returns the connector data itself, because that is a payload
+    something may be reading, not a page a person is looking at.
+    """
+    if (req.params.get("format") or "").lower() == "json":
+        doc = storage.read_latest("detail_latest.json")
+        return func.HttpResponse(doc or "{}", mimetype="application/json", status_code=200)
+    return _moved("detail", req)
+
+
+def _moved(route: str, req: func.HttpRequest) -> func.HttpResponse:
+    """Redirects, carrying the function key so the destination stays reachable."""
+    code = req.params.get("code")
+    target = "/api/" + route + ("?code=" + code if code else "")
+    return func.HttpResponse(status_code=302, headers={"Location": target},
+                             body="Moved to " + target, mimetype="text/plain")
 
 
 @app.route(route="doctor", auth_level=func.AuthLevel.FUNCTION)

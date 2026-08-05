@@ -5,8 +5,28 @@ All notable changes to AI-SPM are documented here. Format based on
 
 ## [Unreleased]
 
+### Changed
+- **Four pages became two.** The assessment is the landing page and now carries the AI
+  estate as its third tab; everything behind it — permissions, usage, governance, agents,
+  Shadow AI traffic, sensitive data, findings, changes, coverage — is one `detail.html`
+  (`/api/detail`) with nine tabs. `portal.html`, `report.html` and `connectors.html` are
+  no longer written.
+  - The two dashboards each opened with their own overview and each carried their own
+    Findings tab, and coverage was told twice. Those duplicates are dropped, not repeated:
+    one Findings tab labelled by where each half came from, one Coverage tab holding
+    ownership, per-connector status and the API limitations together.
+  - The sections are **composed** from `report.build_tabs` and
+    `connectors_report.build_tabs` rather than reimplemented, so there is still one
+    implementation of each.
+  - `/api/report`, `/api/portal` and `/api/connectors` were in bookmarks and in the weekly
+    email, so they now **302 to whichever page holds what they used to show**, carrying the
+    function key. `/api/connectors?format=json` still returns the connector payload.
+  - The weekly email attaches the assessment instead of the retired portal.
+  - Tabs that can legitimately be empty (no finding store yet, first scan, no connectors)
+    now say which of those it is instead of opening blank.
+
 ### Added
-- **The assessment view — now the landing page.** `assessment.py` is a catalogue of 26
+- **The assessment view — the landing page.** `assessment.py` is a catalogue of 26
   tests across five pillars (identities, data, governance, attack surface, monitoring),
   each answered from a finished scan rather than from a fresh Graph call, so the same
   catalogue runs against a live scan, the sample estate or a stored report.

@@ -151,26 +151,36 @@ def test_doctor_exits_nonzero_when_the_core_scan_is_blocked(cli):
     assert cli(["doctor"], FakeTenant(denied=["/servicePrincipals"])) == 1
 
 
-def test_scan_writes_both_dashboards(cli, tmp_path, capsys):
+def test_scan_writes_the_two_pages(cli, tmp_path, capsys):
+    """Two pages, not four: the assessment to start on, the detail behind it."""
     out = tmp_path / "run"
     assert cli(["scan", "--out", str(out)]) == 0
 
-    report_html = out / "report.html"
-    assert report_html.exists()
-    doc = report_html.read_text(encoding="utf-8")
-    assert "AI-SPM" in doc and "Where to start" in doc
-    assert "ChatGPT Connector" in doc
+    assess = (out / "assessment.html").read_text(encoding="utf-8")
+    assert "Assessment results" in assess and "AI estate" in assess
+    assert 'href="detail.html"' in assess
+
+    detail = (out / "detail.html").read_text(encoding="utf-8")
+    assert "ChatGPT Connector" in detail
+    assert 'data-tab="apps"' in detail and 'data-tab="coverage"' in detail
+    assert 'href="assessment.html"' in detail
+
+    # The pages people used to bookmark are gone, not silently rewritten.
+    assert not (out / "report.html").exists()
+    assert not (out / "portal.html").exists()
+    assert not (out / "connectors.html").exists()
 
     payload = json.loads((out / "report.json").read_text(encoding="utf-8"))
     assert payload["findings"][0]["risk_score"] >= 0
     assert payload["generated"]
+    assert json.loads((out / "assessment.json").read_text(encoding="utf-8"))["tests"]
     assert "applications assessed" in capsys.readouterr().out
 
 
 def test_scan_refuses_to_run_without_the_core_permissions(cli, tmp_path, capsys):
     out = tmp_path / "run"
     assert cli(["scan", "--out", str(out)], FakeTenant(denied=["/oauth2PermissionGrants"])) == 1
-    assert not (out / "report.html").exists()
+    assert not (out / "assessment.html").exists()
     assert "Stopping" in capsys.readouterr().out
 
 
@@ -199,8 +209,10 @@ def test_scan_only_enables_connectors_the_identity_can_read(cli, tmp_path):
 def test_no_connectors_flag_skips_the_data_sources_step(cli, tmp_path):
     out = tmp_path / "run"
     assert cli(["scan", "--out", str(out), "--no-connectors"]) == 0
-    assert (out / "report.html").exists()
-    assert not (out / "connectors.html").exists()
+    assert (out / "assessment.html").exists()
+    assert not (out / "connectors.json").exists()
+    # The data-source tabs say why they are empty rather than rendering empty tables.
+    assert "No AI data sources are connected" in (out / "detail.html").read_text(encoding="utf-8")
 
 
 def test_activity_window_flag_reaches_the_collector(cli, tmp_path):
