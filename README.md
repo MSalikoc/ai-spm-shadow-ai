@@ -13,7 +13,7 @@ Read-only. Runs from your laptop in two minutes, or on a schedule in Azure.
 </div>
 
 <div align="center">
-  <img src="docs/img/portal.png" alt="The AI-SPM portal: AI estate, risk distribution and triage view" width="820">
+  <img src="docs/img/assessment.png" alt="The AI-SPM assessment: tenant, AI estate counters, per-pillar test results, and how AI gets into the tenant" width="820">
 </div>
 
 ---
@@ -258,6 +258,13 @@ Rendered from a synthetic tenant, through the real scoring and charting code.
 | **[▶ Assessment](https://htmlpreview.github.io/?https://github.com/MSalikoc/ai-spm-shadow-ai/blob/main/docs/sample-assessment.html)** | 26 tests and 27 AI vendors — what to fix, worst first, each with its affected applications |
 | [Detail](https://htmlpreview.github.io/?https://github.com/MSalikoc/ai-spm-shadow-ai/blob/main/docs/sample-detail.html) | Permissions, usage, governance, agents, traffic, findings, changes, coverage |
 
+<div align="center">
+  <img src="docs/img/assessment-detail.png" alt="A failing test opened: risk, user impact, effort, the applications it applies to and what to do about it" width="820">
+  <br>
+  <sub>Open a test and it names the applications that failed it, with the permission that
+  failed them.</sub>
+</div>
+
 Regenerate them with `python3 aispm.py sample`.
 
 ---
@@ -348,7 +355,7 @@ Set by the setup scripts. Change these on a deployment with
 | `PURVIEW_POLL_SECONDS` | How long to wait for a Purview audit search (default 300) |
 | `SCAN_SCHEDULE`, `EMAIL_SCHEDULE` | Timers — daily 06:00 UTC, Monday 08:00 UTC |
 | `STORE_RAW_AI_CONTENT` | Leave **off**; prompt and response text is never kept unless this is `true` |
-| `AISPM_MAIL_SENDER`, `AISPM_MAIL_TO`, `AISPM_REPORT_URL` | Weekly email digest — sent by the Managed Identity via Graph, with the portal attached as one self-contained file |
+| `AISPM_MAIL_SENDER`, `AISPM_MAIL_TO`, `AISPM_REPORT_URL` | Weekly email digest — sent by the Managed Identity via Graph, with the assessment attached as one self-contained file |
 
 ---
 
