@@ -187,7 +187,7 @@ def html_string(apps, tenant_id, changes=None, findings=None, connectors_result=
 </header>
 <main>{sections}</main>
 <div class="foot">AI-SPM &middot; read-only. Everything here is behind the assessment;
-nothing is repeated from it.</div>
+nothing is repeated from it. &middot; <b>Created by Ali Koc</b></div>
 {built["panel"]}
 <script>{report.THEME_JS}{charts.JS}{built["script"]}</script>
 </body></html>

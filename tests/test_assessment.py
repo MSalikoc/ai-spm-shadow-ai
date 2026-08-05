@@ -201,6 +201,22 @@ def test_json_is_the_same_verdicts_as_data():
     assert {"id", "status", "verdict", "risk", "pillar"} <= set(payload["tests"][0])
 
 
+def test_the_page_is_signed():
+    """The author's name is on the page a customer is handed."""
+    results = assessment.run([_app()], _estate(), CONNECTED)
+    doc = assessment_report.html_string(results, [_app()], "t", estate=_estate(),
+                                        health=CONNECTED,
+                                        context={"finished": "05 August 2026, 09:16 UTC"})
+    assert "Created by Ali Koc" in doc
+    assert "05 August 2026, 09:16 UTC" in doc
+
+    # and the separator does not strand itself when there is no timestamp to follow it
+    bare = assessment_report.html_string(results, [_app()], "t", estate=_estate(),
+                                         health=CONNECTED)
+    assert "Created by Ali Koc" in bare
+    assert "&middot; </div>" not in bare
+
+
 def test_page_survives_an_empty_tenant():
     """No applications, no connectors, no divide-by-zero."""
     results = assessment.run([], {"vendors": [], "unattached_agents": []}, {})

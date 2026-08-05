@@ -77,6 +77,10 @@ def test_without_connectors_the_source_tabs_explain_themselves():
     assert 'data-tab="coverage"' in doc
 
 
+def test_the_page_is_signed():
+    assert "Created by Ali Koc" in detail_report.html_string([_app()], "t")
+
+
 def test_the_nav_groups_are_separated_but_every_tab_is_a_peer():
     doc = detail_report.html_string([_app()], "t")
     assert doc.count('class="grp-sep"') == 2      # oauth | sources | shared
