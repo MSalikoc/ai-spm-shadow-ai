@@ -45,8 +45,8 @@ def test_send_email_digest_builds_and_posts(monkeypatch):
     attachment = base64.b64decode(
         captured["json"]["message"]["attachments"][0]["contentBytes"]).decode("utf-8")
     assert "Executive summary" in attachment
-    assert "1 change(s) in the last 14 days" in attachment
-    assert "1 added exposure, 0 reduced it" in attachment
+    assert "1 inventory or usage event(s)" in attachment
+    assert "no material risk change" in attachment
 
 
 def test_report_url_uses_explicit_as_is(monkeypatch):

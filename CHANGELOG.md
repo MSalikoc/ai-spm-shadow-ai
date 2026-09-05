@@ -6,6 +6,16 @@ All notable changes to AI-SPM are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **Evidence confidence now separates controls from telemetry.** Assessment coverage
+  reports how many catalogue controls were answerable; telemetry coverage reports how
+  many operational sources actually connected, excluding roadmap collectors from the
+  denominator. A deterministic High/Medium/Low confidence label degrades for partial,
+  empty, timed-out or failed sources. Source freshness is shown only when a connector
+  reports a timestamp; otherwise the cockpit says it is unavailable.
+- **Trend now means material risk.** Admin consent, app-only access and privilege
+  escalation are separated from material improvements and ordinary inventory/usage
+  events, so a newly discovered record is not automatically described as deterioration.
+  The full event stream remains in Detail.
 - **Control failures now become executive decisions.** The cockpit consolidates the
   26-control evidence backlog into at most three deterministic, root-cause remediation
   programs: tenant-wide sensitive-data access, unattended/high-reach identities, and

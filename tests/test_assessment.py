@@ -271,10 +271,15 @@ def test_cockpit_coverage_confidence_never_lets_a_gap_read_as_a_pass():
     results = assessment.run(apps, health={})            # nothing connected
     doc = assessment_report.html_string(results, apps, "t", health={})
     summary = assessment.summary(results)
-    pct = round(100 * summary["assessable"] / summary["total"])
-    assert "Coverage confidence" in doc
-    assert "(%d%%)" % pct in doc
+    answerable = (summary["by_status"][assessment.PASSED]
+                  + summary["by_status"][assessment.FAILED])
+    pct = round(100 * answerable / summary["total"])
+    assert "Evidence confidence" in doc
+    assert "Assessment coverage:" in doc and "(%d%%)" % pct in doc
+    assert "Telemetry coverage:" in doc and "fully informative" in doc
+    assert "roadmap sources are not in this denominator" in doc
     assert doc.count('class="bad">Gap</span>') >= 1     # at least one named source gap
+    assert 'class="roadmap">Roadmap</span>' in doc
 
 
 def test_cockpit_risk_concentration_ranks_the_asset_named_by_the_most_failures():
@@ -284,8 +289,8 @@ def test_cockpit_risk_concentration_ranks_the_asset_named_by_the_most_failures()
     risky_pos = doc.index("RiskyAI", doc.index("Risk concentration"))
     lonely_pos = doc.index("LonelyAI", doc.index("Risk concentration"))
     assert risky_pos < lonely_pos                        # more failing controls first
-    assert "10 control(s) &middot; 300 reached" in doc
-    assert "1 control(s) &middot; 4 reached" in doc       # LonelyAI keeps _app()'s default reach
+    assert "10 control(s) &middot; 1 matching inventory record(s)" in doc
+    assert "1 control(s) &middot; 1 matching inventory record(s)" in doc
 
 
 def test_cockpit_concentration_is_honest_when_risk_is_spread_not_concentrated():
@@ -375,11 +380,71 @@ def test_cockpit_trend_counts_real_drift_events_by_direction():
     results = assessment.run(apps, health=CONNECTED)
     changes = [{"change_type": "NEW_APPLICATION", "asset_name": "X"},
               {"change_type": "ADMIN_CONSENT_ADDED", "asset_name": "Y"},
-              {"change_type": "REMOVED_PERMISSION", "asset_name": "Z"}]
+              {"change_type": "APP_DISABLED", "asset_name": "Z"}]
     doc = assessment_report.html_string(results, apps, "t", health=CONNECTED, changes=changes)
-    assert "3 change(s) in the last 14 days" in doc
-    assert "2 added exposure, 1 reduced it" in doc
-    assert 'class="trend up"' in doc
+    assert "2 material change(s) in the last 14 days" in doc
+    assert "1 deterioration, 1 improvement" in doc
+    assert "1 other inventory or usage event(s)" in doc
+    assert 'class="trend flat"' in doc
+
+
+def test_cockpit_trend_does_not_treat_inventory_noise_as_risk_deterioration():
+    apps = [_app()]
+    results = assessment.run(apps, health=CONNECTED)
+    changes = [{"change_type": "NEW_APPLICATION"}, {"change_type": "OWNER_CHANGED"},
+               {"change_type": "ACTIVITY_INCREASED"}]
+    doc = assessment_report.html_string(results, apps, "t", health=CONNECTED, changes=changes)
+    assert "no material risk change" in doc
+    assert 'class="trend flat"' in doc
+
+
+def test_coverage_confidence_separates_operational_and_roadmap_sources():
+    results = assessment.run([_app()], health=CONNECTED)
+    coverage = assessment_report._coverage_confidence(results, CONNECTED)
+    summary = assessment.summary(results)
+    assert coverage["assessment_pct"] == round(
+        100 * (summary["by_status"][assessment.PASSED]
+               + summary["by_status"][assessment.FAILED]) / len(results))
+    assert coverage["operational"] == 5
+    assert coverage["connected"] == 4  # Graph plus three fixture connectors
+    assert coverage["telemetry_pct"] == 80
+    assert coverage["confidence"] == "Medium"
+
+
+def test_skipped_control_reduces_assessment_coverage_and_empty_is_really_zero():
+    result = {"id": "BROKEN", "status": assessment.SKIPPED, "pillar": assessment.P_MON,
+              "risk": "High", "name": "Broken", "verdict": "Could not run", "assets": []}
+    coverage = assessment_report._coverage_confidence([result], {
+        key: {"status": "CONNECTED"} for key in
+        ("agent365", "entra_agent_id", "defender_cloud_apps", "purview_audit")})
+    assert coverage["assessment_pct"] == 0
+    assert coverage["assessable"] == 0
+    assert coverage["confidence"] == "Low"
+    empty = assessment_report._coverage_confidence([], {})
+    assert empty["total"] == 0 and empty["assessment_pct"] == 0
+
+
+def test_partial_and_no_data_sources_are_not_presented_as_complete_telemetry():
+    health = {"agent365": {"status": "PARTIALLY_CONNECTED"},
+              "entra_agent_id": {"status": "NO_DATA"},
+              "defender_cloud_apps": {"status": "CONNECTED"},
+              "purview_audit": {"status": "CONNECTED"}}
+    coverage = assessment_report._coverage_confidence(
+        assessment.run([_app()], health=health), health)
+    assert coverage["connected"] == 3  # Graph plus two fully informative connectors
+    assert coverage["telemetry_pct"] == 60
+    assert 'class="warn">Partial</span>' in coverage["rows"]
+    assert 'class="warn">No data</span>' in coverage["rows"]
+
+
+def test_coverage_freshness_is_explicitly_unknown_or_uses_reported_source_time():
+    assert "not reported" in assessment_report._source_freshness(CONNECTED)
+    health = {**CONNECTED,
+              "agent365": {**CONNECTED["agent365"],
+                           "collected_at": "2026-09-05T12:00:00Z"}}
+    text = assessment_report._source_freshness(health)
+    assert "1 connector(s)" in text
+    assert "2026-09-05T12:00:00Z" in text
 
 
 def test_cockpit_is_accessible_by_keyboard_and_screen_reader():
@@ -417,7 +482,8 @@ def test_cockpit_groups_duplicate_names_without_double_counting_controls():
     doc = assessment_report.html_string(results, apps, "t", estate=_estate(),
                                         health=CONNECTED)
     assert "Same (2 identities)" in doc
-    assert "101 reached" in doc
+    assert "2 matching inventory record(s)" in doc
+    assert "101 reached" not in doc
 
 
 def test_page_drops_the_detail_link_it_was_not_given_and_keeps_the_cockpit():

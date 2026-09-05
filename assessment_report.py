@@ -214,11 +214,16 @@ footer{border-top:1px solid var(--line);margin-top:44px;padding:26px 0;color:var
 .trend.up{color:#c4314b}.trend.down{color:#0f7b0f}.trend.flat{color:var(--muted)}
 .confbar{height:8px;border-radius:5px;background:var(--track);overflow:hidden;margin:4px 0 2px}
 .confbar i{display:block;height:100%;background:var(--link)}
+.confbar.telemetry i{background:#8764b8}
+.confbadge{float:right;font-size:12px;padding:3px 8px;border-radius:12px;
+ background:var(--track);color:var(--ink)}
+.fresh{font-size:12px;color:var(--muted);margin:9px 0 0}
 .conflist{list-style:none;margin:12px 0 0;padding:0;font-size:13px}
 .conflist li{display:flex;justify-content:space-between;gap:10px;padding:5px 0;
  border-top:1px solid var(--line)}
 .conflist li:first-child{border-top:none}
-.conflist .ok{color:#0f7b0f}.conflist .bad{color:#8a8886}
+.conflist .ok{color:#0f7b0f}.conflist .bad{color:#c4314b}
+.conflist .warn{color:#c07000}.conflist .roadmap{color:#8a8886}
 .decisiongrid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
 .decision{border:1px solid var(--line);border-top:4px solid var(--link);border-radius:8px;
  padding:16px;background:var(--card);display:flex;flex-direction:column;gap:11px}
@@ -653,10 +658,14 @@ def _nav(current, detail_href=None):
 
 # Change types that add exposure vs. remove it — read straight off drift.IMPORTANCE's
 # own vocabulary, not a second severity scale invented for this page.
-_EXPOSURE_UP = {"NEW_APP_ONLY_ACCESS", "ADMIN_CONSENT_ADDED", "PERMISSION_ESCALATED",
-                "NEW_APPLICATION", "NEW_PERMISSION"}
-_EXPOSURE_DOWN = {"REMOVED_PERMISSION", "ADMIN_CONSENT_REMOVED", "REMOVED_APPLICATION",
-                  "APP_DISABLED"}
+_MATERIAL_UP = {"NEW_APP_ONLY_ACCESS", "ADMIN_CONSENT_ADDED", "PERMISSION_ESCALATED"}
+_MATERIAL_DOWN = {"ADMIN_CONSENT_REMOVED", "REMOVED_APPLICATION", "APP_DISABLED"}
+_HEALTH_BY_LABEL = {
+    "Microsoft Agent 365": "agent365",
+    "Microsoft Entra Agent ID": "entra_agent_id",
+    "Defender for Cloud Apps": "defender_cloud_apps",
+    "Microsoft Purview Audit": "purview_audit",
+}
 
 
 def _posture(shadow_apps):
@@ -686,11 +695,31 @@ def _trend(changes):
     if not changes:
         return ("flat", "No changes recorded against the previous scan — the estate "
                "held steady.")
-    up = sum(1 for e in changes if e.get("change_type") in _EXPOSURE_UP)
-    down = sum(1 for e in changes if e.get("change_type") in _EXPOSURE_DOWN)
+    up = sum(1 for e in changes if e.get("change_type") in _MATERIAL_UP)
+    down = sum(1 for e in changes if e.get("change_type") in _MATERIAL_DOWN)
+    other = len(changes) - up - down
     cls = "up" if up > down else ("down" if down > up else "flat")
-    return (cls, "%d change(s) in the last 14 days &mdash; %d added exposure, %d reduced it."
-           % (len(changes), up, down))
+    material = up + down
+    if not material:
+        return ("flat", "%d inventory or usage event(s), but no material risk change "
+                "was detected in the last 14 days." % other)
+    return (cls, "%d material change(s) in the last 14 days &mdash; %d deterioration, "
+            "%d improvement. %d other inventory or usage event(s) are kept in Detail."
+            % (material, up, down, other))
+
+
+def _source_freshness(health):
+    timestamps = []
+    for entry in (health or {}).values():
+        for key in ("collected_at", "checked_at", "last_success", "timestamp"):
+            value = entry.get(key)
+            if value:
+                timestamps.append(str(value))
+                break
+    if not timestamps:
+        return "Source-level freshness is not reported by the connected APIs."
+    return ("Freshness reported by %d connector(s); oldest reported source time: %s."
+            % (len(timestamps), min(timestamps)))
 
 
 def _coverage_confidence(results, health):
@@ -700,13 +729,45 @@ def _coverage_confidence(results, health):
     `Not assessed` row read as a pass.
     """
     summary = assessment.summary(results)
-    total = summary["total"] or 1
-    pct = round(100 * summary["assessable"] / total)
-    rows = "".join(
-        '<li><span>%s</span><span class="%s">%s</span></li>'
-        % (esc(name), "ok" if ok else "bad", "Connected" if ok else "Gap")
-        for name, ok, _detail in executive.connector_status(health))
-    return pct, summary["assessable"], total, rows
+    total = summary["total"]
+    answerable = (summary["by_status"].get(assessment.PASSED, 0)
+                  + summary["by_status"].get(assessment.FAILED, 0))
+    assessment_pct = round(100 * answerable / total) if total else 0
+    sources = executive.connector_status(health)
+    operational = [(name, ok, detail) for name, ok, detail in sources if ok is not None]
+    connected = 1  # Entra ID / Microsoft Graph; producing this report proves it ran.
+    connected += sum(1 for key in _HEALTH_BY_LABEL.values()
+                     if (health or {}).get(key, {}).get("status") == "CONNECTED")
+    telemetry_pct = round(100 * connected / len(operational)) if operational else 0
+    degraded = any((entry or {}).get("status") in
+                   ("PARTIALLY_CONNECTED", "NO_DATA", "TIMEOUT", "ERROR")
+                   for entry in (health or {}).values())
+    if total and assessment_pct >= 90 and telemetry_pct == 100 and not degraded:
+        confidence = "High"
+    elif assessment_pct >= 70 and telemetry_pct >= 40:
+        confidence = "Medium"
+    else:
+        confidence = "Low"
+    rows_html = []
+    for name, ok, _detail in sources:
+        status = (health or {}).get(_HEALTH_BY_LABEL.get(name, ""), {}).get("status")
+        if ok is None:
+            css, label = "roadmap", "Roadmap"
+        elif status == "PARTIALLY_CONNECTED":
+            css, label = "warn", "Partial"
+        elif status == "NO_DATA":
+            css, label = "warn", "No data"
+        elif ok:
+            css, label = "ok", "Connected"
+        else:
+            css, label = "bad", "Gap"
+        rows_html.append('<li><span>%s</span><span class="%s">%s</span></li>'
+                         % (esc(name), css, label))
+    return {"assessment_pct": assessment_pct, "assessable": answerable,
+            "total": total, "telemetry_pct": telemetry_pct, "connected": connected,
+            "operational": len(operational), "confidence": confidence,
+            "rows": "".join(rows_html),
+            "freshness": _source_freshness(health)}
 
 
 def _concentration(results, apps):
@@ -716,13 +777,11 @@ def _concentration(results, apps):
     compromise (or a single fix) moves the needle furthest; ranking by fail-count alone
     would put a rarely-used app ahead of one every failing control keeps naming.
     """
-    reach = {}
     identities = {}
     for app in apps:
         name = app.get("display_name")
         if not name:
             continue
-        reach[name] = reach.get(name, 0) + (app.get("user_count", 0) or 0)
         identities[name] = identities.get(name, 0) + 1
     tally = {}
     for t in results:
@@ -736,18 +795,19 @@ def _concentration(results, apps):
             if assessment.RISK_ORDER.get(t["risk"], 9) < assessment.RISK_ORDER.get(e["risk"], 9):
                 e["risk"] = t["risk"]
     ranked = sorted(tally.items(),
-                    key=lambda kv: (-kv[1]["tests"], -reach.get(kv[0], 0)))[:5]
+                    key=lambda kv: (-kv[1]["tests"], -identities.get(kv[0], 0)))[:5]
     if not ranked:
         return ('<p class="cap" style="margin-top:0">No single asset is named by more '
                "than one failing test — risk is spread rather than concentrated.</p>")
     return "".join(
         '<div class="concrow"><span class="cn" style="color:%s">%s</span>'
-        '<span class="cc">%d control(s) &middot; %s reached</span></div>'
+        '<span class="cc">%d control(s) &middot; %s</span></div>'
         % (RISK_COLOR.get(v["risk"], "#5f6b7a"),
            esc(name + (f" ({identities.get(name, 0)} identities)"
                        if identities.get(name, 0) > 1 else "")),
            v["tests"],
-           "{:,}".format(reach.get(name, 0)))
+           ("%d matching inventory record(s)" % identities[name]
+            if identities.get(name) else "control evidence only"))
         for name, v in ranked)
 
 
@@ -830,7 +890,7 @@ def _narrative(results, decisions):
                % routed))
 
 
-def _cockpit(results, apps, estate, health, changes):
+def _cockpit(results, apps, estate, health, changes, context=None):
     """
     The hero: one screen a decision-maker can act on without opening a single row.
     Composed entirely from data the page already renders below it — the table remains
@@ -839,7 +899,9 @@ def _cockpit(results, apps, estate, health, changes):
     shadow_apps = [a for a in apps if not a.get("first_party_microsoft")]
     score, band = _posture(shadow_apps)
     trend_cls, trend_text = _trend(changes)
-    pct, assessable, total, conn_rows = _coverage_confidence(results, health)
+    coverage = _coverage_confidence(results, health)
+    counts = {lv: sum(1 for app in shadow_apps if app.get("risk_level") == lv)
+              for lv in report.LEVELS}
     decisions_html, decisions = _decisions_html(results, apps)
     conc_html = _concentration(results, apps)
     narrative = _narrative(results, decisions)
@@ -856,14 +918,22 @@ def _cockpit(results, apps, estate, health, changes):
       <h3>Posture</h3>
       <div class="postrow">%(gauge)s
         <div><p class="pn">Exposure score, not a compliance score — weighted by
-        finding severity and by unattended (app-only) access.</p></div>
+        finding severity and by unattended (app-only) access.</p>
+        <p class="pn"><b>Drivers:</b> %(critical)d Critical, %(high)d High-risk asset(s).
+        No target score is configured; the decisions below measure control evidence,
+        not a promised score reduction.</p></div>
       </div>
     </div>
     <div class="card">
-      <h3>Coverage confidence</h3>
-      <p class="pn">%(assessable)d of %(total)d tests were answerable this scan
-      (%(pct)d%%). The rest are gaps, never passes.</p>
-      <div class="confbar"><i style="width:%(pct)d%%"></i></div>
+      <h3>Evidence confidence <span class="confbadge">%(confidence)s</span></h3>
+      <p class="pn"><b>Assessment coverage:</b> %(assessable)d of %(total)d controls
+      answerable (%(assessment_pct)d%%).</p>
+      <div class="confbar"><i style="width:%(assessment_pct)d%%"></i></div>
+      <p class="pn"><b>Telemetry coverage:</b> %(connected)d of %(operational)d operational
+      sources fully informative (%(telemetry_pct)d%%). Partial and no-data sources reduce
+      confidence; roadmap sources are not in this denominator.</p>
+      <div class="confbar telemetry"><i style="width:%(telemetry_pct)d%%"></i></div>
+      <p class="fresh">%(freshness)s</p>
       <ul class="conflist">%(conn_rows)s</ul>
     </div>
     <div class="card">
@@ -877,7 +947,12 @@ def _cockpit(results, apps, estate, health, changes):
 </div>
 """ % {"narrative": narrative, "trend_cls": trend_cls, "trend_text": trend_text,
        "gauge": charts.gauge(score, "Tenant AI posture"),
-       "assessable": assessable, "total": total, "pct": pct, "conn_rows": conn_rows,
+       "critical": counts.get("Critical", 0), "high": counts.get("High", 0),
+       "assessable": coverage["assessable"], "total": coverage["total"],
+       "assessment_pct": coverage["assessment_pct"],
+       "connected": coverage["connected"], "operational": coverage["operational"],
+       "telemetry_pct": coverage["telemetry_pct"], "confidence": coverage["confidence"],
+       "freshness": esc(coverage["freshness"]), "conn_rows": coverage["rows"],
        "conc": conc_html, "decisions": decisions_html}
 
 
@@ -911,7 +986,7 @@ def _overview(ctx, results, apps, estate, tenant_id, context, changes=None):
 
     scanned = (context or {}).get("identity") or {}
     finished = (context or {}).get("finished") or ""
-    cockpit_html = _cockpit(results, apps, estate, ctx["health"], changes)
+    cockpit_html = _cockpit(results, apps, estate, ctx["health"], changes, context)
 
     return """
 <h1>%(org)s</h1>
