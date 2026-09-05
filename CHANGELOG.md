@@ -6,6 +6,14 @@ All notable changes to AI-SPM are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **Executive decisions are now governed records, not static cards.** A separate
+  `decisions.json` store preserves owner, status, due date, notes, compensating control,
+  and immutable field history across scans. Supported outcomes include Verified,
+  Deferred, False positive, Compensating control and Risk accepted. Risk acceptance is
+  rejected unless it has an owner, rationale, approver and future expiry; expired
+  acceptances are visibly reopened for attention. `GET/POST /api/decisions` exposes the
+  workflow without changing Microsoft 365, and the state is included in assessment HTML,
+  JSON and weekly attachments.
 - **Evidence confidence now separates controls from telemetry.** Assessment coverage
   reports how many catalogue controls were answerable; telemetry coverage reports how
   many operational sources actually connected, excluding roadmap collectors from the

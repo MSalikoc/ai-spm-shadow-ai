@@ -249,6 +249,25 @@ Start-Process "https://$FUNC.azurewebsites.net/api/assessment?code=$KEY"
 | `/api/detail` | Everything behind it, on one page |
 | `/api/doctor` | What the Managed Identity can read |
 | `/api/scan` | Trigger a scan |
+| `/api/decisions` | Read or update CISO decision ownership, status, due dates and exceptions |
+
+Decision workflow records live in the report storage account; they never change tenant
+configuration. A risk acceptance must name an owner, approver, rationale and future
+expiry:
+
+```bash
+curl -X POST "https://$FUNCTION_APP.azurewebsites.net/api/decisions?code=$KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"decision_key":"governance","status":"Risk accepted","owner":"CISO","acceptance":{"rationale":"Ownership programme funded and in progress","approved_by":"CISO","expires_at":"2026-12-31"}}'
+```
+
+Run a scan after an update to publish the new workflow state into the self-contained
+assessment report. `GET /api/decisions` returns all three current records.
+Date-only due dates and acceptance expiries are inclusive through the end of that UTC
+calendar date; timestamps take effect at the exact instant specified. Open decisions,
+overdue work, expired acceptances and invalid workflow records remain visible even when
+their program has no current failed controls. Invalid stored data is reported rather than
+overwritten; concurrent updates reload and merge against the latest storage version.
 
 ---
 
@@ -364,7 +383,9 @@ Set by the setup scripts. Change these on a deployment with
 
 ## Security & privacy
 
-- **Read-only.** Nothing is revoked, deleted or changed.
+- **Read-only against Microsoft 365.** Nothing is revoked, deleted or changed in the
+  tenant. Ownership and risk-decision records are written only to the product's report
+  storage account.
 - **No stored secrets** on a deployment — Managed Identity only.
 - **Your data stays in your tenant** — reports go to your own Storage account.
 - **No raw AI content.** Sensitive-interaction records keep metadata only, never prompt

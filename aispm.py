@@ -207,14 +207,16 @@ def cmd_scan(args) -> int:
                                           assessment_href="assessment.html"))
 
     assess_path = os.path.join(args.out, "assessment.html")
+    import decisions as decisionstate
+    decision_store = decisionstate.load()
     with open(assess_path, "w", encoding="utf-8") as f:
         f.write(assessment_report.html_string(
             results, scored, tenant, estate=estate, health=health, context=context,
-            detail_href="detail.html"))
+            detail_href="detail.html", decision_states=decision_store))
 
     # The data behind both pages, for anything that would rather read JSON than HTML.
     with open(os.path.join(args.out, "assessment.json"), "w", encoding="utf-8") as f:
-        f.write(assessment_report.json_string(results))
+        f.write(assessment_report.json_string(results, decision_store))
     report.write_json(scored, os.path.join(args.out, "report.json"))
     with open(os.path.join(args.out, "estate.json"), "w", encoding="utf-8") as f:
         f.write(portal.json_string(scored, connectors_result, tenant))

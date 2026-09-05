@@ -20,6 +20,7 @@ import auth
 import collectors
 import connectors_drift
 import connectors_report
+import decisions as decisionstate
 import drift
 import findings as findingsvc
 import metadata
@@ -84,6 +85,8 @@ def _run_scan(source: str):
 
             estate = portal.build_estate(scored, connectors_result)
             health = (connectors_result or {}).get("health")
+            decision_store = decisionstate.load()
+            rendered_at = datetime.now(timezone.utc)
             # `changes` (drift.recent) was already computed above for the detail page's
             # Changes tab but never reached the catalogue itself, so AISPM-5003 ("the
             # estate is tracked over time") reported Not assessed on every scan even
@@ -100,10 +103,11 @@ def _run_scan(source: str):
                 assessment_report.html_string(
                     results, scored, tenant_id, estate=estate, health=health,
                     context={"tenant_profile": _tenant_profile(graph),
-                             "finished": datetime.now(timezone.utc)
-                             .strftime("%d %B %Y, %H:%M UTC")},
-                    detail_href="detail", changes=assessment_changes),
-                assessment_report.json_string(results))
+                             "finished": rendered_at.strftime("%d %B %Y, %H:%M UTC"),
+                             "now": rendered_at},
+                    detail_href="detail", changes=assessment_changes,
+                    decision_states=decision_store),
+                assessment_report.json_string(results, decision_store, now=rendered_at))
         except Exception:
             logging.exception("page render error")
         published = storage.publish(scored, tenant_id, changes, finding_records,
@@ -357,6 +361,56 @@ def metadata_set(req: func.HttpRequest) -> func.HttpResponse:
     metadata.save(store)
     return func.HttpResponse(json.dumps({"app_id": app_id, "metadata": entry}, ensure_ascii=False),
                              mimetype="application/json", status_code=200)
+
+
+@app.route(route="decisions", methods=["GET", "POST"], auth_level=func.AuthLevel.FUNCTION)
+def decisions_workflow(req: func.HttpRequest) -> func.HttpResponse:
+    """
+    Reads or updates CISO decision workflow state. This records governance decisions;
+    it never changes Microsoft 365 configuration.
+
+    POST body: {"decision_key":"...", "status":"...", "owner":"...",
+                "due_date":"...", "notes":"...",
+                "acceptance":{"rationale":"...", "approved_by":"...",
+                              "expires_at":"..."}}
+    """
+    try:
+        store = decisionstate.load()
+        if req.method == "GET":
+            payload = {key: decisionstate.view_state(key, store.get(key))
+                       for key in sorted(decisionstate.KEYS)}
+            return func.HttpResponse(json.dumps({"decisions": payload}, ensure_ascii=False),
+                                     mimetype="application/json", status_code=200)
+        try:
+            body = req.get_json()
+        except ValueError:
+            return func.HttpResponse('{"error":"invalid JSON"}', status_code=400,
+                                     mimetype="application/json")
+        if not isinstance(body, dict):
+            return func.HttpResponse('{"error":"JSON body must be an object"}', status_code=400,
+                                     mimetype="application/json")
+        key = body.get("decision_key")
+        if not key:
+            return func.HttpResponse('{"error":"decision_key is required"}', status_code=400,
+                                     mimetype="application/json")
+        patch = {k: v for k, v in body.items() if k != "decision_key"}
+        try:
+            state = decisionstate.update_decision(key, patch)
+        except ValueError as exc:
+            return func.HttpResponse(json.dumps({"error": str(exc)}, ensure_ascii=False),
+                                     status_code=400, mimetype="application/json")
+        except storage.StorageConflict:
+            return func.HttpResponse(
+                '{"error":"decision changed concurrently; retry the request"}',
+                status_code=409, mimetype="application/json")
+        return func.HttpResponse(json.dumps(
+            {"decision": decisionstate.view_state(key, state),
+             "report_refresh": "Run a scan to publish this state in the assessment."},
+            ensure_ascii=False), mimetype="application/json", status_code=200)
+    except Exception as exc:
+        logging.exception("decisions workflow error")
+        return func.HttpResponse(json.dumps({"error": str(exc)}, ensure_ascii=False),
+                                 mimetype="application/json", status_code=500)
 
 
 @app.route(route="finding", methods=["POST"], auth_level=func.AuthLevel.FUNCTION)

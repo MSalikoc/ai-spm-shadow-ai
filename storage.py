@@ -7,10 +7,74 @@ Every run writes two copies:
   - latest.html / latest.json             (fixed name the dashboard reads)
 """
 import json
+import hashlib
+import errno
 import os
+import time
+import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
 import report
+
+
+class StorageConflict(RuntimeError):
+    """The document changed after it was read; the caller must reload and merge."""
+
+
+@contextmanager
+def _local_lock(path, timeout=10):
+    # Keep the lock file: unlinking it lets waiters lock different files for one document.
+    with open(path + ".lock", "a+b") as lock:
+        if os.name == "nt":
+            import msvcrt
+
+            def acquire():
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+
+            def release():
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            def acquire():
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+            def release():
+                fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                acquire()
+                break
+            except OSError as exc:
+                if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                    raise
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"Timed out waiting for storage lock: {path}") from exc
+                time.sleep(0.01)
+        try:
+            yield
+        finally:
+            release()
+
+
+def _replace_local(path, payload):
+    temp = f"{path}.{uuid.uuid4().hex}.tmp"
+    created = False
+    try:
+        with open(temp, "xb") as f:
+            created = True
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp, path)
+    finally:
+        if created and os.path.exists(temp):
+            os.unlink(temp)
 
 
 def read_json(name: str):
@@ -30,8 +94,9 @@ def write_json(name: str, obj) -> None:
     conn = os.environ.get("AzureWebJobsStorage") or os.environ.get("REPORT_STORAGE_CONNECTION")
     if not conn or conn.lower().startswith("usedevelopmentstorage"):
         os.makedirs("out", exist_ok=True)
-        with open(os.path.join("out", name), "w", encoding="utf-8") as f:
-            f.write(payload)
+        path = os.path.join("out", name)
+        with _local_lock(path):
+            _replace_local(path, payload.encode("utf-8"))
         return
     from azure.storage.blob import BlobServiceClient, ContentSettings
     container = os.environ.get("REPORT_CONTAINER", "aispm-reports")
@@ -42,6 +107,77 @@ def write_json(name: str, obj) -> None:
         pass
     cc.upload_blob(name, payload.encode("utf-8"), overwrite=True,
                    content_settings=ContentSettings(content_type="application/json"))
+
+
+def read_json_versioned(name: str):
+    """Return (decoded object, version). Invalid JSON raises instead of looking missing."""
+    conn = os.environ.get("AzureWebJobsStorage") or os.environ.get("REPORT_STORAGE_CONNECTION")
+    if not conn or conn.lower().startswith("usedevelopmentstorage"):
+        path = os.path.join("out", name)
+        if not os.path.isdir("out"):
+            return None, None
+        with _local_lock(path):
+            try:
+                with open(path, "rb") as f:
+                    raw = f.read()
+            except FileNotFoundError:
+                return None, None
+        try:
+            return json.loads(raw.decode("utf-8")), hashlib.sha256(raw).hexdigest()
+        except (UnicodeDecodeError, ValueError, TypeError) as exc:
+            raise ValueError(f"{name} contains invalid JSON") from exc
+    from azure.core.exceptions import ResourceNotFoundError
+    from azure.storage.blob import BlobServiceClient
+    container = os.environ.get("REPORT_CONTAINER", "aispm-reports")
+    bc = BlobServiceClient.from_connection_string(conn).get_blob_client(container, name)
+    try:
+        download = bc.download_blob()
+        raw = download.readall()
+    except ResourceNotFoundError:
+        return None, None
+    try:
+        return json.loads(raw.decode("utf-8")), download.properties.etag
+    except (UnicodeDecodeError, ValueError, TypeError) as exc:
+        raise ValueError(f"{name} contains invalid JSON") from exc
+
+
+def write_json_conditional(name: str, obj, expected_version) -> None:
+    """Atomically write only when the stored version still matches the caller's read."""
+    payload = json.dumps(obj, ensure_ascii=False, indent=2).encode("utf-8")
+    conn = os.environ.get("AzureWebJobsStorage") or os.environ.get("REPORT_STORAGE_CONNECTION")
+    if not conn or conn.lower().startswith("usedevelopmentstorage"):
+        os.makedirs("out", exist_ok=True)
+        path = os.path.join("out", name)
+        with _local_lock(path):
+            try:
+                with open(path, "rb") as f:
+                    actual = hashlib.sha256(f.read()).hexdigest()
+            except FileNotFoundError:
+                actual = None
+            if expected_version != actual:
+                raise StorageConflict(name)
+            _replace_local(path, payload)
+        return
+    from azure.core import MatchConditions
+    from azure.core.exceptions import ResourceExistsError, ResourceModifiedError
+    from azure.storage.blob import BlobServiceClient, ContentSettings
+    container = os.environ.get("REPORT_CONTAINER", "aispm-reports")
+    cc = BlobServiceClient.from_connection_string(conn).get_container_client(container)
+    try:
+        cc.create_container()
+    except ResourceExistsError:
+        pass
+    bc = cc.get_blob_client(name)
+    try:
+        if expected_version is None:
+            bc.upload_blob(payload, overwrite=False,
+                           content_settings=ContentSettings(content_type="application/json"))
+        else:
+            bc.upload_blob(payload, overwrite=True, etag=expected_version,
+                           match_condition=MatchConditions.IfNotModified,
+                           content_settings=ContentSettings(content_type="application/json"))
+    except (ResourceExistsError, ResourceModifiedError) as exc:
+        raise StorageConflict(name) from exc
 
 
 SCAN_QUEUE = "aispm-scan-queue"

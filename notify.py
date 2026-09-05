@@ -127,6 +127,7 @@ def send_email_digest(scored, tenant_id, changes=None, connectors_result=None,
     try:
         import assessment
         import assessment_report
+        import decisions as decisionstate
         import portal
         estate = portal.build_estate(scored, connectors_result)
         health = (connectors_result or {}).get("health")
@@ -134,7 +135,8 @@ def send_email_digest(scored, tenant_id, changes=None, connectors_result=None,
         results = assessment.run(scored, estate, health, assessment_changes)
         dashboard = assessment_report.html_string(results, scored, tenant_id,
                                                   estate=estate, health=health,
-                                                  changes=assessment_changes)
+                                                  changes=assessment_changes,
+                                                  decision_states=decisionstate.load())
     except Exception:
         dashboard = report.html_string(scored, tenant_id)
 

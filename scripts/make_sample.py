@@ -212,10 +212,34 @@ def main():
 
     assess = os.path.join(docs, "sample-assessment.html")
     with open(assess, "w", encoding="utf-8") as f:
+        decision_states = {
+            "sensitive-access": {
+                "decision_key": "sensitive-access", "status": "In progress",
+                "owner": "Identity Protection", "due_date": "2026-08-08", "notes": "",
+                "compensating_control": "", "acceptance": None, "updated_at": NOW.isoformat(),
+                "history": [],
+            },
+            "identity-exposure": {
+                "decision_key": "identity-exposure", "status": "Approved",
+                "owner": "SecOps", "due_date": "2026-08-15", "notes": "",
+                "compensating_control": "", "acceptance": None, "updated_at": NOW.isoformat(),
+                "history": [],
+            },
+            "governance": {
+                "decision_key": "governance", "status": "Risk accepted",
+                "owner": "CISO", "due_date": "2026-08-31", "notes": "",
+                "compensating_control": "",
+                "acceptance": {"rationale": "30-day ownership mobilisation approved.",
+                               "approved_by": "CISO", "expires_at": "2026-08-31"},
+                "updated_at": NOW.isoformat(), "history": [],
+            },
+        }
         f.write(assessment_report.html_string(
             results, scored, TENANT, estate=estate_for_tests, health=health,
-            context=dict(SAMPLE_CONTEXT, finished=NOW.strftime("%d %B %Y, %H:%M UTC")),
-            detail_href="sample-detail.html", changes=changes))
+            context=dict(SAMPLE_CONTEXT, finished=NOW.strftime("%d %B %Y, %H:%M UTC"),
+                         now=NOW),
+            detail_href="sample-detail.html", changes=changes,
+            decision_states=decision_states))
 
     counts = {lv: sum(1 for a in scored if a["risk_level"] == lv)
               for lv in ("Critical", "High", "Medium", "Low")}

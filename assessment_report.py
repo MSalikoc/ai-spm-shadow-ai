@@ -26,6 +26,7 @@ import math
 
 import assessment
 import charts
+import decisions as decisionstate
 import executive
 import report
 
@@ -234,6 +235,10 @@ footer{border-top:1px solid var(--line);margin-top:44px;padding:26px 0;color:var
 .decision .why,.decision .choice{font-size:13px;line-height:1.5;margin:0}
 .decision .choice{padding-top:10px;border-top:1px solid var(--line)}
 .decision .effect{font-size:12.5px;color:var(--muted);margin-top:auto}
+.dstatus{display:inline-block;width:max-content;font-size:12px;font-weight:600;
+ padding:4px 9px;border-radius:12px;background:var(--track)}
+.dstatus.overdue,.dstatus.expired{background:#fde7eb;color:#a4262c}
+.acceptance{font-size:12.5px;padding:9px 10px;border-radius:5px;background:var(--track)}
 .campaigns{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:12px}
 .campaign{border:1px solid var(--line);border-radius:6px;padding:11px 12px}
 .campaign b{display:block;font-size:13.5px}.campaign span{font-size:12px;color:var(--muted)}
@@ -811,30 +816,38 @@ def _concentration(results, apps):
         for name, v in ranked)
 
 
-def _decision_programs(results, apps):
-    """Collapse control failures into no more than three accountable root-cause decisions."""
+def _decision_programs(results, apps, decision_states=None, now=None):
+    """Keep failures and unfinished governance visible in at most three decision programs."""
     failed = {t["id"]: t for t in results if t["status"] == assessment.FAILED}
+    decision_states = decision_states or {}
     decisions = []
     for definition in DECISION_PROGRAMS:
-        controls = [failed[tid] for tid in definition["ids"] if tid in failed]
-        if not controls:
+        controls = sorted(
+            (failed[tid] for tid in definition["ids"] if tid in failed),
+            key=lambda t: (assessment.RISK_ORDER[t["risk"]], t["id"]))
+        key = definition["key"]
+        workflow = decisionstate.view_state(key, decision_states.get(key), now=now)
+        actionable = key in decision_states and (
+            workflow["data_error"] or workflow["overdue"] or workflow["acceptance_expired"]
+            or workflow["status"] not in {"Verified", "False positive"})
+        if not controls and not actionable:
             continue
         names = {name for control in controls for name, _detail in control["assets"]}
         decisions.append({
             **definition,
-            "controls": sorted(controls, key=lambda t: (assessment.RISK_ORDER[t["risk"]],
-                                                        t["id"])),
+            "controls": controls,
             # Assessment evidence currently carries display labels, not stable IDs or a
             # cross-application user union. Call these evidence items rather than
             # pretending they are unique identities or people.
             "evidence_items": len(names),
             "evidence": [t["verdict"] for t in controls[:2]],
+            "workflow": workflow,
         })
     return decisions
 
 
-def _decisions_html(results, apps):
-    decisions = _decision_programs(results, apps)
+def _decisions_html(results, apps, decision_states=None, now=None):
+    decisions = _decision_programs(results, apps, decision_states, now)
     if not decisions:
         return ('<div class="card"><h3>Executive decisions</h3><p class="cap">'
                 "No remediation decision is required from the controls assessed this scan. "
@@ -843,29 +856,66 @@ def _decisions_html(results, apps):
     for index, decision in enumerate(decisions, 1):
         controls = decision["controls"]
         high = sum(1 for t in controls if t["risk"] == "High")
-        scope = ("%d control(s) &middot; %d named evidence item(s)"
+        scope = ("%d current failed control(s) &middot; %d named evidence item(s)"
                  % (len(controls), decision["evidence_items"]))
-        evidence = " ".join(decision["evidence"]) or "See the control backlog for evidence."
+        evidence = " ".join(decision["evidence"]) or (
+            "No current failed controls in this program. This does not close the "
+            "persisted workflow or establish that unassessed controls passed.")
+        workflow = decision["workflow"]
+        state_class = ("expired" if workflow.get("data_error") or workflow["acceptance_expired"]
+                       else ("overdue" if workflow["overdue"] else ""))
+        owner = workflow["owner"] or "Unassigned"
+        due = workflow["due_date"] or "Not assigned"
+        acceptance = ""
+        if workflow.get("acceptance"):
+            accepted = workflow["acceptance"]
+            acceptance = (
+                '<div class="acceptance"><b>Risk acceptance:</b> %s<br>'
+                'Approved by %s &middot; expires %s</div>'
+                % (esc(accepted.get("rationale")), esc(accepted.get("approved_by")),
+                   esc(accepted.get("expires_at"))))
+        elif workflow.get("compensating_control"):
+            acceptance = ('<div class="acceptance"><b>Compensating control:</b> %s</div>'
+                          % esc(workflow["compensating_control"]))
+        if workflow["data_error"]:
+            acceptance += ('<div class="acceptance"><b>Workflow data invalid:</b> %s</div>'
+                           % esc(workflow["data_error"]))
+        if workflow.get("notes"):
+            acceptance += ('<div class="acceptance"><b>Decision notes:</b> %s</div>'
+                           % esc(workflow["notes"]))
         effect = ("%d control(s) enter one accountable campaign; each retains its canonical "
-                  "verification criteria" % len(controls))
+                  "verification criteria; %s."
+                  % (len(controls), ", ".join(t["id"] for t in controls)) if controls else
+                  "Review and explicitly resolve the persisted workflow; "
+                  "no current failed controls are being claimed.")
+        why = decision["why"] if controls else (
+            "A persisted decision still needs governance review, renewal or explicit closure.")
+        choice = decision["choice"] if controls else (
+            "Review the recorded decision and supporting evidence, correct invalid records "
+            "and resolve overdue or expired exceptions before marking the program complete.")
+        priority = "Immediate" if high or state_class else "Planned"
         cards.append(
             '<article class="decision" aria-labelledby="decision-%d"><h4 id="decision-%d">'
             '<span class="u">Decision %d</span><br>%s</h4><div class="scope">%s</div>'
-            '<div class="dmeta"><span>Accountable owner</span><b>%s</b>'
-            '<span>Due</span><b>%s</b><span>Priority</span><b>%s</b></div>'
+            '<span class="dstatus %s">%s</span>'
+            '<div class="dmeta"><span>Assigned owner</span><b>%s</b>'
+            '<span>Recommended owner</span><b>%s</b><span>Due date</span><b>%s</b>'
+            '<span>Target SLA</span><b>%s</b><span>Priority</span><b>%s</b></div>'
             '<p class="why"><b>Why now:</b> %s</p><p class="why"><b>Observed evidence:</b> '
             '%s</p><p class="choice"><b>Executive choice:</b> %s</p>'
-            '<div class="effect">%s; %s.</div></article>'
-            % (index, index, index, esc(decision["title"]), scope, esc(decision["owner"]),
-               esc(decision["sla"]), "Immediate" if high else "Planned",
-               esc(decision["why"]), esc(evidence), esc(decision["choice"]), esc(effect),
-               esc(", ".join(t["id"] for t in controls))))
+            '%s<div class="effect">%s</div></article>'
+            % (index, index, index, esc(decision["title"]), scope, state_class,
+               esc(workflow["display_status"]), esc(owner), esc(decision["owner"]), esc(due),
+               esc(decision["sla"]), priority,
+               esc(why), esc(evidence), esc(choice), acceptance, esc(effect)))
     campaigns = "".join(
-        '<div class="campaign"><b>%s</b><span>%d control(s) routed to %s</span></div>'
+        '<div class="campaign"><b>%s</b><span>%d current failed control(s); program owner: '
+        '%s</span></div>'
         % (esc(d["title"]), len(d["controls"]), esc(d["owner"])) for d in decisions)
     return (
         '<div class="card"><h3>%d executive %s that %s the risk</h3>'
-        '<p class="pn">Control failures are consolidated by root cause. The complete '
+        '<p class="pn">Control failures are consolidated by root cause. Persisted decisions '
+        'remain visible until resolved, even with no current failed controls. The complete '
         '26-control evidence backlog remains below.</p><div class="decisiongrid">%s</div>'
         '<h3 style="margin-top:20px">Remediation campaigns</h3>'
         '<div class="campaigns">%s</div></div>'
@@ -878,19 +928,28 @@ def _decisions_html(results, apps):
 def _narrative(results, decisions):
     failed = [t for t in results if t["status"] == assessment.FAILED]
     if not failed:
+        if decisions:
+            return ("<p>No control in this catalogue failed this scan. "
+                    "<b>%d persisted decision program(s) still require governance attention.</b> "
+                    "Review open decisions, overdue work, expired acceptances and invalid "
+                    "records; continue closing coverage gaps and monitoring.</p>" % len(decisions))
         return ("<p>No control in this catalogue failed this scan. The remaining work is "
                 "closing coverage gaps and sustaining monitoring.</p>")
     routed = sum(len(d["controls"]) for d in decisions)
+    persisted_only = sum(not d["controls"] for d in decisions)
     high = sum(1 for t in failed if t["risk"] == "High")
     return ("<p><b>%d control failure(s) are consolidated into %d executive decision(s).</b> "
             "%d are High risk. This separates what leadership must approve from the "
             "evidence backlog the security team must execute.</p>"
             % (len(failed), len(decisions), high)
             + ("<p>%d failed control(s) are routed into accountable remediation campaigns.</p>"
-               % routed))
+               % routed)
+            + ("<p>%d additional persisted program(s) have no current failed controls "
+               "but still require governance attention.</p>" % persisted_only
+               if persisted_only else ""))
 
 
-def _cockpit(results, apps, estate, health, changes, context=None):
+def _cockpit(results, apps, estate, health, changes, context=None, decision_states=None):
     """
     The hero: one screen a decision-maker can act on without opening a single row.
     Composed entirely from data the page already renders below it — the table remains
@@ -902,7 +961,8 @@ def _cockpit(results, apps, estate, health, changes, context=None):
     coverage = _coverage_confidence(results, health)
     counts = {lv: sum(1 for app in shadow_apps if app.get("risk_level") == lv)
               for lv in report.LEVELS}
-    decisions_html, decisions = _decisions_html(results, apps)
+    decisions_html, decisions = _decisions_html(
+        results, apps, decision_states, (context or {}).get("now"))
     conc_html = _concentration(results, apps)
     narrative = _narrative(results, decisions)
 
@@ -956,7 +1016,8 @@ def _cockpit(results, apps, estate, health, changes, context=None):
        "conc": conc_html, "decisions": decisions_html}
 
 
-def _overview(ctx, results, apps, estate, tenant_id, context, changes=None):
+def _overview(ctx, results, apps, estate, tenant_id, context, changes=None,
+              decision_states=None):
     summary = assessment.summary(results)
     profile = (context or {}).get("tenant_profile") or {}
     org = profile.get("display_name") or "This tenant"
@@ -986,7 +1047,8 @@ def _overview(ctx, results, apps, estate, tenant_id, context, changes=None):
 
     scanned = (context or {}).get("identity") or {}
     finished = (context or {}).get("finished") or ""
-    cockpit_html = _cockpit(results, apps, estate, ctx["health"], changes, context)
+    cockpit_html = _cockpit(results, apps, estate, ctx["health"], changes, context,
+                            decision_states)
 
     return """
 <h1>%(org)s</h1>
@@ -1236,7 +1298,7 @@ if(location.pathname.indexOf('/api/')===0){
 
 
 def html_string(results, apps, tenant_id, estate=None, health=None, context=None,
-                detail_href=None, changes=None) -> str:
+                detail_href=None, changes=None, decision_states=None) -> str:
     """The whole page, self-contained."""
     estate = estate or {"vendors": [], "unattached_agents": []}
     ctx = assessment.context(apps, estate, health)
@@ -1273,15 +1335,20 @@ def html_string(results, apps, tenant_id, estate=None, health=None, context=None
 """ % {"css": CSS + charts.CSS, "js": JS, "nav": _nav("overview", detail_href),
        "org": esc(((context or {}).get("tenant_profile") or {}).get("display_name")
                   or "AI-SPM"),
-       "overview": _overview(ctx, results, apps, estate, tenant_id, context, changes),
+       "overview": _overview(ctx, results, apps, estate, tenant_id, context, changes,
+                             decision_states),
        "assessment": _assessment_view(results),
        "estate": _estate_view(estate),
        "finished": esc((context or {}).get("finished") or "")}
 
 
-def json_string(results) -> str:
+def json_string(results, decision_states=None, now=None) -> str:
     """The assessment as data — the same verdicts, for a pipeline rather than a person."""
     import json
+    workflow = {key: decisionstate.view_state(
+                    key, (decision_states or {}).get(key), now=now)
+                for key in sorted(decisionstate.KEYS)}
     payload = {"summary": assessment.summary(results),
-               "tests": [{k: v for k, v in t.items() if k != "checked"} for t in results]}
+               "tests": [{k: v for k, v in t.items() if k != "checked"} for t in results],
+               "decision_workflow": workflow}
     return json.dumps(payload, indent=2, ensure_ascii=False)

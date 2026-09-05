@@ -1,8 +1,12 @@
 """The assessment catalogue and the page it renders."""
 import json
+from datetime import datetime, timezone
+
+import pytest
 
 import assessment
 import assessment_report
+import decisions
 
 
 def _app(**kw):
@@ -359,6 +363,146 @@ def test_program_effect_does_not_claim_one_choice_closes_every_control():
     doc = assessment_report.html_string(results, apps, "t", health=CONNECTED)
     assert "retains its canonical verification criteria" in doc
     assert "move to verification if" not in doc
+
+
+def test_decision_workflow_state_is_rendered_and_exported():
+    apps = [_risky_app()]
+    results = assessment.run(apps, health=CONNECTED)
+    states = {"sensitive-access": {
+        "decision_key": "sensitive-access", "status": "In progress", "owner": "Alice",
+        "due_date": "2026-09-01", "notes": "", "compensating_control": "",
+        "acceptance": None, "updated_at": "2026-08-01T00:00:00+00:00", "history": []}}
+    now = datetime(2026, 9, 5, tzinfo=timezone.utc)
+    doc = assessment_report.html_string(
+        results, apps, "t", health=CONNECTED, context={"now": now},
+        decision_states=states)
+    assert '<span class="dstatus overdue">In progress</span>' in doc
+    assert "<b>Alice</b>" in doc
+    assert "2026-09-01" in doc
+    payload = json.loads(assessment_report.json_string(results, states, now=now))
+    assert payload["decision_workflow"]["sensitive-access"]["owner"] == "Alice"
+    assert payload["decision_workflow"]["sensitive-access"]["overdue"] is True
+
+
+def test_expiring_risk_acceptance_is_visible_on_decision_card():
+    apps = [_risky_app()]
+    results = assessment.run(apps, health=CONNECTED)
+    states = {"governance": {
+        "decision_key": "governance", "status": "Risk accepted", "owner": "CISO",
+        "due_date": None, "notes": "", "compensating_control": "",
+        "acceptance": {"rationale": "Migration", "approved_by": "CISO",
+                       "expires_at": "2026-10-01"},
+        "updated_at": "2026-09-01T00:00:00+00:00", "history": []}}
+    doc = assessment_report.html_string(
+        results, apps, "t", health=CONNECTED,
+        context={"now": datetime(2026, 9, 5, tzinfo=timezone.utc)},
+        decision_states=states)
+    assert "Risk accepted" in doc
+    assert "Migration" in doc
+    assert "expires 2026-10-01" in doc
+
+
+@pytest.mark.parametrize("status", [
+    "Decision required", "Approved", "In progress", "Deferred", "Compensating control",
+    "Risk accepted",
+])
+def test_persisted_open_decisions_remain_visible_with_no_current_failures(status):
+    apps = [_app()]
+    results = assessment.run(apps, health=CONNECTED)
+    assert not any(t["status"] == assessment.FAILED for t in results)
+    state = {
+        **decisions.default_state("governance"), "status": status, "owner": "CISO",
+        "due_date": "2026-09-01", "notes": "Review this decision",
+        "compensating_control": "Manual monitoring" if status == "Compensating control" else "",
+        "acceptance": {"rationale": "Migration", "approved_by": "CISO",
+                       "expires_at": "2026-09-01"} if status == "Risk accepted" else None,
+    }
+    now = datetime(2026, 9, 5, tzinfo=timezone.utc)
+    programs = assessment_report._decision_programs(
+        results, apps, {"governance": state}, now=now)
+    assert len(programs) == 1 and programs[0]["controls"] == []
+    assert not programs[0]["workflow"]["data_error"]
+    doc = assessment_report.html_string(
+        results, apps, "t", health=CONNECTED, context={"now": now},
+        decision_states={"governance": state})
+    assert doc.count('<article class="decision"') == 1
+    assert "0 current failed control(s)" in doc
+    assert "1 persisted decision program(s) still require governance attention" in doc
+    assert "No remediation decision is required" not in doc
+    assert "no current failed controls are being claimed" in doc
+    assert "Unassigned" not in doc
+    if status == "Risk accepted":
+        assert "Risk acceptance expired" in doc
+    else:
+        assert 'class="dstatus overdue"' in doc
+
+
+def test_unexpired_acceptance_with_no_failures_stays_visible_for_review():
+    state = {**decisions.default_state("governance"),
+             "owner": "CISO", "status": "Risk accepted",
+             "acceptance": {"rationale": "Migration", "approved_by": "CISO",
+                            "expires_at": "2026-10-01"}}
+    programs = assessment_report._decision_programs(
+        [], [], {"governance": state}, now=datetime(2026, 9, 5, tzinfo=timezone.utc))
+    assert len(programs) == 1
+    assert not programs[0]["workflow"]["acceptance_expired"]
+
+
+@pytest.mark.parametrize("status", ["Verified", "False positive"])
+def test_completed_decisions_without_failures_can_be_omitted_but_remain_in_json(status):
+    state = {**decisions.default_state("governance"), "status": status,
+             "owner": "CISO", "notes": "Evidence reviewed", "due_date": "2026-09-01"}
+    states = {"governance": state}
+    now = datetime(2026, 9, 5, tzinfo=timezone.utc)
+    assert assessment_report._decision_programs([], [], states, now=now) == []
+    data = json.loads(assessment_report.json_string([], states, now=now))
+    record = data["decision_workflow"]["governance"]
+    assert record["status"] == status
+    assert record["overdue"] is False and record["data_error"] is None
+
+
+@pytest.mark.parametrize("field,value", [
+    ("status", []), ("status", {}), ("owner", 123), ("owner", {}),
+    ("notes", []), ("compensating_control", {}),
+    ("acceptance", "not-an-object"), ("acceptance", []),
+    ("acceptance", {"expires_at": [], "approved_by": {}, "rationale": 123}),
+    ("due_date", []), ("due_date", {}), ("due_date", 0),
+    ("updated_at", []), ("history", 123), ("_data_error", ["invalid"]),
+])
+def test_corrupt_persisted_fields_do_not_prevent_html_or_json_publication(field, value):
+    results = assessment.run([_app()], health=CONNECTED)
+    state = {**decisions.default_state("governance"), field: value}
+    states = {"governance": state}
+    doc = assessment_report.html_string(results, [_app()], "t", decision_states=states)
+    payload = json.loads(assessment_report.json_string(results, states))
+    assert "Workflow data invalid" in doc
+    assert "No remediation decision is required" not in doc
+    assert "0 current failed control(s)" in doc
+    assert payload["decision_workflow"]["governance"]["data_error"]
+
+
+def test_json_exports_all_derived_workflow_fields_even_without_current_failures():
+    states = {
+        "governance": {**decisions.default_state("governance"), "owner": "CISO",
+                       "status": "Risk accepted",
+                       "acceptance": {"rationale": "Migration", "approved_by": "CISO",
+                                      "expires_at": "2026-09-01"}},
+        "sensitive-access": {**decisions.default_state("sensitive-access"), "owner": "IAM",
+                             "status": "In progress", "due_date": "2026-09-01"},
+        "identity-exposure": {**decisions.default_state("identity-exposure"), "status": []},
+    }
+    now = datetime(2026, 9, 5, tzinfo=timezone.utc)
+    payload = json.loads(assessment_report.json_string([], states, now=now))
+    records = payload["decision_workflow"]
+    assert records["governance"]["acceptance_expired"] is True
+    assert records["governance"]["display_status"] == "Risk acceptance expired"
+    assert records["sensitive-access"]["overdue"] is True
+    assert records["identity-exposure"]["data_error"]
+    assert records["identity-exposure"]["display_status"] == "Workflow data invalid"
+    assert all({"overdue", "acceptance_expired", "data_error", "display_status"} <= set(record)
+               for record in records.values())
+    for results in ([], assessment.run([_risky_app()], health=CONNECTED)):
+        assert len(assessment_report._decision_programs(results, [], states, now=now)) == 3
 
 
 def test_cockpit_trend_is_never_fabricated_without_history():

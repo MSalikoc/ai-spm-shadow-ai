@@ -177,6 +177,24 @@ def test_scan_writes_the_two_pages(cli, tmp_path, capsys):
     assert "applications assessed" in capsys.readouterr().out
 
 
+def test_scan_loads_persisted_workflow_for_both_assessment_outputs(cli, tmp_path, monkeypatch):
+    import decisions
+    import storage
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("AzureWebJobsStorage", raising=False)
+    monkeypatch.delenv("REPORT_STORAGE_CONNECTION", raising=False)
+    state = {**decisions.default_state("governance"), "owner": "Workflow owner",
+             "status": "In progress", "due_date": "2000-01-01"}
+    storage.write_json_conditional("decisions.json", {"governance": state}, None)
+    out = tmp_path / "scan"
+    assert cli(["scan", "--out", str(out)]) == 0
+    assert "Workflow owner" in (out / "assessment.html").read_text(encoding="utf-8")
+    payload = json.loads((out / "assessment.json").read_text(encoding="utf-8"))
+    assert payload["decision_workflow"]["governance"]["owner"] == "Workflow owner"
+    assert payload["decision_workflow"]["governance"]["overdue"] is True
+
+
 def test_scan_refuses_to_run_without_the_core_permissions(cli, tmp_path, capsys):
     out = tmp_path / "run"
     assert cli(["scan", "--out", str(out)], FakeTenant(denied=["/oauth2PermissionGrants"])) == 1
