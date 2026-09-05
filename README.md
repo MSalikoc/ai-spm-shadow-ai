@@ -13,7 +13,7 @@ Read-only. Runs from your laptop in two minutes, or on a schedule in Azure.
 </div>
 
 <div align="center">
-  <img src="docs/img/assessment.png" alt="The AI-SPM decision cockpit: executive summary, posture score, coverage confidence, risk concentration, prioritized actions, tenant, AI estate counters, per-pillar test results, and how AI gets into the tenant" width="820">
+  <img src="docs/img/assessment.png" alt="The AI-SPM decision cockpit: executive summary, posture score, coverage confidence, risk concentration, three accountable executive decisions, tenant, AI estate counters, per-pillar test results, and how AI gets into the tenant" width="820">
 </div>
 
 ---

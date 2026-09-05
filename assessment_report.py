@@ -37,9 +37,46 @@ PILLAR_COLOR = {assessment.P_ID: "#8764b8", assessment.P_DATA: "#c4314b",
                 assessment.P_MON: "#0f6cbd"}
 STATUS_MARK = {assessment.FAILED: "&#10060;", assessment.PASSED: "&#9989;",
                assessment.NOT_ASSESSED: "&#128683;", assessment.SKIPPED: "&#9899;"}
-ACTION_GROUPS = (("High", "Immediate", "needs a decision this week"),
-                 ("Medium", "Next", "queue for the current sprint"),
-                 ("Low", "Watch", "no user impact yet — track it"))
+DECISION_PROGRAMS = (
+    {
+        "key": "sensitive-access",
+        "title": "Control privileged AI access and sensitive-data exposure",
+        "owner": "IAM + Data Protection",
+        "sla": "7 days",
+        "choice": ("Reduce delegated and application permissions to least privilege, narrow "
+                   "consent where applicable, and enforce DLP for sensitive AI interactions. "
+                   "Retain broad access only as a time-bound, documented exception."),
+        "why": ("Broad consent, privileged application permissions and missing data controls "
+                "create paths from an AI service to organisation-wide information."),
+        "ids": {"AISPM-1001", "AISPM-1003", "AISPM-1005", "AISPM-2001", "AISPM-2002"},
+    },
+    {
+        "key": "identity-exposure",
+        "title": "Contain unattended and high-reach AI identities",
+        "owner": "Identity Security / SecOps",
+        "sla": "72 hours for High; 14 days otherwise",
+        "choice": ("Disable unused identities, reduce app-only permissions and rotate or "
+                   "replace long-lived credentials. Enforce existing blocked decisions and "
+                   "approve only the justified remainder."),
+        "why": ("Unattended identities operate without a user and high-reach applications "
+                "multiply the impact of one credential or permission failure."),
+        "ids": {"AISPM-1002", "AISPM-1004", "AISPM-1008", "AISPM-3005", "AISPM-4001",
+                "AISPM-4003", "AISPM-5001"},
+    },
+    {
+        "key": "governance",
+        "title": "Establish ownership and govern Shadow AI adoption",
+        "owner": "AI Governance Council",
+        "sla": "30 days",
+        "choice": ("Assign an accountable business owner, decide lifecycle and sanctioning "
+                   "status, and record a business purpose for every application and agent."),
+        "why": ("Unowned or unreviewed AI cannot be accepted, remediated or retired by an "
+                "accountable decision-maker."),
+        "ids": {"AISPM-1006", "AISPM-1007", "AISPM-2003", "AISPM-2004", "AISPM-3001",
+                "AISPM-3002", "AISPM-3003", "AISPM-3004", "AISPM-3006",
+                "AISPM-4002", "AISPM-4004", "AISPM-4005", "AISPM-5002", "AISPM-5003"},
+    },
+)
 
 CSS = """
 *{box-sizing:border-box}
@@ -182,18 +219,19 @@ footer{border-top:1px solid var(--line);margin-top:44px;padding:26px 0;color:var
  border-top:1px solid var(--line)}
 .conflist li:first-child{border-top:none}
 .conflist .ok{color:#0f7b0f}.conflist .bad{color:#8a8886}
-.actioncols{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
-.actioncol h4{margin:0 0 3px;font-size:14px}
-.actioncol .actn{color:var(--muted);font-size:12px;margin:0 0 10px}
-.actioncol ul{list-style:none;margin:0;padding:0}
-.actioncol li{margin:0 0 8px}
-.actioncol button.arow{width:100%;text-align:left;background:var(--card);
- border:1px solid var(--line);border-left:3px solid transparent;border-radius:6px;
- padding:9px 11px;font:inherit;color:var(--ink);cursor:pointer}
-.actioncol button.arow:hover,.actioncol button.arow:focus-visible{background:var(--track)}
-.actioncol .an{font-weight:600;font-size:13.5px;display:block}
-.actioncol .av{color:var(--muted);font-size:12.5px;margin-top:2px;display:block}
-.actioncol .empty{padding:10px 0;font-size:13px;text-align:left}
+.decisiongrid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.decision{border:1px solid var(--line);border-top:4px solid var(--link);border-radius:8px;
+ padding:16px;background:var(--card);display:flex;flex-direction:column;gap:11px}
+.decision h4{font-size:16px;line-height:1.35;margin:0}
+.decision .dmeta{display:grid;grid-template-columns:auto 1fr;gap:5px 10px;font-size:12.5px}
+.decision .dmeta span{color:var(--muted)}.decision .dmeta b{font-weight:600}
+.decision .scope{font-size:14px;font-weight:600;color:var(--ink)}
+.decision .why,.decision .choice{font-size:13px;line-height:1.5;margin:0}
+.decision .choice{padding-top:10px;border-top:1px solid var(--line)}
+.decision .effect{font-size:12.5px;color:var(--muted);margin-top:auto}
+.campaigns{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:12px}
+.campaign{border:1px solid var(--line);border-radius:6px;padding:11px 12px}
+.campaign b{display:block;font-size:13.5px}.campaign span{font-size:12px;color:var(--muted)}
 .concrow{display:flex;align-items:center;gap:10px;padding:7px 0;font-size:13.5px;
  border-top:1px solid var(--line)}
 .concrow:first-child{border-top:none}
@@ -203,7 +241,8 @@ footer{border-top:1px solid var(--line);margin-top:44px;padding:26px 0;color:var
 a[role=button]:focus-visible,button:focus-visible,tr[tabindex]:focus-visible,
 th[tabindex]:focus-visible,.chip:focus-visible{outline:2px solid var(--link);outline-offset:2px}
 tbody tr[tabindex]:focus-visible{outline-offset:-2px}
-@media(max-width:1000px){.cockpit-grid{grid-template-columns:1fr}.actioncols{grid-template-columns:1fr}}
+@media(max-width:1000px){.cockpit-grid{grid-template-columns:1fr}
+ .decisiongrid,.campaigns{grid-template-columns:1fr}}
 @media print{
  .topbar,.scrim,.panel,.filters,.iconbtn,.skiplink{display:none!important}
  .view{display:block!important}
@@ -705,62 +744,90 @@ def _concentration(results, apps):
         '<div class="concrow"><span class="cn" style="color:%s">%s</span>'
         '<span class="cc">%d control(s) &middot; %s reached</span></div>'
         % (RISK_COLOR.get(v["risk"], "#5f6b7a"),
-           esc(name + (f" ({identities[name]} identities)" if identities[name] > 1 else "")),
+           esc(name + (f" ({identities.get(name, 0)} identities)"
+                       if identities.get(name, 0) > 1 else "")),
            v["tests"],
            "{:,}".format(reach.get(name, 0)))
         for name, v in ranked)
 
 
-def _actions(results):
-    """
-    Failed tests only, grouped by risk into Immediate / Next / Watch. A `Not assessed`
-    test is a coverage gap, not something to action here — it has its own card, because
-    "fix this" and "we cannot see this yet" call for different next steps.
-    """
+def _decision_programs(results, apps):
+    """Collapse control failures into no more than three accountable root-cause decisions."""
+    failed = {t["id"]: t for t in results if t["status"] == assessment.FAILED}
+    decisions = []
+    for definition in DECISION_PROGRAMS:
+        controls = [failed[tid] for tid in definition["ids"] if tid in failed]
+        if not controls:
+            continue
+        names = {name for control in controls for name, _detail in control["assets"]}
+        decisions.append({
+            **definition,
+            "controls": sorted(controls, key=lambda t: (assessment.RISK_ORDER[t["risk"]],
+                                                        t["id"])),
+            # Assessment evidence currently carries display labels, not stable IDs or a
+            # cross-application user union. Call these evidence items rather than
+            # pretending they are unique identities or people.
+            "evidence_items": len(names),
+            "evidence": [t["verdict"] for t in controls[:2]],
+        })
+    return decisions
+
+
+def _decisions_html(results, apps):
+    decisions = _decision_programs(results, apps)
+    if not decisions:
+        return ('<div class="card"><h3>Executive decisions</h3><p class="cap">'
+                "No remediation decision is required from the controls assessed this scan. "
+                "Review coverage gaps and continue monitoring.</p></div>"), decisions
+    cards = []
+    for index, decision in enumerate(decisions, 1):
+        controls = decision["controls"]
+        high = sum(1 for t in controls if t["risk"] == "High")
+        scope = ("%d control(s) &middot; %d named evidence item(s)"
+                 % (len(controls), decision["evidence_items"]))
+        evidence = " ".join(decision["evidence"]) or "See the control backlog for evidence."
+        effect = ("%d control(s) enter one accountable campaign; each retains its canonical "
+                  "verification criteria" % len(controls))
+        cards.append(
+            '<article class="decision" aria-labelledby="decision-%d"><h4 id="decision-%d">'
+            '<span class="u">Decision %d</span><br>%s</h4><div class="scope">%s</div>'
+            '<div class="dmeta"><span>Accountable owner</span><b>%s</b>'
+            '<span>Due</span><b>%s</b><span>Priority</span><b>%s</b></div>'
+            '<p class="why"><b>Why now:</b> %s</p><p class="why"><b>Observed evidence:</b> '
+            '%s</p><p class="choice"><b>Executive choice:</b> %s</p>'
+            '<div class="effect">%s; %s.</div></article>'
+            % (index, index, index, esc(decision["title"]), scope, esc(decision["owner"]),
+               esc(decision["sla"]), "Immediate" if high else "Planned",
+               esc(decision["why"]), esc(evidence), esc(decision["choice"]), esc(effect),
+               esc(", ".join(t["id"] for t in controls))))
+    campaigns = "".join(
+        '<div class="campaign"><b>%s</b><span>%d control(s) routed to %s</span></div>'
+        % (esc(d["title"]), len(d["controls"]), esc(d["owner"])) for d in decisions)
+    return (
+        '<div class="card"><h3>%d executive %s that %s the risk</h3>'
+        '<p class="pn">Control failures are consolidated by root cause. The complete '
+        '26-control evidence backlog remains below.</p><div class="decisiongrid">%s</div>'
+        '<h3 style="margin-top:20px">Remediation campaigns</h3>'
+        '<div class="campaigns">%s</div></div>'
+        % (len(decisions), "decision" if len(decisions) == 1 else "decisions",
+           "moves" if len(decisions) == 1 else "move", "".join(cards), campaigns),
+        decisions,
+    )
+
+
+def _narrative(results, decisions):
     failed = [t for t in results if t["status"] == assessment.FAILED]
-    cols = []
-    for risk, label, sub in ACTION_GROUPS:
-        group = [t for t in failed if t["risk"] == risk]
-        if group:
-            items = "".join(
-                '<li><button class="arow" type="button" data-panel="%s">'
-                '<span class="an">%s</span><span class="av">%s</span></button></li>'
-                % (html.escape(_panel(t), quote=True), esc(t["name"]), esc(t["verdict"]))
-                for t in group)
-        else:
-            items = '<li class="empty">Nothing in this band failed this scan.</li>'
-        cols.append('<div class="actioncol"><h4>%s &middot; %d</h4><p class="actn">%s</p>'
-                    "<ul>%s</ul></div>" % (esc(label), len(group), esc(sub), items))
-    return "".join(cols), len(failed)
-
-
-def _narrative(results, apps, n_failed):
-    """
-    The decision itself, in prose: what needs it, why, and the effect of acting — built
-    from the same top failing test the Immediate column already names, never a second
-    source of truth.
-    """
-    high_open = [t for t in results
-                if t["status"] == assessment.FAILED and t["risk"] == "High"]
-    if not high_open:
-        remaining = [t for t in results if t["status"] == assessment.FAILED]
-        if not remaining:
-            return ("<p>No control in this catalogue failed this scan. The remaining "
-                    "work is closing coverage gaps (below), not fixing a finding.</p>")
-        top = remaining[0]
-    else:
-        top = high_open[0]
-    affected_names = {name for name, _detail in top["assets"]}
-    affected_apps = [a for a in apps if a.get("display_name") in affected_names]
-    affected = sum((a.get("user_count", 0) or 0) for a in affected_apps) or None
-    effect = ((" Fixing it changes the answer for roughly %s %s across %d named asset(s)."
-              % ("{:,}".format(affected), "person" if affected == 1 else "people",
-                 len(affected_apps)))
-             if affected else "")
-    return ("<p><b>%d control(s) need a decision.</b> The highest-impact is "
-           "&#8220;%s&#8221; (%s risk): %s</p><p><b>Recommended:</b> %s%s</p>"
-           % (n_failed, esc(top["name"]), esc(top["risk"]), esc(top["verdict"]),
-              esc(top["recommendation"]), effect))
+    if not failed:
+        return ("<p>No control in this catalogue failed this scan. The remaining work is "
+                "closing coverage gaps and sustaining monitoring.</p>")
+    routed = sum(len(d["controls"]) for d in decisions)
+    high = sum(1 for t in failed if t["risk"] == "High")
+    return ("<p><b>%d control failure(s) are consolidated into %d executive decision(s).</b> "
+            "%d are High risk. This separates what leadership must approve from the "
+            "evidence backlog the security team must execute.</p>"
+            % (len(failed), len(decisions), high)
+            + ("<p>%d failed control(s) are routed into accountable remediation campaigns.</p>"
+               % routed))
 
 
 def _cockpit(results, apps, estate, health, changes):
@@ -773,9 +840,9 @@ def _cockpit(results, apps, estate, health, changes):
     score, band = _posture(shadow_apps)
     trend_cls, trend_text = _trend(changes)
     pct, assessable, total, conn_rows = _coverage_confidence(results, health)
-    actions_html, n_failed = _actions(results)
+    decisions_html, decisions = _decisions_html(results, apps)
     conc_html = _concentration(results, apps)
-    narrative = _narrative(results, apps, n_failed)
+    narrative = _narrative(results, decisions)
 
     return """
 <div class="cockpit">
@@ -806,15 +873,12 @@ def _cockpit(results, apps, estate, health, changes):
       %(conc)s
     </div>
   </div>
-  <div class="card">
-    <h3>What to do, in order</h3>
-    <div class="actioncols">%(actions)s</div>
-  </div>
+  %(decisions)s
 </div>
 """ % {"narrative": narrative, "trend_cls": trend_cls, "trend_text": trend_text,
        "gauge": charts.gauge(score, "Tenant AI posture"),
        "assessable": assessable, "total": total, "pct": pct, "conn_rows": conn_rows,
-       "conc": conc_html, "actions": actions_html}
+       "conc": conc_html, "decisions": decisions_html}
 
 
 def _overview(ctx, results, apps, estate, tenant_id, context, changes=None):

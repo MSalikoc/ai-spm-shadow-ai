@@ -6,6 +6,13 @@ All notable changes to AI-SPM are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **Control failures now become executive decisions.** The cockpit consolidates the
+  26-control evidence backlog into at most three deterministic, root-cause remediation
+  programs: tenant-wide sensitive-data access, unattended/high-reach identities, and
+  ownership/Shadow AI governance. Each decision states the accountable team, risk-based
+  SLA, executive choice, affected controls/assets/users, and measurable verification
+  effect. No score reduction or impact is invented; canonical control names remain in
+  the assessment evidence table.
 - **The overview became a decision cockpit.** Above the existing tenant/estate/pillar
   summary, the assessment landing page now opens with: an executive-summary paragraph
   naming the highest-impact failing control, why it matters and its expected effect; a

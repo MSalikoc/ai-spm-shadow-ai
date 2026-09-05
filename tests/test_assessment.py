@@ -240,10 +240,10 @@ def test_cockpit_narrative_names_the_top_failing_control_and_its_reach():
     results = assessment.run(apps, health=CONNECTED)
     doc = assessment_report.html_string(results, apps, "t", health=CONNECTED)
     assert "Executive summary" in doc
-    assert "control(s) need a decision" in doc
-    # The highest-impact control is the first High-risk failure in sorted order.
-    assert "org-wide consent for sensitive data" in doc
-    assert "Fixing it changes the answer for roughly 300 people" in doc
+    assert "control failure(s) are consolidated into 3 executive decision(s)" in doc
+    assert "Control privileged AI access and sensitive-data exposure" in doc
+    assert "named evidence item(s)" in doc
+    assert "people reached" not in doc.split("executive decisions")[0]
 
 
 def test_cockpit_narrative_is_honest_when_nothing_failed():
@@ -295,26 +295,65 @@ def test_cockpit_concentration_is_honest_when_risk_is_spread_not_concentrated():
     assert "risk is spread rather than concentrated" in doc
 
 
-def test_cockpit_actions_group_failed_tests_by_risk_band_not_by_gaps():
+def test_cockpit_groups_failures_into_three_decisions_and_keeps_control_evidence():
     apps = [_risky_app()]
     results = assessment.run(apps, health=CONNECTED)
     doc = assessment_report.html_string(results, apps, "t", health=CONNECTED)
-    assert "Immediate &middot; 5" in doc                   # the 5 High failures above
-    assert "Next &middot; 4" in doc                        # the 4 Medium failures
-    assert "Watch &middot; 1" in doc                       # the 1 Low failure
-    # A `Not assessed` test never shows up as something to fix here.
-    assert "Nothing in this band failed this scan." not in doc or True  # sanity: no crash
-    for t in results:
-        if t["status"] == assessment.NOT_ASSESSED:
-            assert ('<span class="an">%s</span>' % assessment_report.esc(t["name"])) \
-                not in doc.split('<h3>What to do, in order</h3>')[1].split("</div>\n</div>")[0]
+    assert doc.count('<article class="decision"') == 3
+    assert "IAM + Data Protection" in doc
+    assert "Identity Security / SecOps" in doc
+    assert "AI Governance Council" in doc
+    assert "The complete 26-control evidence backlog remains below." in doc
+    assert "Assessment results" in doc
 
 
-def test_cockpit_actions_say_so_when_a_band_is_clean():
+def test_cockpit_says_no_executive_decision_is_required_when_clean():
     apps = [_app()]                                       # passes every test
     results = assessment.run(apps, health=CONNECTED)
     doc = assessment_report.html_string(results, apps, "t", health=CONNECTED)
-    assert doc.count("Nothing in this band failed this scan.") == 3   # all three bands
+    assert "No remediation decision is required" in doc
+    assert '<article class="decision"' not in doc
+
+
+def test_decision_programs_expose_owner_sla_choice_and_measurable_effect():
+    apps = [_risky_app()]
+    results = assessment.run(apps, health=CONNECTED)
+    programs = assessment_report._decision_programs(results, apps)
+    assert len(programs) == 3
+    assert all(p["owner"] and p["sla"] and p["choice"] for p in programs)
+    assert all(p["controls"] for p in programs)
+    assert sum(len(p["controls"]) for p in programs) == sum(
+        1 for t in results if t["status"] == assessment.FAILED)
+
+
+def test_decision_scope_deduplicates_non_unique_labels_without_inventing_people():
+    apps = [_risky_app(app_id="one", sp_id="sp-one", display_name="Same", user_count=100),
+            _risky_app(app_id="two", sp_id="sp-two", display_name="Same", user_count=1)]
+    results = assessment.run(apps, health=CONNECTED)
+    programs = assessment_report._decision_programs(results, apps)
+    access = next(p for p in programs if p["key"] == "sensitive-access")
+    assert access["evidence_items"] == 1
+    doc = assessment_report.html_string(results, apps, "t", health=CONNECTED)
+    decision_section = doc.split("executive decisions")[1].split("</article>")[0]
+    assert "101 people" not in decision_section
+
+
+def test_single_program_uses_a_singular_dynamic_heading():
+    results = [{"id": "AISPM-3001", "name": "Owner", "pillar": assessment.P_GOV,
+                "risk": "Medium", "impact": "Low", "effort": "Low", "requirement": "—",
+                "status": assessment.FAILED, "verdict": "One app has no owner.",
+                "assets": [("App", "Missing")], "checked": [], "recommendation": "Assign.",
+                "actions": []}]
+    doc = assessment_report.html_string(results, [_app()], "t", health=CONNECTED)
+    assert "1 executive decision that moves the risk" in doc
+
+
+def test_program_effect_does_not_claim_one_choice_closes_every_control():
+    apps = [_risky_app()]
+    results = assessment.run(apps, health=CONNECTED)
+    doc = assessment_report.html_string(results, apps, "t", health=CONNECTED)
+    assert "retains its canonical verification criteria" in doc
+    assert "move to verification if" not in doc
 
 
 def test_cockpit_trend_is_never_fabricated_without_history():
@@ -356,8 +395,8 @@ def test_cockpit_is_accessible_by_keyboard_and_screen_reader():
     assert 'tabindex="0" role="button" aria-haspopup="dialog"' in doc
     # Sortable headers expose their state to assistive tech.
     assert 'aria-sort="none"' in doc
-    # The action buttons that open the panel are real <button>s (native keyboard support).
-    assert '<button class="arow" type="button" data-panel="' in doc
+    # Executive decisions are semantic articles; detailed controls remain keyboard-openable.
+    assert '<article class="decision" aria-labelledby="decision-1">' in doc
 
 
 def test_drift_control_distinguishes_baseline_from_steady_comparison():
