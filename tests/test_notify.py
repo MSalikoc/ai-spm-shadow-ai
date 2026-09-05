@@ -44,7 +44,9 @@ def test_send_email_digest_builds_and_posts(monkeypatch):
     # never forwarding them into assessment.run()/assessment_report.html_string().
     attachment = base64.b64decode(
         captured["json"]["message"]["attachments"][0]["contentBytes"]).decode("utf-8")
-    assert "Executive summary" in attachment
+    assert "Scan summary (immutable)" in attachment
+    assert 'name="decision-context" content="snapshot"' in attachment
+    assert "Read-only snapshot" in attachment
     assert "1 inventory or usage event(s)" in attachment
     assert "no material risk change" in attachment
 

@@ -134,7 +134,8 @@ def test_summary_counts_by_status_and_pillar():
     assert s["total"] == len(assessment.TESTS)
     assert sum(s["by_status"].values()) == s["total"]
     assert sum(p["total"] for p in s["by_pillar"].values()) == s["total"]
-    assert s["assessable"] == s["total"] - s["by_status"][assessment.NOT_ASSESSED]
+    assert s["assessable"] == (s["by_status"][assessment.PASSED]
+                               + s["by_status"][assessment.FAILED])
 
 
 # --- the page ---------------------------------------------------------------
@@ -243,7 +244,7 @@ def test_cockpit_narrative_names_the_top_failing_control_and_its_reach():
     apps = [_risky_app()]
     results = assessment.run(apps, health=CONNECTED)
     doc = assessment_report.html_string(results, apps, "t", health=CONNECTED)
-    assert "Executive summary" in doc
+    assert "Scan summary (immutable)" in doc
     assert "control failure(s) are consolidated into 3 executive decision(s)" in doc
     assert "Control privileged AI access and sensitive-data exposure" in doc
     assert "named evidence item(s)" in doc
@@ -278,9 +279,10 @@ def test_cockpit_coverage_confidence_never_lets_a_gap_read_as_a_pass():
     answerable = (summary["by_status"][assessment.PASSED]
                   + summary["by_status"][assessment.FAILED])
     pct = round(100 * answerable / summary["total"])
-    assert "Evidence confidence" in doc
+    assert "Coverage confidence" in doc
     assert "Assessment coverage:" in doc and "(%d%%)" % pct in doc
-    assert "Telemetry coverage:" in doc and "fully informative" in doc
+    assert "Telemetry coverage:" in doc and "sources completed collection" in doc
+    assert "fully informative" not in doc
     assert "roadmap sources are not in this denominator" in doc
     assert doc.count('class="bad">Gap</span>') >= 1     # at least one named source gap
     assert 'class="roadmap">Roadmap</span>' in doc
@@ -430,7 +432,7 @@ def test_persisted_open_decisions_remain_visible_with_no_current_failures(status
     assert "1 persisted decision program(s) still require governance attention" in doc
     assert "No remediation decision is required" not in doc
     assert "no current failed controls are being claimed" in doc
-    assert "Unassigned" not in doc
+    assert "Unassigned" not in doc.split('<article class="decision"')[1].split("</article>")[0]
     if status == "Risk accepted":
         assert "Risk acceptance expired" in doc
     else:
@@ -578,7 +580,7 @@ def test_partial_and_no_data_sources_are_not_presented_as_complete_telemetry():
     assert coverage["connected"] == 3  # Graph plus two fully informative connectors
     assert coverage["telemetry_pct"] == 60
     assert 'class="warn">Partial</span>' in coverage["rows"]
-    assert 'class="warn">No data</span>' in coverage["rows"]
+    assert 'class="warn">Reachable · no detected data</span>' in coverage["rows"]
 
 
 def test_coverage_freshness_is_explicitly_unknown_or_uses_reported_source_time():
@@ -588,7 +590,8 @@ def test_coverage_freshness_is_explicitly_unknown_or_uses_reported_source_time()
                            "collected_at": "2026-09-05T12:00:00Z"}}
     text = assessment_report._source_freshness(health)
     assert "1 connector(s)" in text
-    assert "2026-09-05T12:00:00Z" in text
+    assert "2026-09-05T12:00:00+00:00" in text
+    assert "not event freshness" in text
 
 
 def test_cockpit_is_accessible_by_keyboard_and_screen_reader():
@@ -637,4 +640,92 @@ def test_page_drops_the_detail_link_it_was_not_given_and_keeps_the_cockpit():
     with_link = assessment_report.html_string(results, apps, "t", estate=_estate(),
                                               health=CONNECTED, detail_href="detail.html")
     assert 'href="detail.html"' in with_link
-    assert "Executive summary" in with_link
+    assert "Scan summary (immutable)" in with_link
+
+
+def test_verified_conflict_is_derived_consistently_without_rewriting_record():
+    from copy import deepcopy
+    states = {"sensitive-access": {
+        **decisions.default_state("sensitive-access"), "status": "Verified", "owner": "IAM"}}
+    original = deepcopy(states)
+    results = assessment.run([_risky_app()], health=CONNECTED)
+    doc = assessment_report.html_string(results, [], "t", decision_states=states)
+    payload = json.loads(assessment_report.json_string(results, states))
+    state = payload["decision_workflow"]["sensitive-access"]
+    assert state["evidence_conflict"] is True
+    assert state["status"] == "Verified"
+    assert state["display_status"] == "Verification needs review"
+    assert "Evidence conflict: manually" in doc
+    assert payload["decision_attention"]["conflicting"] == 1
+    assert states == original
+
+
+def test_no_evidence_does_not_manufacture_active_decisions_but_all_can_be_reviewed():
+    doc = assessment_report.html_string([], [], "t")
+    payload = json.loads(assessment_report.json_string([]))
+    assert '<article class="decision"' not in doc
+    assert doc.count('class="workflow-review-row"') == 3
+    assert all(not value["persisted"] for value in payload["decision_workflow"].values())
+    assert set(payload["decision_attention"].values()) == {0}
+    assert 'name="decision-context" content="snapshot"' in doc
+
+
+def test_decisions_precede_expandable_detail_and_print_keeps_as_of():
+    results = assessment.run([_risky_app()], health=CONNECTED)
+    now = datetime(2026, 9, 5, tzinfo=timezone.utc)
+    doc = assessment_report.html_string(results, [], "t", context={"now": now})
+    assert doc.index('class="executive-strip"') < doc.index('<article class="decision"')
+    assert doc.index('<article class="decision"') < doc.index('Detailed coverage, exposure')
+    assert 'id="print-brief"' in doc and now.isoformat() in doc
+    assert 'id="control-AISPM-1001"' in doc
+    assert 'data-evidence=' in doc
+    assert "self-reported" in doc
+    assert "expected_revision:editorRevision" in doc
+
+
+def test_source_collection_times_compare_instants_not_lexical_offsets():
+    text = assessment_report._source_freshness({
+        "agent365": {"collected_at": "2026-09-05T09:30:00+03:00"},
+        "purview_audit": {"checked_at": "2026-09-05T07:00:00Z"},
+        "defender_cloud_apps": {"timestamp": "not-a-time"}})
+    assert "oldest: 2026-09-05T06:30:00+00:00" in text
+    assert "not event freshness" in text
+    assert "1 invalid" in text
+
+
+def test_skipped_controls_are_visible_in_overview_gaps_and_totals():
+    results = assessment.run([_app()], health=CONNECTED)
+    results[0]["status"] = assessment.SKIPPED
+    results[0]["verdict"] = "Collector evaluation failed"
+    doc = assessment_report.html_string(results, [], "t", health=CONNECTED)
+    skipped = sum(t["status"] == assessment.SKIPPED for t in results)
+    assert f'Skipped</div><div class="fn">{skipped}</div>' in doc
+    summary = assessment.summary(results)
+    assert summary["assessable"] == (summary["by_status"][assessment.PASSED]
+                                    + summary["by_status"][assessment.FAILED])
+    gaps = doc.split("<h2>Not assessed / skipped</h2>")[1].split("</details>")[0]
+    assert "Skipped:" in gaps and "Collector evaluation failed" in gaps
+
+
+def test_editor_seed_escapes_markup_and_theme_respects_explicit_light():
+    states = {"governance": {**decisions.default_state("governance"),
+                            "notes": "</script><img src=x onerror=alert(1)>"}}
+    doc = assessment_report.html_string([], [], "t", decision_states=states)
+    seed = doc.split('id="workflow-seed">')[1].split("</script>")[0]
+    assert "<img" not in seed and "\\u003c" in seed
+    assert json.loads(seed)["states"]["governance"]["notes"] == states["governance"]["notes"]
+    assert '(param === "light" || param === "dark") ? param' in doc
+    assert doc.index("const param") < doc.index("var $=")
+    assert "--cp-accent: #b11f4b" in doc and "--cp-accent: #fd8ea1" in doc
+
+
+def test_consent_footprint_verdict_does_not_infer_tenant_wide_reach():
+    results = assessment.run([_app(user_count=0, risk_score=90)], health=CONNECTED)
+    control = next(t for t in results if t["id"] == "AISPM-4003")
+    assert control["status"] == assessment.PASSED
+    assert "does not rule out tenant-wide access" in control["verdict"]
+    results = assessment.run([_app(user_count=250, risk_score=60)], health=CONNECTED)
+    control = next(t for t in results if t["id"] == "AISPM-4003")
+    assert control["status"] == assessment.FAILED
+    assert "consent-user count of at least 250" in control["verdict"]
+    assert "reach" not in control["verdict"]

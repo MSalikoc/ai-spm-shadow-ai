@@ -253,7 +253,13 @@ def assessment_view(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             "No assessment yet. Run /api/scan first." + _last_scan_error_note(),
             status_code=404, mimetype="text/plain")
+    if not as_json:
+        # Only the actual assessment route enables live workflow access. Published
+        # HTML, samples and downloaded copies retain a read-only marker.
+        doc = doc.replace('name="decision-context" content="snapshot"',
+                          'name="decision-context" content="live"')
     return func.HttpResponse(doc, status_code=200,
+                             headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"},
                              mimetype="application/json" if as_json else "text/html")
 
 
@@ -370,16 +376,24 @@ def decisions_workflow(req: func.HttpRequest) -> func.HttpResponse:
     it never changes Microsoft 365 configuration.
 
     POST body: {"decision_key":"...", "status":"...", "owner":"...",
-                "due_date":"...", "notes":"...",
+                "due_date":"...", "notes":"...", "expected_revision":"...",
                 "acceptance":{"rationale":"...", "approved_by":"...",
                               "expires_at":"..."}}
     """
     try:
-        store = decisionstate.load()
         if req.method == "GET":
-            payload = {key: decisionstate.view_state(key, store.get(key))
-                       for key in sorted(decisionstate.KEYS)}
-            return func.HttpResponse(json.dumps({"decisions": payload}, ensure_ascii=False),
+            read_at = datetime.now(timezone.utc)
+            try:
+                payload = decisionstate.read_current(now=read_at)
+            except ValueError:
+                return func.HttpResponse(
+                    '{"error":"Workflow store is corrupt; no current state is available.",'
+                    '"store_status":"corrupt"}', status_code=503, mimetype="application/json",
+                    headers={"Cache-Control": "no-store"})
+            return func.HttpResponse(json.dumps({
+                "decisions": payload, "store_status": "ok",
+                "as_of": read_at.isoformat()}, ensure_ascii=False),
+                                     headers={"Cache-Control": "no-store"},
                                      mimetype="application/json", status_code=200)
         try:
             body = req.get_json()
@@ -393,24 +407,34 @@ def decisions_workflow(req: func.HttpRequest) -> func.HttpResponse:
         if not key:
             return func.HttpResponse('{"error":"decision_key is required"}', status_code=400,
                                      mimetype="application/json")
-        patch = {k: v for k, v in body.items() if k != "decision_key"}
+        patch = {k: v for k, v in body.items()
+                 if k not in {"decision_key", "expected_revision"}}
         try:
-            state = decisionstate.update_decision(key, patch)
+            options = ({"expected_revision": body["expected_revision"]}
+                       if "expected_revision" in body else {})
+            if "expected_revision" in body and body["expected_revision"] is None:
+                raise ValueError("expected_revision must be a nonempty revision string")
+            state = decisionstate.update_decision(key, patch, **options)
         except ValueError as exc:
             return func.HttpResponse(json.dumps({"error": str(exc)}, ensure_ascii=False),
                                      status_code=400, mimetype="application/json")
         except storage.StorageConflict:
             return func.HttpResponse(
-                '{"error":"decision changed concurrently; retry the request"}',
+                '{"error":"Decision changed concurrently. Reload current state and review '
+                'your changes before saving again."}',
                 status_code=409, mimetype="application/json")
         return func.HttpResponse(json.dumps(
             {"decision": decisionstate.view_state(key, state),
-             "report_refresh": "Run a scan to publish this state in the assessment."},
-            ensure_ascii=False), mimetype="application/json", status_code=200)
+             "report_refresh": "Live assessment refreshes workflow without a scan; "
+                               "scan evidence and static exports remain unchanged."},
+            ensure_ascii=False), mimetype="application/json", status_code=200,
+            headers={"Cache-Control": "no-store"})
     except Exception as exc:
         logging.exception("decisions workflow error")
-        return func.HttpResponse(json.dumps({"error": str(exc)}, ensure_ascii=False),
-                                 mimetype="application/json", status_code=500)
+        return func.HttpResponse(
+            '{"error":"Workflow store unavailable; current state cannot be confirmed.",'
+            '"store_status":"unavailable"}', headers={"Cache-Control": "no-store"},
+            mimetype="application/json", status_code=503)
 
 
 @app.route(route="finding", methods=["POST"], auth_level=func.AuthLevel.FUNCTION)

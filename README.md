@@ -13,7 +13,7 @@ Read-only. Runs from your laptop in two minutes, or on a schedule in Azure.
 </div>
 
 <div align="center">
-  <img src="docs/img/assessment.png" alt="The AI-SPM decision cockpit: executive summary, posture score, coverage confidence, risk concentration, three accountable executive decisions, tenant, AI estate counters, per-pillar test results, and how AI gets into the tenant" width="820">
+  <img src="docs/img/assessment.png" alt="The AI-SPM decision cockpit: scan-as-of and coverage strip, executive attention counts, three accountable decisions, and workflow review above expandable control evidence" width="820">
 </div>
 
 ---
@@ -256,18 +256,60 @@ configuration. A risk acceptance must name an owner, approver, rationale and fut
 expiry:
 
 ```bash
-curl -X POST "https://$FUNCTION_APP.azurewebsites.net/api/decisions?code=$KEY" \
+curl -X POST "https://$FUNCTION_APP.azurewebsites.net/api/decisions" \
+  -H "x-functions-key: $KEY" \
   -H "Content-Type: application/json" \
   -d '{"decision_key":"governance","status":"Risk accepted","owner":"CISO","acceptance":{"rationale":"Ownership programme funded and in progress","approved_by":"CISO","expires_at":"2026-12-31"}}'
 ```
 
-Run a scan after an update to publish the new workflow state into the self-contained
-assessment report. `GET /api/decisions` returns all three current records.
+On the deployed HTTPS `/api/assessment` page, **Review / edit decision** records owner,
+status, due date, notes, compensating controls and time-bound acceptance. The page loads
+`GET /api/decisions` and refreshes after a save without requiring a new scan. The scan
+evidence and **scan-as-of** remain unchanged; **workflow-as-of** identifies the separate
+current read. **Review all three programs** includes programs absent from the scan's
+decision cards. Refresh workflow to see other editors' updates.
+
+The function key is used only in the same-origin request header, held in memory, and
+never copied into links or browser storage. A `code` parameter on the live page is
+removed from the address bar after loading; it may already have appeared in server
+logs/history from the initial navigation. Alternatively enter the key in the page.
+Downloaded, sample, email and local HTTP pages are **read-only snapshots**; they do not
+attempt localhost saves. Static HTML/JSON and email attachments refresh on the next
+scan, not on a workflow save. Detail-page access may require separate authentication;
+the editor does not propagate its key to navigation links.
+
+`GET /api/decisions` returns all three records with `persisted` and an opaque `revision`.
+Defaults with `persisted: false` do not create active programs. Pass that decision's
+`expected_revision` on POST to protect an editor's read: a same-decision change returns
+**409** without overwriting it; reload and review the draft. Different-program concurrent
+writes merge using the existing Azure ETag / local file lock. Omitting the revision
+remains supported for older clients, **without stale-editor protection**. GET returns
+**503** with `store_status: corrupt` or `unavailable` rather than reporting stale state
+as current; the UI disables saving until a successful reload.
+
 Date-only due dates and acceptance expiries are inclusive through the end of that UTC
 calendar date; timestamps take effect at the exact instant specified. Open decisions,
 overdue work, expired acceptances and invalid workflow records remain visible even when
 their program has no current failed controls. Invalid stored data is reported rather than
-overwritten; concurrent updates reload and merge against the latest storage version.
+overwritten. Owner and `approved_by` are **self-reported under shared function-key
+authentication**, not authenticated individual identities or signed approvals; change
+history is not a tamper-proof audit log.
+
+A manually **Verified** program with failed scan controls shows **Verification needs
+review** and a derived `evidence_conflict` in assessment HTML/JSON, without changing the
+record or history. The attention strip counts active programs that are overdue, have
+acceptances expiring within seven days (inclusive), expired, unassigned or conflicting.
+Coverage confidence describes connector/control completeness, **not source freshness,
+probabilistic evidence quality or compliance certification**. Collection/check times
+are not source event timestamps. Consent-user counts are not unique or tenant-wide reach.
+**Print / board brief** uses browser print with scan-as-of and limitations; it is not a
+new export service. Expand detailed coverage or open Assessment results for all 26 controls.
+
+Browser regression checks use installed Chrome and Node's built-in WebSocket (Node 22+
+with global WebSocket), without new dependencies:
+`node tests\browser_workflow.mjs`. The harness intercepts all page traffic with synthetic
+API responses; it never writes to a tenant. `--screenshots` also refreshes the README
+image from the real generated sample (run `python aispm.py sample` first).
 
 ---
 

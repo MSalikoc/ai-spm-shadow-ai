@@ -6,6 +6,23 @@ All notable changes to AI-SPM are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **Live, accessible decision review.** The deployed HTTPS assessment now loads and
+  saves same-origin workflow state without a scan, with labels, modal keyboard
+  containment, history, saving/error feedback, and explicit read-only static copies.
+  Function keys stay in memory and request headers, not links or artifacts.
+  All three programs remain reviewable even if a stale scan has no decision card.
+- **Per-decision stale-editor protection.** GET/POST return opaque revisions; optional
+  `expected_revision` rejects stale same-program edits with 409 on every merge retry.
+  Different-program updates retain ETag/local-lock merging. Corrupt/unavailable GETs
+  are distinct 503 responses, not successful default state.
+- **Decision-first board view.** Compact exposure/coverage/as-of and executive attention
+  strips precede decisions; detailed coverage/campaigns are expandable. Browser print
+  produces a board brief with evidence limitations. Clawpilot light/dark tokens respect
+  explicit `scoutTheme=light`, with responsive layout and no external assets.
+- **Verification conflicts are evidence, not state transitions.** Failed scan controls
+  alongside manual Verified status produce `evidence_conflict` and “Verification needs
+  review” in assessment HTML/JSON, preserving recorded status/history. Owner and approver
+  labels explicitly identify self-reported names under shared-key authentication.
 - **Executive decisions are now governed records, not static cards.** A separate
   `decisions.json` store preserves owner, status, due date, notes, compensating control,
   and immutable field history across scans. Supported outcomes include Verified,
@@ -14,12 +31,15 @@ All notable changes to AI-SPM are documented here. Format based on
   acceptances are visibly reopened for attention. `GET/POST /api/decisions` exposes the
   workflow without changing Microsoft 365, and the state is included in assessment HTML,
   JSON and weekly attachments.
-- **Evidence confidence now separates controls from telemetry.** Assessment coverage
+- **Coverage confidence separates controls from telemetry.** Assessment coverage
   reports how many catalogue controls were answerable; telemetry coverage reports how
   many operational sources actually connected, excluding roadmap collectors from the
   denominator. A deterministic High/Medium/Low confidence label degrades for partial,
-  empty, timed-out or failed sources. Source freshness is shown only when a connector
-  reports a timestamp; otherwise the cockpit says it is unavailable.
+  empty, timed-out or failed sources. It is a completeness label, not an evidence-quality
+  or freshness guarantee. Collection/check timestamps are distinguished from source
+  event times and compared by offset-aware instants. NO_DATA is reachable without detected
+  data; skipped controls are excluded from answerable totals and shown in coverage gaps.
+  Consent-user totals are explicitly not unique people or tenant-wide reach.
 - **Trend now means material risk.** Admin consent, app-only access and privilege
   escalation are separated from material improvements and ordinary inventory/usage
   events, so a newly discovered record is not automatically described as deterioration.

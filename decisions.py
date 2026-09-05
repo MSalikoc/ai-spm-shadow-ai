@@ -1,6 +1,8 @@
 """Persistent governance state for the three executive decision programs."""
 from copy import deepcopy
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
+import hashlib
+import json
 
 import storage
 
@@ -12,6 +14,20 @@ STATUSES = {
 OWNER_REQUIRED = STATUSES - {"Decision required"}
 STORE_NAME = "decisions.json"
 EDITABLE_FIELDS = {"status", "owner", "due_date", "notes", "compensating_control", "acceptance"}
+
+
+class StaleDecision(storage.StorageConflict):
+    """The decision changed after this editor read it."""
+
+
+def revision(key, stored=None):
+    """Opaque content revision, not an identity signature or a store-wide lock."""
+    baseline = default_state(key)
+    record = stored if isinstance(stored, dict) else {}
+    canonical = {field: record.get(field, value) for field, value in baseline.items()}
+    canonical["persisted"] = stored is not None
+    return hashlib.sha256(json.dumps(
+        canonical, sort_keys=True, ensure_ascii=True, separators=(",", ":")).encode()).hexdigest()
 
 
 def _parse_date(value, field):
@@ -157,10 +173,24 @@ def _load_versioned():
     return store, version
 
 
-def update_decision(key, patch, now=None, retries=3):
+def read_current(now=None):
+    """Strict API read: corrupt state must not look like a successful empty store."""
+    store, _version = _load_versioned()
+    return {key: view_state(key, store.get(key), now=now) for key in sorted(KEYS)}
+
+
+def update_decision(key, patch, now=None, retries=3, expected_revision=None):
     """Optimistic-concurrency update; reload and merge when another writer wins."""
+    if not isinstance(key, str) or key not in KEYS:
+        raise ValueError("unknown decision_key")
+    if expected_revision is not None and (
+            not isinstance(expected_revision, str) or not expected_revision):
+        raise ValueError("expected_revision must be a nonempty revision string")
     for attempt in range(retries):
         store, version = _load_versioned()
+        if expected_revision is not None and revision(key, store.get(key)) != expected_revision:
+            raise StaleDecision("decision changed since it was loaded; reload before saving")
+        store = deepcopy(store)
         state = set_decision(store, key, patch, now=now)
         try:
             storage.write_json_conditional(STORE_NAME, store, version)
@@ -228,7 +258,7 @@ def set_decision(store, key, patch, now=None):
     return candidate
 
 
-def view_state(key, stored=None, now=None):
+def view_state(key, stored=None, now=None, failed_controls=None):
     """Add derived due/acceptance state without mutating the persistent record."""
     now = now or datetime.now(timezone.utc)
     if stored is None:
@@ -270,10 +300,38 @@ def view_state(key, stored=None, now=None):
                            {"Verified", "False positive", "Risk accepted"})
     state["acceptance_expired"] = bool(
         status == "Risk accepted" and elapsed["acceptance.expires_at"])
+    state["acceptance_expiring"] = False
+    if status == "Risk accepted" and not state["data_error"] and not state["acceptance_expired"]:
+        expiry = _parse_date(acceptance.get("expires_at"), "acceptance.expires_at")
+        if expiry:
+            value = acceptance["expires_at"]
+            if len(value) == 10:
+                state["acceptance_expiring"] = (
+                    expiry.date() <= (now.astimezone(timezone.utc) + timedelta(days=7)).date())
+            else:
+                state["acceptance_expiring"] = expiry <= now + timedelta(days=7)
+    state["persisted"] = stored is not None
+    state["revision"] = revision(key, stored)
+    state["evidence_conflict"] = bool(status == "Verified" and failed_controls)
+    state["failed_controls"] = failed_controls
     if state["data_error"]:
         state["display_status"] = "Workflow data invalid"
+    elif state["evidence_conflict"]:
+        state["display_status"] = "Verification needs review"
     elif state["acceptance_expired"]:
         state["display_status"] = "Risk acceptance expired"
     else:
         state["display_status"] = state["status"]
     return state
+
+
+def attention(states):
+    """Count only active programs supplied by the evidence-aware caller."""
+    return {
+        "overdue": sum(bool(s["overdue"]) for s in states),
+        "expiring": sum(bool(s["acceptance_expiring"]) for s in states),
+        "expired": sum(bool(s["acceptance_expired"]) for s in states),
+        "unassigned": sum(not isinstance(s["owner"], str) or not s["owner"].strip()
+                          for s in states),
+        "conflicting": sum(bool(s["evidence_conflict"]) for s in states),
+    }

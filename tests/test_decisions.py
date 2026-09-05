@@ -115,7 +115,7 @@ class _Request:
 
 def test_decisions_api_reads_defaults_and_persists_valid_update(monkeypatch):
     store = {}
-    monkeypatch.setattr(function_app.decisionstate, "load", lambda: store)
+    monkeypatch.setattr(decisions, "_load_versioned", lambda: (deepcopy(store), None))
     monkeypatch.setattr(
         function_app.decisionstate, "update_decision",
         lambda key, patch: decisions.set_decision(store, key, patch, now=NOW))
@@ -133,6 +133,7 @@ def test_decisions_api_reads_defaults_and_persists_valid_update(monkeypatch):
     assert response.status_code == 200
     assert store["identity-exposure"]["owner"] == "SecOps"
     assert b'"report_refresh"' in response.get_body()
+    assert json.loads(response.get_body())["decision"]["revision"]
 
 
 def test_decisions_api_rejects_invalid_acceptance_without_writing(monkeypatch):
@@ -517,3 +518,131 @@ def test_azure_create_conflict_is_retryable(azure_blob):
     azure_blob.upload_blob.side_effect = ResourceExistsError("created concurrently")
     with pytest.raises(storage.StorageConflict):
         storage.write_json_conditional("decisions.json", {}, None)
+
+
+def test_revision_ignores_derived_display_but_includes_history_and_persistence():
+    state = decisions.default_state("governance")
+    baseline = decisions.revision("governance", state)
+    assert baseline != decisions.revision("governance")
+    assert decisions.revision("governance", dict(reversed(list(state.items())))) == baseline
+    state["display_status"] = "anything"
+    state["overdue"] = True
+    assert decisions.revision("governance", state) == baseline
+    state["history"].append({"timestamp": NOW.isoformat(), "field": "owner",
+                             "from": "", "to": "CISO"})
+    assert decisions.revision("governance", state) != baseline
+
+
+@pytest.mark.parametrize("on_retry", [False, True])
+def test_stale_same_decision_rejects_without_mutating_or_overwriting(monkeypatch, on_retry):
+    before = {}
+    after = {}
+    decisions.set_decision(after, "governance", {"owner": "Other editor"}, now=NOW)
+    expected = decisions.revision("governance")
+    reads = iter([(before, "v1"), (after, "v2")] if on_retry else [(after, "v2")])
+    monkeypatch.setattr(decisions, "_load_versioned", lambda: next(reads))
+    write = Mock(side_effect=storage.StorageConflict("store changed"))
+    monkeypatch.setattr(storage, "write_json_conditional", write)
+    original = deepcopy(after)
+    with pytest.raises(decisions.StaleDecision):
+        decisions.update_decision("governance", {"owner": "My editor"},
+                                  expected_revision=expected, now=NOW)
+    assert before == {}
+    assert after == original
+    assert write.call_count == int(on_retry)
+
+
+def test_revision_protected_different_decision_retry_merges(monkeypatch):
+    other = {}
+    decisions.set_decision(other, "sensitive-access", {"owner": "IAM"}, now=NOW)
+    reads = iter([({}, "v1"), (other, "v2")])
+    monkeypatch.setattr(decisions, "_load_versioned", lambda: next(reads))
+    write = Mock(side_effect=[storage.StorageConflict("changed"), None])
+    monkeypatch.setattr(storage, "write_json_conditional", write)
+    saved = decisions.update_decision(
+        "governance", {"owner": "CISO"}, now=NOW,
+        expected_revision=decisions.revision("governance"))
+    merged = write.call_args.args[1]
+    assert merged["sensitive-access"] == other["sensitive-access"]
+    assert merged["governance"] == saved
+    assert "governance" not in other
+
+
+def test_api_stale_revision_is_409_and_does_not_write(monkeypatch):
+    existing = {"governance": {**decisions.default_state("governance"), "owner": "Other"}}
+    monkeypatch.setattr(decisions, "_load_versioned", lambda: (existing, "v1"))
+    write = Mock()
+    monkeypatch.setattr(storage, "write_json_conditional", write)
+    response = function_app.decisions_workflow(_Request("POST", {
+        "decision_key": "governance", "owner": "CISO",
+        "expected_revision": decisions.revision("governance")}))
+    assert response.status_code == 409
+    assert existing["governance"]["owner"] == "Other"
+    write.assert_not_called()
+
+
+@pytest.mark.parametrize("revision", [None, "", 123, [], {}])
+def test_api_invalid_expected_revision_is_400(monkeypatch, revision):
+    monkeypatch.setattr(decisions, "_load_versioned", lambda: ({}, None))
+    write = Mock()
+    monkeypatch.setattr(storage, "write_json_conditional", write)
+    response = function_app.decisions_workflow(_Request("POST", {
+        "decision_key": "governance", "owner": "CISO", "expected_revision": revision}))
+    assert response.status_code == 400
+    write.assert_not_called()
+
+
+@pytest.mark.parametrize("key", [[], {}, 1, True])
+def test_invalid_key_with_revision_still_returns_400(monkeypatch, key):
+    write = Mock()
+    monkeypatch.setattr(storage, "write_json_conditional", write)
+    response = function_app.decisions_workflow(_Request("POST", {
+        "decision_key": key, "owner": "CISO", "expected_revision": "revision"}))
+    assert response.status_code == 400
+    write.assert_not_called()
+
+
+@pytest.mark.parametrize("error,status", [
+    (ValueError("bad JSON"), "corrupt"), (OSError("sensitive internal details"), "unavailable")])
+def test_get_api_distinguishes_corruption_and_unavailability(monkeypatch, error, status):
+    monkeypatch.setattr(decisions, "_load_versioned", Mock(side_effect=error))
+    response = function_app.decisions_workflow(_Request())
+    assert response.status_code == 503
+    payload = json.loads(response.get_body())
+    assert payload["store_status"] == status
+    assert "decisions" not in payload
+    assert "sensitive internal details" not in str(payload)
+    assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_api_defaults_are_not_persisted_programs(monkeypatch):
+    monkeypatch.setattr(decisions, "_load_versioned", lambda: ({}, None))
+    payload = json.loads(function_app.decisions_workflow(_Request()).get_body())
+    assert payload["store_status"] == "ok"
+    assert all(not state["persisted"] and state["revision"]
+               for state in payload["decisions"].values())
+
+
+@pytest.mark.parametrize("expiry,expiring", [
+    ("2026-09-05", True), ("2026-09-12", True), ("2026-09-13", False),
+    ("2026-09-12T03:00:00+03:00", True),
+    ("2026-09-12T00:00:01Z", False), ("2026-09-04", False)])
+def test_expiring_acceptance_seven_day_inclusive_boundary(expiry, expiring):
+    stored = {**decisions.default_state("governance"), "status": "Risk accepted",
+              "owner": "CISO", "acceptance": {
+                  "rationale": "Migration", "approved_by": "CISO", "expires_at": expiry}}
+    original = deepcopy(stored)
+    state = decisions.view_state("governance", stored, now=NOW)
+    assert state["acceptance_expiring"] is expiring
+    assert stored == original
+
+
+def test_assessment_route_enables_live_only_for_served_html(monkeypatch):
+    doc = '<meta name="decision-context" content="snapshot">'
+    monkeypatch.setattr(storage, "read_latest", lambda _name: doc)
+    req = Mock(params={})
+    response = function_app.assessment_view(req)
+    assert b'content="live"' in response.get_body()
+    assert response.headers["Referrer-Policy"] == "no-referrer"
+    req.params = {"format": "json"}
+    assert function_app.assessment_view(req).get_body().decode() == doc

@@ -23,19 +23,22 @@ storage and opened off disk, where a CDN reference is a blank page.
 """
 import html
 import math
+from datetime import datetime, timezone
 
 import assessment
 import charts
+import dashboard_theme
+import dashboard_workflow
 import decisions as decisionstate
 import executive
 import report
 
-STATUS_COLOR = {assessment.FAILED: "#c4314b", assessment.PASSED: "#0f7b0f",
-                assessment.NOT_ASSESSED: "#8a8886", assessment.SKIPPED: "#a19f9d"}
-RISK_COLOR = {"High": "#c4314b", "Medium": "#c07000", "Low": "#5f6b7a"}
-PILLAR_COLOR = {assessment.P_ID: "#8764b8", assessment.P_DATA: "#c4314b",
-                assessment.P_GOV: "#0f7b0f", assessment.P_SURF: "#c07000",
-                assessment.P_MON: "#0f6cbd"}
+STATUS_COLOR = {assessment.FAILED: "var(--cp-danger)", assessment.PASSED: "var(--cp-success-readable)",
+                assessment.NOT_ASSESSED: "var(--cp-text-muted)", assessment.SKIPPED: "var(--cp-text-soft)"}
+RISK_COLOR = {"High": "var(--cp-danger)", "Medium": "var(--cp-text)", "Low": "var(--cp-text-muted)"}
+PILLAR_COLOR = {assessment.P_ID: "var(--cp-accent)", assessment.P_DATA: "var(--cp-danger)",
+                assessment.P_GOV: "var(--cp-success)", assessment.P_SURF: "var(--cp-warning)",
+                assessment.P_MON: "var(--cp-link)"}
 STATUS_MARK = {assessment.FAILED: "&#10060;", assessment.PASSED: "&#9989;",
                assessment.NOT_ASSESSED: "&#128683;", assessment.SKIPPED: "&#9899;"}
 DECISION_PROGRAMS = (
@@ -440,11 +443,11 @@ def _rows(results):
                  else '<span class="badge" style="background:%s">%s</span>'
                       % (sc, esc(t["status"])))
         out.append(
-            '<tr data-status="%s" data-risk="%s" data-pillar="%s" data-name="%s" data-panel="%s" '
+            '<tr id="control-%s" data-status="%s" data-risk="%s" data-pillar="%s" data-name="%s" data-panel="%s" '
             'tabindex="0" role="button" aria-haspopup="dialog">'
             '<td class="tname">%s<span class="tid">%s</span></td>'
             '<td class="risk" style="color:%s"><i>&#8593;</i>%s</td><td>%s</td></tr>'
-            % (esc(t["status"]), esc(t["risk"]), esc(t["pillar"]), esc(t["name"].lower()),
+            % (esc(t["id"]), esc(t["status"]), esc(t["risk"]), esc(t["pillar"]), esc(t["name"].lower()),
                html.escape(_panel(t), quote=True), esc(t["name"]), esc(t["id"]),
                RISK_COLOR.get(t["risk"], "#5f6b7a"), esc(t["risk"]), badge))
     return "".join(out)
@@ -473,7 +476,7 @@ def _tiles(ctx, estate, apps):
              # Agents visible in the OAuth estate need no connector; what Agent 365 would
              # add — agents built inside the tenant — is a test, not a tile.
              ("Agents", agents, "#0f7b0f", True),
-             ("People reached", ("%.1fk" % (users / 1000.0)) if users >= 1000 else users,
+             ("Consent-user counts (not unique)", ("%.1fk" % (users / 1000.0)) if users >= 1000 else users,
               "#038387", True)]
     return "".join(
         '<div class="tile"><div class="dot" style="background:%s;opacity:.16"></div>'
@@ -522,8 +525,8 @@ def _flow(ctx, estate):
                "through the browser — for those, revoking consent alone would not cut "
                "off the data path." % (len(vendors), len(both)))
     else:
-        cap = ("All %d AI vendors arrive by a single route, so each one can be cut off "
-               "with one action." % len(vendors))
+        cap = ("Each of %d AI vendors has one observed route in this scan. Unobserved "
+               "routes may exist; one action is not proof that access is contained." % len(vendors))
     return sankey(stages, links), cap
 
 
@@ -594,7 +597,7 @@ def _estate_view(estate):
             + '<div><span>Risk score:</span> <b style="color:%s">%s &middot; %s</b></div>'
               % (color, v.get("risk_score", 0), esc(level))
             + "<div><span>Seen through:</span> <b>%s</b></div>" % esc(evidence)
-            + "<div><span>People reached:</span> <b>%s</b></div>" % v.get("users", 0)
+            + "<div><span>Reported user counts (not a unique reach measure):</span> <b>%s</b></div>" % v.get("users", 0)
             + "<div><span>Consented applications:</span> <b>%d</b></div>"
               % len(v.get("oauth_apps", []))
             + "</div></div>"
@@ -715,16 +718,40 @@ def _trend(changes):
 
 def _source_freshness(health):
     timestamps = []
+    event_times = []
+    invalid = 0
     for entry in (health or {}).values():
         for key in ("collected_at", "checked_at", "last_success", "timestamp"):
             value = entry.get(key)
             if value:
-                timestamps.append(str(value))
+                try:
+                    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+                    if parsed.tzinfo is None:
+                        raise ValueError("offset missing")
+                    timestamps.append(parsed.astimezone(timezone.utc))
+                except ValueError:
+                    invalid += 1
                 break
-    if not timestamps:
-        return "Source-level freshness is not reported by the connected APIs."
-    return ("Freshness reported by %d connector(s); oldest reported source time: %s."
-            % (len(timestamps), min(timestamps)))
+        value = entry.get("source_event_at")
+        if value:
+            try:
+                parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    raise ValueError("offset missing")
+                event_times.append(parsed.astimezone(timezone.utc))
+            except ValueError:
+                invalid += 1
+    text = ("Source event freshness is not reported; collection/check times are not event freshness."
+            if not event_times else
+            "Source event time reported by %d connector(s); oldest reported event: %s. "
+            "Other source freshness remains unknown." %
+            (len(event_times), min(event_times).isoformat()))
+    if timestamps:
+        text += (" Collection/check time reported by %d connector(s); oldest: %s."
+                 % (len(timestamps), min(timestamps).isoformat()))
+    if invalid:
+        text += " %d invalid or offset-free timestamp(s) excluded." % invalid
+    return text
 
 
 def _coverage_confidence(results, health):
@@ -761,7 +788,7 @@ def _coverage_confidence(results, health):
         elif status == "PARTIALLY_CONNECTED":
             css, label = "warn", "Partial"
         elif status == "NO_DATA":
-            css, label = "warn", "No data"
+            css, label = "warn", "Reachable · no detected data"
         elif ok:
             css, label = "ok", "Connected"
         else:
@@ -826,7 +853,8 @@ def _decision_programs(results, apps, decision_states=None, now=None):
             (failed[tid] for tid in definition["ids"] if tid in failed),
             key=lambda t: (assessment.RISK_ORDER[t["risk"]], t["id"]))
         key = definition["key"]
-        workflow = decisionstate.view_state(key, decision_states.get(key), now=now)
+        workflow = decisionstate.view_state(
+            key, decision_states.get(key), now=now, failed_controls=len(controls))
         actionable = key in decision_states and (
             workflow["data_error"] or workflow["overdue"] or workflow["acceptance_expired"]
             or workflow["status"] not in {"Verified", "False positive"})
@@ -863,6 +891,7 @@ def _decisions_html(results, apps, decision_states=None, now=None):
             "persisted workflow or establish that unassessed controls passed.")
         workflow = decision["workflow"]
         state_class = ("expired" if workflow.get("data_error") or workflow["acceptance_expired"]
+                       or workflow["evidence_conflict"]
                        else ("overdue" if workflow["overdue"] else ""))
         owner = workflow["owner"] or "Unassigned"
         due = workflow["due_date"] or "Not assigned"
@@ -871,7 +900,7 @@ def _decisions_html(results, apps, decision_states=None, now=None):
             accepted = workflow["acceptance"]
             acceptance = (
                 '<div class="acceptance"><b>Risk acceptance:</b> %s<br>'
-                'Approved by %s &middot; expires %s</div>'
+                'Approved by %s (self-reported) &middot; expires %s</div>'
                 % (esc(accepted.get("rationale")), esc(accepted.get("approved_by")),
                    esc(accepted.get("expires_at"))))
         elif workflow.get("compensating_control"):
@@ -883,6 +912,9 @@ def _decisions_html(results, apps, decision_states=None, now=None):
         if workflow.get("notes"):
             acceptance += ('<div class="acceptance"><b>Decision notes:</b> %s</div>'
                            % esc(workflow["notes"]))
+        if workflow["evidence_conflict"]:
+            acceptance += ('<p class="workflow-message error">Evidence conflict: manually '
+                           'Verified, but controls failed in this scan. Verification needs review.</p>')
         effect = ("%d control(s) enter one accountable campaign; each retains its canonical "
                   "verification criteria; %s."
                   % (len(controls), ", ".join(t["id"] for t in controls)) if controls else
@@ -897,17 +929,21 @@ def _decisions_html(results, apps, decision_states=None, now=None):
         cards.append(
             '<article class="decision" aria-labelledby="decision-%d"><h4 id="decision-%d">'
             '<span class="u">Decision %d</span><br>%s</h4><div class="scope">%s</div>'
-            '<span class="dstatus %s">%s</span>'
-            '<div class="dmeta"><span>Assigned owner</span><b>%s</b>'
-            '<span>Recommended owner</span><b>%s</b><span>Due date</span><b>%s</b>'
-            '<span>Target SLA</span><b>%s</b><span>Priority</span><b>%s</b></div>'
+            '<div data-workflow="%s"><span class="dstatus %s">%s</span>'
+            '<div class="dmeta"><span>Assigned owner (self-reported)</span><b>%s</b>'
+            '<span>Due date</span><b>%s</b></div>%s</div>'
+            '<div class="dmeta"><span>Recommended owner</span><b>%s</b>'
+            '<span>Target SLA</span><b>%s</b><span>Scan priority</span><b>%s</b></div>'
             '<p class="why"><b>Why now:</b> %s</p><p class="why"><b>Observed evidence:</b> '
             '%s</p><p class="choice"><b>Executive choice:</b> %s</p>'
-            '%s<div class="effect">%s</div></article>'
-            % (index, index, index, esc(decision["title"]), scope, state_class,
-               esc(workflow["display_status"]), esc(owner), esc(decision["owner"]), esc(due),
-               esc(decision["sla"]), priority,
-               esc(why), esc(evidence), esc(choice), acceptance, esc(effect)))
+            '<div class="workflow-actions"><button class="workflow-btn" data-edit-decision="%s">'
+            'Review snapshot</button><button class="workflow-btn" data-evidence="%s">'
+            'Review control evidence</button></div><div class="effect">%s</div></article>'
+            % (index, index, index, esc(decision["title"]), scope, esc(decision["key"]), state_class,
+               esc(workflow["display_status"]), esc(owner), esc(due), acceptance,
+               esc(decision["owner"]), esc(decision["sla"]), priority,
+               esc(why), esc(evidence), esc(choice), esc(decision["key"]),
+               esc(" ".join(sorted(decision["ids"]))), esc(effect)))
     campaigns = "".join(
         '<div class="campaign"><b>%s</b><span>%d current failed control(s); program owner: '
         '%s</span></div>'
@@ -917,8 +953,8 @@ def _decisions_html(results, apps, decision_states=None, now=None):
         '<p class="pn">Control failures are consolidated by root cause. Persisted decisions '
         'remain visible until resolved, even with no current failed controls. The complete '
         '26-control evidence backlog remains below.</p><div class="decisiongrid">%s</div>'
-        '<h3 style="margin-top:20px">Remediation campaigns</h3>'
-        '<div class="campaigns">%s</div></div>'
+        '<details class="details-block"><summary>Remediation campaigns</summary>'
+        '<div class="campaigns">%s</div></details></div>'
         % (len(decisions), "decision" if len(decisions) == 1 else "decisions",
            "moves" if len(decisions) == 1 else "move", "".join(cards), campaigns),
         decisions,
@@ -949,6 +985,19 @@ def _narrative(results, decisions):
                if persisted_only else ""))
 
 
+def _scan_as_of(context):
+    now = (context or {}).get("now")
+    return now.isoformat() if isinstance(now, datetime) else (
+        (context or {}).get("finished") or "not recorded")
+
+
+def _workflow_states(results, stored=None, now=None):
+    return {p["key"]: decisionstate.view_state(
+        p["key"], (stored or {}).get(p["key"]), now=now,
+        failed_controls=sum(t["status"] == assessment.FAILED and t["id"] in p["ids"]
+                            for t in results)) for p in DECISION_PROGRAMS}
+
+
 def _cockpit(results, apps, estate, health, changes, context=None, decision_states=None):
     """
     The hero: one screen a decision-maker can act on without opening a single row.
@@ -959,17 +1008,39 @@ def _cockpit(results, apps, estate, health, changes, context=None, decision_stat
     score, band = _posture(shadow_apps)
     trend_cls, trend_text = _trend(changes)
     coverage = _coverage_confidence(results, health)
+    scan_counts = assessment.summary(results)["by_status"]
     counts = {lv: sum(1 for app in shadow_apps if app.get("risk_level") == lv)
               for lv in report.LEVELS}
     decisions_html, decisions = _decisions_html(
         results, apps, decision_states, (context or {}).get("now"))
     conc_html = _concentration(results, apps)
     narrative = _narrative(results, decisions)
+    scan_as_of = _scan_as_of(context)
+    states = _workflow_states(results, decision_states, (context or {}).get("now"))
+    attention = decisionstate.attention([d["workflow"] for d in decisions])
+    review = dashboard_workflow.markup([
+        {"key": p["key"], "title": p["title"],
+         "failed_controls": states[p["key"]]["failed_controls"]}
+        for p in DECISION_PROGRAMS], states, scan_as_of)
 
     return """
 <div class="cockpit">
-  <div class="narrative">
-    <h2>Executive summary</h2>
+  <div class="executive-strip">
+    <span><strong>%(score)d / 100</strong> exposure · %(band)s</span>
+    <span><strong>%(assessment_pct)d%%</strong> control coverage</span>
+    <span>%(failed)d failed · %(unknown)d not assessed · %(skipped)d skipped</span>
+    <span>Scan as of <b>%(scan_as_of)s</b></span>
+    <button class="workflow-btn" id="print-brief">Print / board brief</button>
+    <p>Coverage is not risk reduction or compliance certification. Unassessed and skipped
+    controls remain unknown. Source event freshness may be unknown.</p>
+  </div>
+  <div class="attention" id="decision-attention" role="status" aria-live="polite">%(attention)s</div>
+  %(decisions)s
+  %(review)s
+  <details class="details-block">
+   <summary>Detailed coverage, exposure and scan narrative</summary>
+   <div class="narrative">
+    <h2>Scan summary (immutable)</h2>
     %(narrative)s
     <p class="trend %(trend_cls)s" style="margin-top:10px">%(trend_text)s</p>
   </div>
@@ -985,27 +1056,39 @@ def _cockpit(results, apps, estate, health, changes, context=None, decision_stat
       </div>
     </div>
     <div class="card">
-      <h3>Evidence confidence <span class="confbadge">%(confidence)s</span></h3>
+      <h3>Coverage confidence <span class="confbadge">%(confidence)s</span></h3>
+      <p class="pn">A coverage/completeness label, not probabilistic evidence confidence
+      or a source-freshness assessment.</p>
       <p class="pn"><b>Assessment coverage:</b> %(assessable)d of %(total)d controls
       answerable (%(assessment_pct)d%%).</p>
       <div class="confbar"><i style="width:%(assessment_pct)d%%"></i></div>
       <p class="pn"><b>Telemetry coverage:</b> %(connected)d of %(operational)d operational
-      sources fully informative (%(telemetry_pct)d%%). Partial and no-data sources reduce
-      confidence; roadmap sources are not in this denominator.</p>
+      sources completed collection (%(telemetry_pct)d%%). Completion does not prove
+      informative evidence. Partial and no-data sources reduce completeness;
+      roadmap sources are not in this denominator.</p>
       <div class="confbar telemetry"><i style="width:%(telemetry_pct)d%%"></i></div>
       <p class="fresh">%(freshness)s</p>
       <ul class="conflist">%(conn_rows)s</ul>
     </div>
     <div class="card">
       <h3>Risk concentration</h3>
-      <p class="pn">Assets named by more than one failing control — the blast radius
-      if one of them is compromised, or the leverage if one of them is fixed.</p>
+      <p class="pn">Named evidence ranked by failing-control count. These are not unique
+      identities or a measurement of tenant-wide blast radius.</p>
       %(conc)s
     </div>
   </div>
-  %(decisions)s
+  </details>
 </div>
 """ % {"narrative": narrative, "trend_cls": trend_cls, "trend_text": trend_text,
+       "score": score, "band": band, "scan_as_of": esc(scan_as_of), "review": review,
+       "failed": scan_counts.get(assessment.FAILED, 0),
+       "unknown": scan_counts.get(assessment.NOT_ASSESSED, 0),
+       "skipped": scan_counts.get(assessment.SKIPPED, 0),
+       "attention": esc(
+           "%d overdue · %d acceptances expiring within 7 days · %d expired · "
+           "%d unassigned · %d evidence conflicts — snapshot as of %s" %
+           (attention["overdue"], attention["expiring"], attention["expired"],
+            attention["unassigned"], attention["conflicting"], scan_as_of)),
        "gauge": charts.gauge(score, "Tenant AI posture"),
        "critical": counts.get("Critical", 0), "high": counts.get("High", 0),
        "assessable": coverage["assessable"], "total": coverage["total"],
@@ -1030,10 +1113,10 @@ def _overview(ctx, results, apps, estate, tenant_id, context, changes=None,
         '<span class="u">tests</span></span></div>' % (esc(l), d, t)
         for l, d, t, _c in pillars)
 
-    unknown = [t for t in results if t["status"] == assessment.NOT_ASSESSED]
+    unknown = [t for t in results if t["status"] in (assessment.NOT_ASSESSED, assessment.SKIPPED)]
     gaps = "".join(
         '<div class="gap"><span>&#128683;</span><div><b>%s</b><div class="gapwhy">%s</div>'
-        "</div></div>" % (esc(t["name"]), esc(t["verdict"])) for t in unknown)
+        "</div></div>" % (esc(t["status"] + ": " + t["name"]), esc(t["verdict"])) for t in unknown)
     if not gaps:
         gaps = ('<p class="cap" style="margin-top:0">Every test in the catalogue could be '
                 "evaluated against this tenant.</p>")
@@ -1053,6 +1136,7 @@ def _overview(ctx, results, apps, estate, tenant_id, context, changes=None,
     return """
 <h1>%(org)s</h1>
 %(cockpit)s
+<details class="details-block"><summary>Tenant, estate and full assessment coverage</summary>
 <div class="grid top3">
   <div class="card">
     <h2>Tenant</h2>
@@ -1075,6 +1159,7 @@ def _overview(ctx, results, apps, estate, tenant_id, context, changes=None,
       <div><div class="fl">Passed</div><div class="fn" style="color:#0f7b0f">%(passed)d</div></div>
       <div><div class="fl">Failed</div><div class="fn" style="color:#c4314b">%(failed)d</div></div>
       <div><div class="fl">Not assessed</div><div class="fn">%(unknown)d</div></div>
+      <div><div class="fl">Skipped</div><div class="fn">%(skipped)d</div></div>
     </div>
   </div>
 </div>
@@ -1086,12 +1171,13 @@ def _overview(ctx, results, apps, estate, tenant_id, context, changes=None,
     <p class="cap">%(flowcap)s</p>
   </div>
   <div class="card">
-    <h2>Who it reaches</h2>
+    <h2>Consent footprint</h2>
     %(reach)s
-    <p class="cap">Consent counts, not usage. The gap between the two is what the sign-in
-    activity tests measure; where Entra ID P1 is missing, that gap cannot be seen at all.</p>
+    <p class="cap">Summed consent-user counts, not unique people, usage, tenant-wide
+    reach or application-permission scope. Users may recur across applications;
+    admin consent and app-only access cannot be sized using these totals.</p>
     <div class="foots">
-      <div><div class="fl">People reached</div><div class="fn">%(users)s</div></div>
+      <div><div class="fl">Consent-user counts</div><div class="fn">%(users)s</div></div>
       <div><div class="fl">Applications</div><div class="fn">%(napps)d</div></div>
       <div><div class="fl">Agents</div><div class="fn">%(agents)d</div></div>
     </div>
@@ -1102,18 +1188,19 @@ def _overview(ctx, results, apps, estate, tenant_id, context, changes=None,
   <div class="card">
     <h2>Highest risk first</h2>
     %(risk)s
-    <p class="cap">Scores are built from the permissions held, how they were consented and
-    how many people they reach. Every point carries its reason on the OAuth assessment —
+    <p class="cap">Scores are built from permissions held, consent scope and consent-user
+    counts, which do not measure unique people or actual reach. Every point carries its reason on the OAuth assessment —
     nothing here is a black box.</p>
   </div>
   <div class="card">
-    <h2>What is not being assessed</h2>
+    <h2>Not assessed / skipped</h2>
     %(gaps)s
     <p class="cap">These are shown rather than hidden on purpose. A test that could not
     run is a gap in visibility, and a gap in visibility is itself a finding — it is never
     reported as a zero.</p>
   </div>
 </div>
+</details>
 """ % {"org": esc(org), "domain": esc(profile.get("primary_domain") or "&#8212;"),
        "tenant": esc(tenant_id), "scanner": esc(scanned.get("app_name") or "AI-SPM"),
        "finished": esc(finished or "this scan"), "cockpit": cockpit_html,
@@ -1121,7 +1208,9 @@ def _overview(ctx, results, apps, estate, tenant_id, context, changes=None,
        "radial": radial(pillars),
        "passed": summary["by_status"].get(assessment.PASSED, 0),
        "failed": summary["by_status"].get(assessment.FAILED, 0),
-       "unknown": len(unknown), "flow": flow_svg, "flowcap": esc(flow_cap),
+       "unknown": summary["by_status"].get(assessment.NOT_ASSESSED, 0),
+       "skipped": summary["by_status"].get(assessment.SKIPPED, 0),
+       "flow": flow_svg, "flowcap": esc(flow_cap),
        "reach": hbars([(a.get("display_name") or "-", a.get("user_count", 0)) for a in top],
                       "#8764b8"),
        "risk": hbars([(a.get("display_name") or "-", a.get("risk_score", 0)) for a in risky],
@@ -1160,11 +1249,13 @@ def _assessment_view(results):
   answer needs a source that is not connected, the test reports <b>Not assessed</b> and
   names the source — it is never reported as a pass or a zero.</p>
   <div class="filters">
+    <label for="q">Search controls</label>
     <input class="search" id="q" placeholder="Search by name...">
     <span class="lbl">Risk:</span>%(chips)s
     <span class="lbl">Status:</span>%(schips)s
   </div>
-  <div class="filters"><span class="lbl" style="margin-left:0">Pillar:</span>%(pchips)s</div>
+  <div class="filters"><span class="lbl" style="margin-left:0">Pillar:</span>%(pchips)s
+   <button class="workflow-btn" id="all-controls">Show all controls</button></div>
   <div class="count" id="count"></div>
   <div class="tbl-wrap"><table id="t-tests"><thead><tr>
     <th data-sort="0" tabindex="0" role="button" aria-sort="none">Name &#8645;</th>
@@ -1202,12 +1293,13 @@ $('#theme').onclick=function(){
   var r=document.documentElement;
   r.setAttribute('data-theme', r.getAttribute('data-theme')==='dark'?'light':'dark');
 };
-var state={risk:null,status:null,pillar:null,q:''};
+var state={risk:null,status:null,pillar:null,q:'',ids:null};
 function apply(){
   var shown=0,total=0;
   document.querySelectorAll('#tbody tr').forEach(function(tr){
     total++;
     var ok=true;
+    if(state.ids && !state.ids.includes(tr.id.replace('control-',''))) ok=false;
     if(state.risk && tr.getAttribute('data-risk')!==state.risk) ok=false;
     if(state.status && tr.getAttribute('data-status')!==state.status) ok=false;
     if(state.pillar && tr.getAttribute('data-pillar')!==state.pillar) ok=false;
@@ -1221,6 +1313,7 @@ function apply(){
 document.querySelectorAll('.chip').forEach(function(c){
   c.onclick=function(){
     var f=c.getAttribute('data-f'),v=c.getAttribute('data-v'),was=state[f]===v;
+    state.ids=null;
     document.querySelectorAll('.chip[data-f="'+f+'"]').forEach(function(x){
       x.classList.remove('on'); x.setAttribute('aria-pressed', 'false');
     });
@@ -1231,6 +1324,20 @@ document.querySelectorAll('.chip').forEach(function(c){
 });
 $('#q').oninput=function(){state.q=this.value.toLowerCase();apply();};
 apply();
+function resetControls(){
+  state={risk:null,status:null,pillar:null,q:'',ids:null};$('#q').value='';
+  document.querySelectorAll('.chip').forEach(function(c){
+    c.classList.remove('on');c.setAttribute('aria-pressed','false');
+  });
+}
+$('#all-controls').onclick=function(){resetControls();apply();};
+document.querySelectorAll('[data-evidence]').forEach(function(button){
+  button.onclick=function(){
+    resetControls();state.ids=button.getAttribute('data-evidence').split(' ');
+    document.querySelector('nav [data-view="assessment"]').click();apply();
+    $('#q').focus();
+  };
+});
 var order={};
 document.querySelectorAll('th[data-sort]').forEach(function(th){
   fireOnEnterOrSpace(th);
@@ -1282,18 +1389,6 @@ document.onkeydown=function(e){
   if(e.shiftKey && document.activeElement===first){e.preventDefault();last.focus();}
   else if(!e.shiftKey && document.activeElement===last){e.preventDefault();first.focus();}
 };
-/* Function App routes carry a ?code=; carry it to the sibling dashboards so the links
-   keep working there, and leave them alone on a page opened off disk. */
-if(location.pathname.indexOf('/api/')===0){
-  var code=new URLSearchParams(location.search).get('code');
-  if(code){
-    document.querySelectorAll('nav a.out').forEach(function(a){
-      var h=a.getAttribute('href');
-      if(h && h.indexOf('/api/')===0)
-        a.setAttribute('href', h+(h.indexOf('?')<0?'?':'&')+'code='+encodeURIComponent(code));
-    });
-  }
-}
 """
 
 
@@ -1304,9 +1399,14 @@ def html_string(results, apps, tenant_id, estate=None, health=None, context=None
     ctx = assessment.context(apps, estate, health)
     return """<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
+<meta name="decision-context" content="snapshot">
+<meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<script>%(theme)s</script>
 <title>AI-SPM &#8212; AI security assessment</title><style>%(css)s</style></head>
 <body>
+<noscript>This is a read-only scan snapshot. JavaScript is required for live workflow
+ review, theme controls and evidence panels. No edits are saved without the live API.</noscript>
 <a class="skiplink" href="#main">Skip to content</a>
 <header class="topbar">
   <div class="brand"><span class="logo"><i></i><i></i><i></i><i></i></span> AI-SPM</div>
@@ -1321,8 +1421,8 @@ def html_string(results, apps, tenant_id, estate=None, health=None, context=None
   <div class="view" id="v-assessment">%(assessment)s</div>
   <div class="view" id="v-estate">%(estate)s</div>
   <footer>
-    <div><b>AI-SPM</b> &#8212; read-only. It observes, scores and reports; remediation
-    stays with your team.</div>
+    <div><b>AI-SPM</b> &#8212; tenant collection is read-only. Workflow recording does not
+    change Microsoft 365 configuration. Remediation stays with your team.</div>
     <div>%(finished)s</div>
   </footer>
 </main>
@@ -1332,7 +1432,9 @@ def html_string(results, apps, tenant_id, estate=None, health=None, context=None
   <div id="pbody"></div></div>
 <script>%(js)s</script>
 </body></html>
-""" % {"css": CSS + charts.CSS, "js": JS, "nav": _nav("overview", detail_href),
+""" % {"css": CSS + charts.CSS + dashboard_theme.CSS,
+       "theme": dashboard_theme.DETECT, "js": JS + dashboard_workflow.JS,
+       "nav": _nav("overview", detail_href),
        "org": esc(((context or {}).get("tenant_profile") or {}).get("display_name")
                   or "AI-SPM"),
        "overview": _overview(ctx, results, apps, estate, tenant_id, context, changes,
@@ -1345,10 +1447,12 @@ def html_string(results, apps, tenant_id, estate=None, health=None, context=None
 def json_string(results, decision_states=None, now=None) -> str:
     """The assessment as data — the same verdicts, for a pipeline rather than a person."""
     import json
-    workflow = {key: decisionstate.view_state(
-                    key, (decision_states or {}).get(key), now=now)
-                for key in sorted(decisionstate.KEYS)}
+    workflow = _workflow_states(results, decision_states, now)
+    active = _decision_programs(results, [], decision_states, now)
     payload = {"summary": assessment.summary(results),
                "tests": [{k: v for k, v in t.items() if k != "checked"} for t in results],
-               "decision_workflow": workflow}
+               "decision_workflow": workflow,
+               "scan_as_of": now.isoformat() if isinstance(now, datetime) else None,
+               "workflow_as_of": now.isoformat() if isinstance(now, datetime) else None,
+               "decision_attention": decisionstate.attention([p["workflow"] for p in active])}
     return json.dumps(payload, indent=2, ensure_ascii=False)

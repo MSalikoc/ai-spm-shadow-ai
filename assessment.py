@@ -141,7 +141,7 @@ def t_write_all_files(ctx):
                     "1 AI application can write to every file in the tenant.",
                     "{n} AI applications can write to every file in the tenant.",
                     "No AI application holds tenant-wide file write access.")
-    return st, v, rows(bad, lambda a: f'{a.get("user_count", 0)} users · {a.get("risk_level")}')
+    return st, v, rows(bad, lambda a: f'{a.get("user_count", 0)} consent-user count · {a.get("risk_level")}')
 
 
 def t_directory_read(ctx):
@@ -182,7 +182,7 @@ def t_offline_access(ctx):
                     "{n} AI applications hold refresh tokens that outlive the session.",
                     "No AI application holds offline access.")
     # Widespread and not automatically wrong — reported at Low.
-    return st, v, rows(bad, lambda a: f'{a.get("user_count", 0)} users')
+    return st, v, rows(bad, lambda a: f'{a.get("user_count", 0)} consent-user count (not usage)')
 
 
 def t_credentials(ctx):
@@ -211,7 +211,7 @@ def t_lifecycle(ctx):
                     "1 AI application has never been through a decision.",
                     "{n} AI applications are still sitting at Discovered — nobody has approved or rejected them.",
                     "Every AI application has a decided lifecycle state.")
-    return st, v, rows(bad, lambda a: f'{a.get("user_count", 0)} users already use it')
+    return st, v, rows(bad, lambda a: f'{a.get("user_count", 0)} consent-user count (not usage)')
 
 
 def t_classification(ctx):
@@ -382,10 +382,11 @@ def t_high_reach(ctx):
     bad = [a for a in shadow(ctx)
            if a.get("user_count", 0) >= 250 and a.get("risk_score", 0) >= 60]
     st, v = verdict(bad,
-                    "1 high-risk AI application reaches more than 250 people.",
-                    "{n} high-risk AI applications each reach more than 250 people.",
-                    "No high-risk AI application has organisation-wide reach.")
-    return st, v, rows(bad, lambda a: f'{a.get("user_count")} users · risk {a.get("risk_score")}')
+                    "1 high-risk AI application has a consent-user count of at least 250.",
+                    "{n} high-risk AI applications each have a consent-user count of at least 250.",
+                    "No application meets both the risk-score and consent-count thresholds; "
+                    "this does not rule out tenant-wide access.")
+    return st, v, rows(bad, lambda a: f'{a.get("user_count")} consent-user count · risk {a.get("risk_score")}')
 
 
 def t_duplicate_vendor(ctx):
@@ -576,8 +577,8 @@ TESTS = [
       "The test counts applications still at Discovered or Unknown. Approved, Pilot, "
       "Restricted, Blocked and Retired all pass — the test is about a decision existing, "
       "not about which decision it was."],
-     "Work the list top-down by user count: the tools most people already use are the ones "
-     "where an unstated decision costs the most.",
+     "Prioritise governance review using consent scope, observed activity and business "
+     "impact. Consent-user counts alone do not establish how many people use a tool.",
      []),
 
     ("AISPM-3003", "Every discovered application has been classified",
@@ -639,14 +640,15 @@ TESTS = [
      "Revoke these grants. If the tool is later needed, consenting again takes a minute.",
      []),
 
-    ("AISPM-4003", "No high-risk AI application has organisation-wide reach",
+    ("AISPM-4003", "No high-risk AI application has a large consent footprint",
      P_SURF, "High", "Medium", "Medium", "Directory.Read.All", t_high_reach,
-     ["Risk and reach multiply. A high-risk application used by four people is contained; "
-      "the same application in front of five hundred is an incident waiting for a trigger.",
-      "The test combines the transparent risk score with the number of people holding a "
-      "grant — the same pair of axes the triage chart on the overview plots."],
-     "Work these first. They are the top-right corner of the triage chart and the shortest "
-     "path to lowering the tenant posture score.",
+     ["This prioritisation signal flags a risk score of at least 60 and a consent-user "
+      "count of at least 250. It does not measure unique active users or tenant-wide reach.",
+      "Admin consent and application permissions can expose tenant-wide resources even "
+      "with few or no consented users. Review permission scope and sign-in evidence "
+      "alongside these counts; passing this test is not proof of limited access."],
+     "Review these permissions, usage and business justification first, without treating "
+     "low consent counts as containment or promising a posture-score reduction.",
      []),
 
     ("AISPM-4004", "AI adoption is not spreading unreviewed",
@@ -745,4 +747,4 @@ def summary(results) -> dict:
     return {"total": len(results), "by_status": by_status, "by_pillar": by_pillar,
             "failed_high": sum(1 for t in results
                                if t["status"] == FAILED and t["risk"] == "High"),
-            "assessable": len(results) - by_status.get(NOT_ASSESSED, 0)}
+            "assessable": by_status.get(PASSED, 0) + by_status.get(FAILED, 0)}
