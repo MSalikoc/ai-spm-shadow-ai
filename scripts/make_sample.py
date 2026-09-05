@@ -215,7 +215,7 @@ def main():
         f.write(assessment_report.html_string(
             results, scored, TENANT, estate=estate_for_tests, health=health,
             context=dict(SAMPLE_CONTEXT, finished=NOW.strftime("%d %B %Y, %H:%M UTC")),
-            detail_href="sample-detail.html"))
+            detail_href="sample-detail.html", changes=changes))
 
     counts = {lv: sum(1 for a in scored if a["risk_level"] == lv)
               for lv in ("Critical", "High", "Medium", "Low")}

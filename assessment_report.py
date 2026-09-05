@@ -10,6 +10,14 @@ click, because a table that tries to carry the depth ends up carrying neither.
 What it adds beyond that pattern: a failing test names the assets that failed it, and a
 test whose source is missing says so instead of passing quietly.
 
+Above that table sits a decision cockpit: one number for exposure (reusing the same
+`report._posture_score` a scan already computes), how much of the catalogue could
+actually be answered this scan (never letting "not assessed" read as "safe"), which
+findings concentrate the blast radius, and a triage of what to fix now / next / when
+there is time — all folded straight out of `results`, `apps` and `estate` the page
+already has. Nothing here is a second opinion; it is the same verdicts, ordered for
+someone who has thirty seconds before the next meeting.
+
 Self-contained HTML — no external CSS, fonts or scripts. These pages are served from Blob
 storage and opened off disk, where a CDN reference is a blank page.
 """
@@ -17,6 +25,9 @@ import html
 import math
 
 import assessment
+import charts
+import executive
+import report
 
 STATUS_COLOR = {assessment.FAILED: "#c4314b", assessment.PASSED: "#0f7b0f",
                 assessment.NOT_ASSESSED: "#8a8886", assessment.SKIPPED: "#a19f9d"}
@@ -26,6 +37,9 @@ PILLAR_COLOR = {assessment.P_ID: "#8764b8", assessment.P_DATA: "#c4314b",
                 assessment.P_MON: "#0f6cbd"}
 STATUS_MARK = {assessment.FAILED: "&#10060;", assessment.PASSED: "&#9989;",
                assessment.NOT_ASSESSED: "&#128683;", assessment.SKIPPED: "&#9899;"}
+ACTION_GROUPS = (("High", "Immediate", "needs a decision this week"),
+                 ("Medium", "Next", "queue for the current sprint"),
+                 ("Low", "Watch", "no user impact yet — track it"))
 
 CSS = """
 *{box-sizing:border-box}
@@ -145,6 +159,58 @@ footer{border-top:1px solid var(--line);margin-top:44px;padding:26px 0;color:var
  font-size:12.5px;display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}
 .view{display:none}.view.on{display:block}
 @media(max-width:1000px){.top3,.two{grid-template-columns:1fr}.panel{width:100%}}
+
+/* -- decision cockpit ------------------------------------------------------ */
+.skiplink{position:absolute;left:-999px;top:0;background:var(--ink);color:var(--bg);
+ padding:10px 16px;border-radius:0 0 6px 0;z-index:100;font-size:14px}
+.skiplink:focus{left:0}
+.cockpit{display:grid;gap:16px;margin-bottom:16px}
+.narrative{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--link);
+ border-radius:8px;padding:20px 24px}
+.narrative h2{margin:0 0 8px}
+.narrative p{margin:0 0 8px;font-size:15px;line-height:1.6}
+.narrative p:last-child{margin-bottom:0}
+.cockpit-grid{grid-template-columns:1fr 1fr 1.2fr}
+.postrow{display:flex;align-items:center;gap:16px}
+.postrow .pn{font-size:13.5px;color:var(--muted);margin:0 0 2px}
+.trend{font-size:13px;margin-top:6px;padding:4px 0}
+.trend.up{color:#c4314b}.trend.down{color:#0f7b0f}.trend.flat{color:var(--muted)}
+.confbar{height:8px;border-radius:5px;background:var(--track);overflow:hidden;margin:4px 0 2px}
+.confbar i{display:block;height:100%;background:var(--link)}
+.conflist{list-style:none;margin:12px 0 0;padding:0;font-size:13px}
+.conflist li{display:flex;justify-content:space-between;gap:10px;padding:5px 0;
+ border-top:1px solid var(--line)}
+.conflist li:first-child{border-top:none}
+.conflist .ok{color:#0f7b0f}.conflist .bad{color:#8a8886}
+.actioncols{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.actioncol h4{margin:0 0 3px;font-size:14px}
+.actioncol .actn{color:var(--muted);font-size:12px;margin:0 0 10px}
+.actioncol ul{list-style:none;margin:0;padding:0}
+.actioncol li{margin:0 0 8px}
+.actioncol button.arow{width:100%;text-align:left;background:var(--card);
+ border:1px solid var(--line);border-left:3px solid transparent;border-radius:6px;
+ padding:9px 11px;font:inherit;color:var(--ink);cursor:pointer}
+.actioncol button.arow:hover,.actioncol button.arow:focus-visible{background:var(--track)}
+.actioncol .an{font-weight:600;font-size:13.5px;display:block}
+.actioncol .av{color:var(--muted);font-size:12.5px;margin-top:2px;display:block}
+.actioncol .empty{padding:10px 0;font-size:13px;text-align:left}
+.concrow{display:flex;align-items:center;gap:10px;padding:7px 0;font-size:13.5px;
+ border-top:1px solid var(--line)}
+.concrow:first-child{border-top:none}
+.concrow .cn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.concrow .cc{font-weight:600;color:var(--muted);white-space:nowrap}
+[data-view]:not(a[href]){cursor:pointer}
+a[role=button]:focus-visible,button:focus-visible,tr[tabindex]:focus-visible,
+th[tabindex]:focus-visible,.chip:focus-visible{outline:2px solid var(--link);outline-offset:2px}
+tbody tr[tabindex]:focus-visible{outline-offset:-2px}
+@media(max-width:1000px){.cockpit-grid{grid-template-columns:1fr}.actioncols{grid-template-columns:1fr}}
+@media print{
+ .topbar,.scrim,.panel,.filters,.iconbtn,.skiplink{display:none!important}
+ .view{display:block!important}
+ body{background:#fff;color:#000}
+ .card{border:1px solid #999;break-inside:avoid}
+ .wrap{max-width:none;padding:0}
+}
 """
 
 
@@ -325,7 +391,8 @@ def _rows(results):
                  else '<span class="badge" style="background:%s">%s</span>'
                       % (sc, esc(t["status"])))
         out.append(
-            '<tr data-status="%s" data-risk="%s" data-pillar="%s" data-name="%s" data-panel="%s">'
+            '<tr data-status="%s" data-risk="%s" data-pillar="%s" data-name="%s" data-panel="%s" '
+            'tabindex="0" role="button" aria-haspopup="dialog">'
             '<td class="tname">%s<span class="tid">%s</span></td>'
             '<td class="risk" style="color:%s"><i>&#8593;</i>%s</td><td>%s</td></tr>'
             % (esc(t["status"]), esc(t["risk"]), esc(t["pillar"]), esc(t["name"].lower()),
@@ -487,7 +554,8 @@ def _estate_view(estate):
                if (apps or seen_html or sens_html) else ""))
 
         rows.append(
-            '<tr data-name="%s" data-panel="%s">'
+            '<tr data-name="%s" data-panel="%s" tabindex="0" role="button" '
+            'aria-haspopup="dialog">'
             '<td class="tname">%s<span class="tid">%s</span></td>'
             '<td class="risk" style="color:%s"><i>&#8593;</i>%s</td>'
             '<td><span class="badge" style="background:%s">%s</span></td></tr>'
@@ -511,8 +579,9 @@ def _estate_view(estate):
   an application <i>and</i> used in the browser is one row, not two. Open a row for the
   arithmetic behind its score — every point is a named signal.</p>
   <div class="tbl-wrap"><table id="t-estate"><thead><tr>
-    <th data-sort="0">Vendor &#8645;</th><th data-sort="1">Risk &#8645;</th>
-    <th data-sort="2">Score &#8645;</th></tr></thead>
+    <th data-sort="0" tabindex="0" role="button" aria-sort="none">Vendor &#8645;</th>
+    <th data-sort="1" tabindex="0" role="button" aria-sort="none">Risk &#8645;</th>
+    <th data-sort="2" tabindex="0" role="button" aria-sort="none">Score &#8645;</th></tr></thead>
   <tbody>%s</tbody></table></div>
   %s
 </div>
@@ -531,15 +600,224 @@ def _nav(current, detail_href=None):
     out = []
     for key, label in (("overview", "Overview"), ("assessment", "Assessment results"),
                        ("estate", "AI estate")):
-        cls = ' class="on"' if key == current else ""
-        out.append('<a data-view="%s"%s>%s</a>' % (key, cls, label))
+        on = key == current
+        out.append('<a data-view="%s" role="button" tabindex="0"%s%s>%s</a>'
+                  % (key, ' class="on"' if on else "",
+                     ' aria-current="page"' if on else "", label))
     if detail_href:
         out.append('<span class="navsep"></span>')
         out.append('<a href="%s" class="out">Detail<i>&#8599;</i></a>' % esc(detail_href))
     return "".join(out)
 
 
-def _overview(ctx, results, apps, estate, tenant_id, context):
+# ---------------------------------------------------------------- decision cockpit
+
+# Change types that add exposure vs. remove it — read straight off drift.IMPORTANCE's
+# own vocabulary, not a second severity scale invented for this page.
+_EXPOSURE_UP = {"NEW_APP_ONLY_ACCESS", "ADMIN_CONSENT_ADDED", "PERMISSION_ESCALATED",
+                "NEW_APPLICATION", "NEW_PERMISSION"}
+_EXPOSURE_DOWN = {"REMOVED_PERMISSION", "ADMIN_CONSENT_REMOVED", "REMOVED_APPLICATION",
+                  "APP_DISABLED"}
+
+
+def _posture(shadow_apps):
+    """
+    One exposure number, 0 (clean) to 100 (severe) — reused verbatim from
+    `report._posture_score` rather than a second scoring formula that could quietly
+    drift from the one the detail page already shows.
+    """
+    counts = {lv: sum(1 for a in shadow_apps if a.get("risk_level") == lv)
+             for lv in report.LEVELS}
+    score = report._posture_score(shadow_apps, counts)
+    band = ("Critical" if score >= 75 else "High" if score >= 50
+           else "Medium" if score >= 25 else "Low")
+    return score, band
+
+
+def _trend(changes):
+    """
+    Direction since the previous scan, from the same drift events AISPM-5003 already
+    reads — never a fabricated sparkline. `changes=None` (a caller that has not wired
+    scan history in) is kept distinct from `changes=[]` (a history exists and nothing
+    moved): the first is a missing measurement, the second is a real one.
+    """
+    if changes is None:
+        return ("flat", "No comparison available this run — trend needs a previous "
+               "scan's changes, which a scheduled scan keeps building (see AISPM-5003).")
+    if not changes:
+        return ("flat", "No changes recorded against the previous scan — the estate "
+               "held steady.")
+    up = sum(1 for e in changes if e.get("change_type") in _EXPOSURE_UP)
+    down = sum(1 for e in changes if e.get("change_type") in _EXPOSURE_DOWN)
+    cls = "up" if up > down else ("down" if down > up else "flat")
+    return (cls, "%d change(s) in the last 14 days &mdash; %d added exposure, %d reduced it."
+           % (len(changes), up, down))
+
+
+def _coverage_confidence(results, health):
+    """
+    What share of the catalogue could actually be answered this scan, and which source
+    each remaining gap needs — so a page full of green never quietly includes a
+    `Not assessed` row read as a pass.
+    """
+    summary = assessment.summary(results)
+    total = summary["total"] or 1
+    pct = round(100 * summary["assessable"] / total)
+    rows = "".join(
+        '<li><span>%s</span><span class="%s">%s</span></li>'
+        % (esc(name), "ok" if ok else "bad", "Connected" if ok else "Gap")
+        for name, ok, _detail in executive.connector_status(health))
+    return pct, summary["assessable"], total, rows
+
+
+def _concentration(results, apps):
+    """
+    Which assets carry the assessment's failures — blast radius, not just a fail count.
+    An asset named in more failing controls, reaching more people, is where a single
+    compromise (or a single fix) moves the needle furthest; ranking by fail-count alone
+    would put a rarely-used app ahead of one every failing control keeps naming.
+    """
+    reach = {}
+    identities = {}
+    for app in apps:
+        name = app.get("display_name")
+        if not name:
+            continue
+        reach[name] = reach.get(name, 0) + (app.get("user_count", 0) or 0)
+        identities[name] = identities.get(name, 0) + 1
+    tally = {}
+    for t in results:
+        if t["status"] != assessment.FAILED:
+            continue
+        # A display name may identify multiple Entra service principals. Count a
+        # control once per visible name and disclose the grouped identity count.
+        for name in {name for name, _detail in t["assets"]}:
+            e = tally.setdefault(name, {"tests": 0, "risk": "Low"})
+            e["tests"] += 1
+            if assessment.RISK_ORDER.get(t["risk"], 9) < assessment.RISK_ORDER.get(e["risk"], 9):
+                e["risk"] = t["risk"]
+    ranked = sorted(tally.items(),
+                    key=lambda kv: (-kv[1]["tests"], -reach.get(kv[0], 0)))[:5]
+    if not ranked:
+        return ('<p class="cap" style="margin-top:0">No single asset is named by more '
+               "than one failing test — risk is spread rather than concentrated.</p>")
+    return "".join(
+        '<div class="concrow"><span class="cn" style="color:%s">%s</span>'
+        '<span class="cc">%d control(s) &middot; %s reached</span></div>'
+        % (RISK_COLOR.get(v["risk"], "#5f6b7a"),
+           esc(name + (f" ({identities[name]} identities)" if identities[name] > 1 else "")),
+           v["tests"],
+           "{:,}".format(reach.get(name, 0)))
+        for name, v in ranked)
+
+
+def _actions(results):
+    """
+    Failed tests only, grouped by risk into Immediate / Next / Watch. A `Not assessed`
+    test is a coverage gap, not something to action here — it has its own card, because
+    "fix this" and "we cannot see this yet" call for different next steps.
+    """
+    failed = [t for t in results if t["status"] == assessment.FAILED]
+    cols = []
+    for risk, label, sub in ACTION_GROUPS:
+        group = [t for t in failed if t["risk"] == risk]
+        if group:
+            items = "".join(
+                '<li><button class="arow" type="button" data-panel="%s">'
+                '<span class="an">%s</span><span class="av">%s</span></button></li>'
+                % (html.escape(_panel(t), quote=True), esc(t["name"]), esc(t["verdict"]))
+                for t in group)
+        else:
+            items = '<li class="empty">Nothing in this band failed this scan.</li>'
+        cols.append('<div class="actioncol"><h4>%s &middot; %d</h4><p class="actn">%s</p>'
+                    "<ul>%s</ul></div>" % (esc(label), len(group), esc(sub), items))
+    return "".join(cols), len(failed)
+
+
+def _narrative(results, apps, n_failed):
+    """
+    The decision itself, in prose: what needs it, why, and the effect of acting — built
+    from the same top failing test the Immediate column already names, never a second
+    source of truth.
+    """
+    high_open = [t for t in results
+                if t["status"] == assessment.FAILED and t["risk"] == "High"]
+    if not high_open:
+        remaining = [t for t in results if t["status"] == assessment.FAILED]
+        if not remaining:
+            return ("<p>No control in this catalogue failed this scan. The remaining "
+                    "work is closing coverage gaps (below), not fixing a finding.</p>")
+        top = remaining[0]
+    else:
+        top = high_open[0]
+    affected_names = {name for name, _detail in top["assets"]}
+    affected_apps = [a for a in apps if a.get("display_name") in affected_names]
+    affected = sum((a.get("user_count", 0) or 0) for a in affected_apps) or None
+    effect = ((" Fixing it changes the answer for roughly %s %s across %d named asset(s)."
+              % ("{:,}".format(affected), "person" if affected == 1 else "people",
+                 len(affected_apps)))
+             if affected else "")
+    return ("<p><b>%d control(s) need a decision.</b> The highest-impact is "
+           "&#8220;%s&#8221; (%s risk): %s</p><p><b>Recommended:</b> %s%s</p>"
+           % (n_failed, esc(top["name"]), esc(top["risk"]), esc(top["verdict"]),
+              esc(top["recommendation"]), effect))
+
+
+def _cockpit(results, apps, estate, health, changes):
+    """
+    The hero: one screen a decision-maker can act on without opening a single row.
+    Composed entirely from data the page already renders below it — the table remains
+    the source of truth, this is its summary, not a second opinion.
+    """
+    shadow_apps = [a for a in apps if not a.get("first_party_microsoft")]
+    score, band = _posture(shadow_apps)
+    trend_cls, trend_text = _trend(changes)
+    pct, assessable, total, conn_rows = _coverage_confidence(results, health)
+    actions_html, n_failed = _actions(results)
+    conc_html = _concentration(results, apps)
+    narrative = _narrative(results, apps, n_failed)
+
+    return """
+<div class="cockpit">
+  <div class="narrative">
+    <h2>Executive summary</h2>
+    %(narrative)s
+    <p class="trend %(trend_cls)s" style="margin-top:10px">%(trend_text)s</p>
+  </div>
+  <div class="grid cockpit-grid">
+    <div class="card">
+      <h3>Posture</h3>
+      <div class="postrow">%(gauge)s
+        <div><p class="pn">Exposure score, not a compliance score — weighted by
+        finding severity and by unattended (app-only) access.</p></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Coverage confidence</h3>
+      <p class="pn">%(assessable)d of %(total)d tests were answerable this scan
+      (%(pct)d%%). The rest are gaps, never passes.</p>
+      <div class="confbar"><i style="width:%(pct)d%%"></i></div>
+      <ul class="conflist">%(conn_rows)s</ul>
+    </div>
+    <div class="card">
+      <h3>Risk concentration</h3>
+      <p class="pn">Assets named by more than one failing control — the blast radius
+      if one of them is compromised, or the leverage if one of them is fixed.</p>
+      %(conc)s
+    </div>
+  </div>
+  <div class="card">
+    <h3>What to do, in order</h3>
+    <div class="actioncols">%(actions)s</div>
+  </div>
+</div>
+""" % {"narrative": narrative, "trend_cls": trend_cls, "trend_text": trend_text,
+       "gauge": charts.gauge(score, "Tenant AI posture"),
+       "assessable": assessable, "total": total, "pct": pct, "conn_rows": conn_rows,
+       "conc": conc_html, "actions": actions_html}
+
+
+def _overview(ctx, results, apps, estate, tenant_id, context, changes=None):
     summary = assessment.summary(results)
     profile = (context or {}).get("tenant_profile") or {}
     org = profile.get("display_name") or "This tenant"
@@ -569,9 +847,11 @@ def _overview(ctx, results, apps, estate, tenant_id, context):
 
     scanned = (context or {}).get("identity") or {}
     finished = (context or {}).get("finished") or ""
+    cockpit_html = _cockpit(results, apps, estate, ctx["health"], changes)
 
     return """
 <h1>%(org)s</h1>
+%(cockpit)s
 <div class="grid top3">
   <div class="card">
     <h2>Tenant</h2>
@@ -635,7 +915,7 @@ def _overview(ctx, results, apps, estate, tenant_id, context):
 </div>
 """ % {"org": esc(org), "domain": esc(profile.get("primary_domain") or "&#8212;"),
        "tenant": esc(tenant_id), "scanner": esc(scanned.get("app_name") or "AI-SPM"),
-       "finished": esc(finished or "this scan"),
+       "finished": esc(finished or "this scan"), "cockpit": cockpit_html,
        "tiles": _tiles(ctx, estate, shadow), "pillrows": pillrows,
        "radial": radial(pillars),
        "passed": summary["by_status"].get(assessment.PASSED, 0),
@@ -656,14 +936,17 @@ def _assessment_view(results):
     pcounts = {p: sum(1 for t in results if t["pillar"] == p) for p in assessment.PILLARS}
 
     chips = "".join(
-        '<button class="chip" data-f="risk" data-v="%s" title="%s (%d tests)">%s</button>'
+        '<button class="chip" data-f="risk" data-v="%s" title="%s (%d tests)" '
+        'aria-pressed="false">%s</button>'
         % (r, r, rcounts[r], r) for r in ("High", "Medium", "Low") if rcounts[r])
     schips = "".join(
-        '<button class="chip" data-f="status" data-v="%s" title="%s (%d tests)">%s</button>'
+        '<button class="chip" data-f="status" data-v="%s" title="%s (%d tests)" '
+        'aria-pressed="false">%s</button>'
         % (esc(s), esc(s), counts.get(s, 0), esc(s))
         for s in assessment.STATUSES if counts.get(s))
     pchips = "".join(
-        '<button class="chip" data-f="pillar" data-v="%s" title="%s (%d tests)">%s</button>'
+        '<button class="chip" data-f="pillar" data-v="%s" title="%s (%d tests)" '
+        'aria-pressed="false">%s</button>'
         % (html.escape(p, quote=True), esc(p), pcounts[p],
            esc(assessment.PILLAR_SHORT[p]))
         for p in assessment.PILLARS if pcounts[p])
@@ -683,8 +966,9 @@ def _assessment_view(results):
   <div class="filters"><span class="lbl" style="margin-left:0">Pillar:</span>%(pchips)s</div>
   <div class="count" id="count"></div>
   <div class="tbl-wrap"><table id="t-tests"><thead><tr>
-    <th data-sort="0">Name &#8645;</th><th data-sort="1">Risk &#8645;</th>
-    <th data-sort="2">Status &#8645;</th></tr></thead>
+    <th data-sort="0" tabindex="0" role="button" aria-sort="none">Name &#8645;</th>
+    <th data-sort="1" tabindex="0" role="button" aria-sort="none">Risk &#8645;</th>
+    <th data-sort="2" tabindex="0" role="button" aria-sort="none">Status &#8645;</th></tr></thead>
   <tbody id="tbody">%(rows)s</tbody></table></div>
   <div class="empty" id="none" style="display:none">No test matches these filters.</div>
 </div>
@@ -694,10 +978,20 @@ def _assessment_view(results):
 
 JS = """
 var $=function(s){return document.querySelector(s)};
+function fireOnEnterOrSpace(el){
+  el.addEventListener('keydown', function(e){
+    if(e.key==='Enter'||e.key===' '||e.key==='Spacebar'){
+      e.preventDefault(); el.click();
+    }
+  });
+}
 document.querySelectorAll('nav a[data-view]').forEach(function(a){
+  fireOnEnterOrSpace(a);
   a.onclick=function(){
-    document.querySelectorAll('nav a[data-view]').forEach(function(x){x.classList.remove('on')});
-    a.classList.add('on');
+    document.querySelectorAll('nav a[data-view]').forEach(function(x){
+      x.classList.remove('on'); x.removeAttribute('aria-current');
+    });
+    a.classList.add('on'); a.setAttribute('aria-current', 'page');
     document.querySelectorAll('.view').forEach(function(v){v.classList.remove('on')});
     $('#v-'+a.getAttribute('data-view')).classList.add('on');
     window.scrollTo(0,0);
@@ -726,9 +1020,11 @@ function apply(){
 document.querySelectorAll('.chip').forEach(function(c){
   c.onclick=function(){
     var f=c.getAttribute('data-f'),v=c.getAttribute('data-v'),was=state[f]===v;
-    document.querySelectorAll('.chip[data-f="'+f+'"]').forEach(function(x){x.classList.remove('on')});
+    document.querySelectorAll('.chip[data-f="'+f+'"]').forEach(function(x){
+      x.classList.remove('on'); x.setAttribute('aria-pressed', 'false');
+    });
     state[f]=was?null:v;
-    if(!was) c.classList.add('on');
+    if(!was){ c.classList.add('on'); c.setAttribute('aria-pressed', 'true'); }
     apply();
   };
 });
@@ -736,26 +1032,55 @@ $('#q').oninput=function(){state.q=this.value.toLowerCase();apply();};
 apply();
 var order={};
 document.querySelectorAll('th[data-sort]').forEach(function(th){
+  fireOnEnterOrSpace(th);
   th.onclick=function(){
-    var i=+th.getAttribute('data-sort'),body=th.closest('table').querySelector('tbody'),
-        key=th.closest('table').id+i,dir=order[key]=-(order[key]||-1);
+    var i=+th.getAttribute('data-sort'),table=th.closest('table'),
+        body=table.querySelector('tbody'),key=table.id+i,dir=order[key]=-(order[key]||-1);
     var rows=[].slice.call(body.querySelectorAll('tr'));
     rows.sort(function(a,b){
       var x=a.children[i].innerText.trim(),y=b.children[i].innerText.trim();
       return x<y?-dir:(x>y?dir:0);
     });
     rows.forEach(function(r){body.appendChild(r)});
+    table.querySelectorAll('th[data-sort]').forEach(function(h){h.setAttribute('aria-sort','none')});
+    th.setAttribute('aria-sort', dir>0?'ascending':'descending');
   };
 });
-function closePanel(){$('#panel').classList.remove('on');$('#scrim').classList.remove('on');}
-document.querySelectorAll('tr[data-panel]').forEach(function(tr){
-  tr.onclick=function(){
-    $('#pbody').innerHTML=tr.getAttribute('data-panel');
-    $('#panel').classList.add('on');$('#scrim').classList.add('on');$('#panel').scrollTop=0;
-  };
+var panelOpener=null;
+function openPanel(html, opener){
+  $('#pbody').innerHTML=html;
+  $('#panel').removeAttribute('inert');
+  $('#panel').setAttribute('aria-modal','true');
+  $('#panel').setAttribute('aria-hidden','false');
+  $('#panel').classList.add('on');$('#scrim').classList.add('on');$('#panel').scrollTop=0;
+  panelOpener=opener||null;
+  $('#pclose').focus();
+}
+function closePanel(){
+  $('#panel').classList.remove('on');$('#scrim').classList.remove('on');
+  $('#panel').setAttribute('inert','');
+  $('#panel').removeAttribute('aria-modal');
+  $('#panel').setAttribute('aria-hidden','true');
+  if(panelOpener && panelOpener.focus){panelOpener.focus();}
+  panelOpener=null;
+}
+document.querySelectorAll('[data-panel]').forEach(function(el){
+  fireOnEnterOrSpace(el);
+  el.onclick=function(){openPanel(el.getAttribute('data-panel'), el);};
 });
 $('#scrim').onclick=closePanel;$('#pclose').onclick=closePanel;
-document.onkeydown=function(e){if(e.key==='Escape')closePanel();};
+document.onkeydown=function(e){
+  var panel=$('#panel');
+  if(e.key==='Escape' && panel.classList.contains('on')){closePanel();return;}
+  if(e.key!=='Tab' || !panel.classList.contains('on')) return;
+  var focusable=[].slice.call(panel.querySelectorAll(
+    'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),'+
+    'textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'));
+  if(!focusable.length){e.preventDefault();return;}
+  var first=focusable[0],last=focusable[focusable.length-1];
+  if(e.shiftKey && document.activeElement===first){e.preventDefault();last.focus();}
+  else if(!e.shiftKey && document.activeElement===last){e.preventDefault();first.focus();}
+};
 /* Function App routes carry a ?code=; carry it to the sibling dashboards so the links
    keep working there, and leave them alone on a page opened off disk. */
 if(location.pathname.indexOf('/api/')===0){
@@ -772,7 +1097,7 @@ if(location.pathname.indexOf('/api/')===0){
 
 
 def html_string(results, apps, tenant_id, estate=None, health=None, context=None,
-                detail_href=None) -> str:
+                detail_href=None, changes=None) -> str:
     """The whole page, self-contained."""
     estate = estate or {"vendors": [], "unattached_agents": []}
     ctx = assessment.context(apps, estate, health)
@@ -781,15 +1106,16 @@ def html_string(results, apps, tenant_id, estate=None, health=None, context=None
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AI-SPM &#8212; AI security assessment</title><style>%(css)s</style></head>
 <body>
-<div class="topbar">
+<a class="skiplink" href="#main">Skip to content</a>
+<header class="topbar">
   <div class="brand"><span class="logo"><i></i><i></i><i></i><i></i></span> AI-SPM</div>
-  <nav>%(nav)s</nav>
+  <nav aria-label="Report sections">%(nav)s</nav>
   <div class="topright">
-    <button class="iconbtn" id="theme" title="Switch theme">&#9788;</button>
+    <button class="iconbtn" id="theme" title="Switch theme" aria-label="Switch color theme">&#9788;</button>
     <span>%(org)s</span>
   </div>
-</div>
-<div class="wrap">
+</header>
+<main class="wrap" id="main">
   <div class="view on" id="v-overview">%(overview)s</div>
   <div class="view" id="v-assessment">%(assessment)s</div>
   <div class="view" id="v-estate">%(estate)s</div>
@@ -798,16 +1124,17 @@ def html_string(results, apps, tenant_id, estate=None, health=None, context=None
     stays with your team.</div>
     <div>%(finished)s</div>
   </footer>
-</div>
+</main>
 <div class="scrim" id="scrim"></div>
-<div class="panel" id="panel"><button class="pclose" id="pclose">&#10005;</button>
+<div class="panel" id="panel" role="dialog" aria-hidden="true" aria-label="Test detail" inert>
+  <button class="pclose" id="pclose" aria-label="Close detail panel">&#10005;</button>
   <div id="pbody"></div></div>
 <script>%(js)s</script>
 </body></html>
-""" % {"css": CSS, "js": JS, "nav": _nav("overview", detail_href),
+""" % {"css": CSS + charts.CSS, "js": JS, "nav": _nav("overview", detail_href),
        "org": esc(((context or {}).get("tenant_profile") or {}).get("display_name")
                   or "AI-SPM"),
-       "overview": _overview(ctx, results, apps, estate, tenant_id, context),
+       "overview": _overview(ctx, results, apps, estate, tenant_id, context, changes),
        "assessment": _assessment_view(results),
        "estate": _estate_view(estate),
        "finished": esc((context or {}).get("finished") or "")}

@@ -105,7 +105,8 @@ def _digest_html(scored, tenant_id, report_url, changes=None):
 </div>"""
 
 
-def send_email_digest(scored, tenant_id, changes=None, connectors_result=None):
+def send_email_digest(scored, tenant_id, changes=None, connectors_result=None,
+                      comparison_available=True):
     sender = os.environ.get("AISPM_MAIL_SENDER")
     to = os.environ.get("AISPM_MAIL_TO")
     if not sender or not to:
@@ -128,11 +129,12 @@ def send_email_digest(scored, tenant_id, changes=None, connectors_result=None):
         import assessment_report
         import portal
         estate = portal.build_estate(scored, connectors_result)
-        results = assessment.run(scored, estate,
-                                 (connectors_result or {}).get("health"))
+        health = (connectors_result or {}).get("health")
+        assessment_changes = changes if comparison_available else None
+        results = assessment.run(scored, estate, health, assessment_changes)
         dashboard = assessment_report.html_string(results, scored, tenant_id,
-                                                  estate=estate,
-                                                  health=(connectors_result or {}).get("health"))
+                                                  estate=estate, health=health,
+                                                  changes=assessment_changes)
     except Exception:
         dashboard = report.html_string(scored, tenant_id)
 

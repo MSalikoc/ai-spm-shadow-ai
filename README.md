@@ -13,7 +13,7 @@ Read-only. Runs from your laptop in two minutes, or on a schedule in Azure.
 </div>
 
 <div align="center">
-  <img src="docs/img/assessment.png" alt="The AI-SPM assessment: tenant, AI estate counters, per-pillar test results, and how AI gets into the tenant" width="820">
+  <img src="docs/img/assessment.png" alt="The AI-SPM decision cockpit: executive summary, posture score, coverage confidence, risk concentration, prioritized actions, tenant, AI estate counters, per-pillar test results, and how AI gets into the tenant" width="820">
 </div>
 
 ---
@@ -27,9 +27,12 @@ Read-only. Runs from your laptop in two minutes, or on a schedule in Azure.
 |  **Agents** | Copilot agents and Entra agent identities, with owners and permissions |
 |  **Sensitive data** | What Purview saw reaching AI, blocked versus allowed |
 
-It lands as an **assessment**: 26 tests across five pillars, each with a pass, a fail, or
-an honest *Not assessed* when the source behind it is not connected. A failing test names
-the applications that failed it and what to do about them.
+It lands as a **decision cockpit**, not just a table: one exposure score, how much of the
+26-test catalogue across five pillars could actually be answered this scan (so *Not
+assessed* is never mistaken for a pass), which assets concentrate the failing controls'
+blast radius, and what to fix — grouped **Immediate / Next / Watch** — with a one-paragraph
+executive summary naming the highest-impact decision and its expected effect. A failing
+test names the applications that failed it and what to do about them.
 
 The AI estate sits on the same page: one row per vendor, whichever route it came in by.
 ChatGPT consented as an app *and* used in the browser is one row, not two.

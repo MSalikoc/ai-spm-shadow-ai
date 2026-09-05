@@ -52,12 +52,15 @@ def _run_scan(source: str):
         graph = GraphClient(token)
 
         scored = pipeline.run(graph, tenant_id)
+        comparison_available = False
         try:  # drift: diff against the previous snapshot + save (first scan is baseline → empty)
+            comparison_available = storage.read_json("snapshot.json") is not None
             this_scan_changes = drift.process(scored)
             changes = drift.recent(14)
         except Exception:
             logging.exception("drift error")
             this_scan_changes, changes = [], []
+            comparison_available = False
         try:  # manageable finding records (generate + reconcile + persist)
             finding_records = findingsvc.process(scored)
         except Exception:
@@ -81,7 +84,12 @@ def _run_scan(source: str):
 
             estate = portal.build_estate(scored, connectors_result)
             health = (connectors_result or {}).get("health")
-            results = assessment.run(scored, estate, health)
+            # `changes` (drift.recent) was already computed above for the detail page's
+            # Changes tab but never reached the catalogue itself, so AISPM-5003 ("the
+            # estate is tracked over time") reported Not assessed on every scan even
+            # once a trend genuinely existed. Feed it through.
+            assessment_changes = changes if comparison_available else None
+            results = assessment.run(scored, estate, health, assessment_changes)
             storage.publish_detail(
                 detail_report.html_string(scored, tenant_id, changes, finding_records,
                                           connectors_result,
@@ -94,7 +102,7 @@ def _run_scan(source: str):
                     context={"tenant_profile": _tenant_profile(graph),
                              "finished": datetime.now(timezone.utc)
                              .strftime("%d %B %Y, %H:%M UTC")},
-                    detail_href="detail"),
+                    detail_href="detail", changes=assessment_changes),
                 assessment_report.json_string(results))
         except Exception:
             logging.exception("page render error")
@@ -110,7 +118,7 @@ def _run_scan(source: str):
         except Exception:
             pass
         return ({"summary": summ, "published": published, "tenant": tenant_id},
-                scored, tenant_id, connectors_result)
+                scored, tenant_id, connectors_result, comparison_available)
     except Exception as e:
         logging.exception("AI-SPM scan (%s) FAILED", source)
         try:
@@ -135,9 +143,10 @@ def daily_scan(timer: func.TimerRequest) -> None:
 @app.timer_trigger(schedule=EMAIL_SCHEDULE, arg_name="timer",
                    run_on_startup=False, use_monitor=True)
 def weekly_digest(timer: func.TimerRequest) -> None:
-    _, scored, tenant_id, connectors_result = _run_scan("weekly")
+    _, scored, tenant_id, connectors_result, comparison_available = _run_scan("weekly")
     weekly_changes = drift.recent(7)
-    outcome = notify.send_email_digest(scored, tenant_id, weekly_changes, connectors_result)
+    outcome = notify.send_email_digest(scored, tenant_id, weekly_changes, connectors_result,
+                                       comparison_available=comparison_available)
     logging.info("AI-SPM weekly digest: %s (%s changes)", outcome, len(weekly_changes))
 
 
@@ -146,9 +155,11 @@ def scan_worker(msg: func.QueueMessage) -> None:
     source = msg.get_body().decode("utf-8") or "queue"
     result = _run_scan(source)
     if source == "digest":  # request queued from digest_now: send the email once the scan finishes
-        _, scored, tenant_id, connectors_result = result
+        _, scored, tenant_id, connectors_result, comparison_available = result
         weekly_changes = drift.recent(7)
-        outcome = notify.send_email_digest(scored, tenant_id, weekly_changes, connectors_result)
+        outcome = notify.send_email_digest(
+            scored, tenant_id, weekly_changes, connectors_result,
+            comparison_available=comparison_available)
         logging.info("AI-SPM on-demand digest (queue): %s (%s changes)",
                      outcome, len(weekly_changes))
 
@@ -169,7 +180,7 @@ def scan_now(req: func.HttpRequest) -> func.HttpResponse:
                 "message": "Scan queued, running in the background. Check /api/report and "
                            "/api/connectors again in a few minutes.",
             }, ensure_ascii=False), mimetype="application/json", status_code=202)
-        result, _, _, _ = _run_scan("http")
+        result, _, _, _, _ = _run_scan("http")
         return func.HttpResponse(json.dumps(result, ensure_ascii=False),
                                  mimetype="application/json", status_code=200)
     except Exception as e:
@@ -192,8 +203,10 @@ def digest_now(req: func.HttpRequest) -> func.HttpResponse:
                 "message": "Scan queued; the email will be sent automatically once it "
                            "finishes (may take a few minutes).",
             }, ensure_ascii=False), mimetype="application/json", status_code=202)
-        result, scored, tenant_id, connectors_result = _run_scan("digest")
-        outcome = notify.send_email_digest(scored, tenant_id, drift.recent(7), connectors_result)
+        result, scored, tenant_id, connectors_result, comparison_available = _run_scan("digest")
+        outcome = notify.send_email_digest(
+            scored, tenant_id, drift.recent(7), connectors_result,
+            comparison_available=comparison_available)
         return func.HttpResponse(
             json.dumps({"digest": outcome, "summary": result["summary"]}, ensure_ascii=False),
             mimetype="application/json", status_code=200)

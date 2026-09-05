@@ -44,7 +44,7 @@ def context(apps, estate=None, health=None, changes=None, now=None):
     return {"apps": list(apps or []),
             "estate": estate or {"vendors": [], "unattached_agents": []},
             "health": dict(health or {}),
-            "changes": list(changes or []),
+            "changes": None if changes is None else list(changes),
             "now": now or datetime.now(timezone.utc)}
 
 
@@ -364,10 +364,14 @@ def t_signin_visibility(ctx):
 
 
 def t_drift(ctx):
-    if not ctx["changes"]:
+    if ctx["changes"] is None:
         return ("Not assessed",
                 "Only one scan exists, so nothing can be compared yet. The first scan is "
                 "the baseline.", [])
+    if not ctx["changes"]:
+        return ("Passed",
+                "No changes were detected against the previous scan, so the estate is "
+                "being tracked and held steady.", [])
     return ("Passed",
             f'{len(ctx["changes"])} changes were detected against the previous scan, so the '
             f'estate is being tracked over time rather than photographed once.',

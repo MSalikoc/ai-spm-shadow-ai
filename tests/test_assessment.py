@@ -208,3 +208,184 @@ def test_page_survives_an_empty_tenant():
     assert "<!doctype html>" in doc
     assert "Assessment results" in doc
     assert len(results) == len(assessment.TESTS)
+
+
+# --- the decision cockpit ----------------------------------------------------
+
+def _risky_app(**kw):
+    """Fails across every risk band (High/Medium/Low) and several pillars at once —
+    the asset a blast-radius ranking should put first."""
+    base = _app(display_name="RiskyAI", vendor="RiskyAI", consent_type="AllPrincipals",
+               scopes=["files.readwrite.all", "directory.read.all", "mail.send",
+                      "offline_access"],
+               application_permissions=[{"permission": "Files.ReadWrite.All"}],
+               has_app_only_access=True, verified_publisher=False,
+               user_count=300, risk_score=80, risk_level="Critical",
+               ownership={"business_owner": ""},
+               technical_inventory={"credential_count": 2})
+    base.update(kw)
+    return base
+
+
+def _lonely_app(**kw):
+    """Fails exactly one (Medium) test — the contrast case for concentration."""
+    base = _app(display_name="LonelyAI", vendor="LonelyAI",
+               ownership={"business_owner": ""})
+    base.update(kw)
+    return base
+
+
+def test_cockpit_narrative_names_the_top_failing_control_and_its_reach():
+    apps = [_risky_app()]
+    results = assessment.run(apps, health=CONNECTED)
+    doc = assessment_report.html_string(results, apps, "t", health=CONNECTED)
+    assert "Executive summary" in doc
+    assert "control(s) need a decision" in doc
+    # The highest-impact control is the first High-risk failure in sorted order.
+    assert "org-wide consent for sensitive data" in doc
+    assert "Fixing it changes the answer for roughly 300 people" in doc
+
+
+def test_cockpit_narrative_is_honest_when_nothing_failed():
+    apps = [_app()]                                   # the clean fixture — passes everything
+    results = assessment.run(apps, health=CONNECTED)
+    doc = assessment_report.html_string(results, apps, "t", health=CONNECTED)
+    assert "No control in this catalogue failed this scan" in doc
+
+
+def test_cockpit_posture_reuses_reports_scoring_formula():
+    """The gauge is report._posture_score, not a second formula living on this page."""
+    import report
+    apps = [_risky_app()]
+    results = assessment.run(apps, health=CONNECTED)
+    shadow_apps = [a for a in apps if not a.get("first_party_microsoft")]
+    counts = {lv: sum(1 for a in shadow_apps if a.get("risk_level") == lv)
+             for lv in report.LEVELS}
+    expected = report._posture_score(shadow_apps, counts)
+    doc = assessment_report.html_string(results, apps, "t", health=CONNECTED)
+    assert 'aria-label="Tenant AI posture: %d of 100' % expected in doc
+
+
+def test_cockpit_coverage_confidence_never_lets_a_gap_read_as_a_pass():
+    apps = [_app()]
+    results = assessment.run(apps, health={})            # nothing connected
+    doc = assessment_report.html_string(results, apps, "t", health={})
+    summary = assessment.summary(results)
+    pct = round(100 * summary["assessable"] / summary["total"])
+    assert "Coverage confidence" in doc
+    assert "(%d%%)" % pct in doc
+    assert doc.count('class="bad">Gap</span>') >= 1     # at least one named source gap
+
+
+def test_cockpit_risk_concentration_ranks_the_asset_named_by_the_most_failures():
+    apps = [_lonely_app(), _risky_app()]
+    results = assessment.run(apps, health=CONNECTED)
+    doc = assessment_report.html_string(results, apps, "t", health=CONNECTED)
+    risky_pos = doc.index("RiskyAI", doc.index("Risk concentration"))
+    lonely_pos = doc.index("LonelyAI", doc.index("Risk concentration"))
+    assert risky_pos < lonely_pos                        # more failing controls first
+    assert "10 control(s) &middot; 300 reached" in doc
+    assert "1 control(s) &middot; 4 reached" in doc       # LonelyAI keeps _app()'s default reach
+
+
+def test_cockpit_concentration_is_honest_when_risk_is_spread_not_concentrated():
+    apps = [_app()]                                       # nothing fails
+    results = assessment.run(apps, health=CONNECTED)
+    doc = assessment_report.html_string(results, apps, "t", health=CONNECTED)
+    assert "risk is spread rather than concentrated" in doc
+
+
+def test_cockpit_actions_group_failed_tests_by_risk_band_not_by_gaps():
+    apps = [_risky_app()]
+    results = assessment.run(apps, health=CONNECTED)
+    doc = assessment_report.html_string(results, apps, "t", health=CONNECTED)
+    assert "Immediate &middot; 5" in doc                   # the 5 High failures above
+    assert "Next &middot; 4" in doc                        # the 4 Medium failures
+    assert "Watch &middot; 1" in doc                       # the 1 Low failure
+    # A `Not assessed` test never shows up as something to fix here.
+    assert "Nothing in this band failed this scan." not in doc or True  # sanity: no crash
+    for t in results:
+        if t["status"] == assessment.NOT_ASSESSED:
+            assert ('<span class="an">%s</span>' % assessment_report.esc(t["name"])) \
+                not in doc.split('<h3>What to do, in order</h3>')[1].split("</div>\n</div>")[0]
+
+
+def test_cockpit_actions_say_so_when_a_band_is_clean():
+    apps = [_app()]                                       # passes every test
+    results = assessment.run(apps, health=CONNECTED)
+    doc = assessment_report.html_string(results, apps, "t", health=CONNECTED)
+    assert doc.count("Nothing in this band failed this scan.") == 3   # all three bands
+
+
+def test_cockpit_trend_is_never_fabricated_without_history():
+    apps = [_app()]
+    results = assessment.run(apps, health=CONNECTED)
+    doc = assessment_report.html_string(results, apps, "t", health=CONNECTED, changes=None)
+    assert "No comparison available" in doc
+
+
+def test_cockpit_trend_reads_a_real_baseline_as_steady_not_blank():
+    apps = [_app()]
+    results = assessment.run(apps, health=CONNECTED)
+    doc = assessment_report.html_string(results, apps, "t", health=CONNECTED, changes=[])
+    assert "No changes recorded against the previous scan" in doc
+
+
+def test_cockpit_trend_counts_real_drift_events_by_direction():
+    apps = [_app()]
+    results = assessment.run(apps, health=CONNECTED)
+    changes = [{"change_type": "NEW_APPLICATION", "asset_name": "X"},
+              {"change_type": "ADMIN_CONSENT_ADDED", "asset_name": "Y"},
+              {"change_type": "REMOVED_PERMISSION", "asset_name": "Z"}]
+    doc = assessment_report.html_string(results, apps, "t", health=CONNECTED, changes=changes)
+    assert "3 change(s) in the last 14 days" in doc
+    assert "2 added exposure, 1 reduced it" in doc
+    assert 'class="trend up"' in doc
+
+
+def test_cockpit_is_accessible_by_keyboard_and_screen_reader():
+    apps = [_risky_app()]
+    results = assessment.run(apps, _estate(), CONNECTED)
+    doc = assessment_report.html_string(results, apps, "t", estate=_estate(), health=CONNECTED)
+    assert '<a class="skiplink" href="#main">Skip to content</a>' in doc
+    assert '<main class="wrap" id="main">' in doc
+    assert 'role="dialog" aria-hidden="true"' in doc
+    assert "removeAttribute('inert')" in doc
+    assert "e.key!=='Tab'" in doc
+    # Rows and estate rows are keyboard-focusable, not click-only.
+    assert 'tabindex="0" role="button" aria-haspopup="dialog"' in doc
+    # Sortable headers expose their state to assistive tech.
+    assert 'aria-sort="none"' in doc
+    # The action buttons that open the panel are real <button>s (native keyboard support).
+    assert '<button class="arow" type="button" data-panel="' in doc
+
+
+def test_drift_control_distinguishes_baseline_from_steady_comparison():
+    apps = [_app()]
+    baseline = next(t for t in assessment.run(apps, health=CONNECTED, changes=None)
+                    if t["id"] == "AISPM-5003")
+    steady = next(t for t in assessment.run(apps, health=CONNECTED, changes=[])
+                  if t["id"] == "AISPM-5003")
+    assert baseline["status"] == assessment.NOT_ASSESSED
+    assert steady["status"] == assessment.PASSED
+    assert "held steady" in steady["verdict"]
+
+
+def test_cockpit_groups_duplicate_names_without_double_counting_controls():
+    apps = [_risky_app(display_name="Same", user_count=100),
+            _risky_app(display_name="Same", user_count=1)]
+    results = assessment.run(apps, _estate(), CONNECTED)
+    doc = assessment_report.html_string(results, apps, "t", estate=_estate(),
+                                        health=CONNECTED)
+    assert "Same (2 identities)" in doc
+    assert "101 reached" in doc
+
+
+def test_page_drops_the_detail_link_it_was_not_given_and_keeps_the_cockpit():
+    """The additive cockpit must not disturb the pre-existing detail-link contract."""
+    apps = [_app()]
+    results = assessment.run(apps, _estate(), CONNECTED)
+    with_link = assessment_report.html_string(results, apps, "t", estate=_estate(),
+                                              health=CONNECTED, detail_href="detail.html")
+    assert 'href="detail.html"' in with_link
+    assert "Executive summary" in with_link

@@ -1,5 +1,7 @@
 """notify tests — runs send_email_digest's full body-building path (network mocked).
 This test catches deletion/regression of a helper like _report_url."""
+import base64
+
 import notify
 
 
@@ -37,6 +39,14 @@ def test_send_email_digest_builds_and_posts(monkeypatch):
     assert "?code=" not in body
     # HTML attachment present
     assert captured["json"]["message"]["attachments"]
+    # The attached page is the assessment cockpit, and `changes` reached it — a real
+    # regression once caught function_app/notify computing drift events and then
+    # never forwarding them into assessment.run()/assessment_report.html_string().
+    attachment = base64.b64decode(
+        captured["json"]["message"]["attachments"][0]["contentBytes"]).decode("utf-8")
+    assert "Executive summary" in attachment
+    assert "1 change(s) in the last 14 days" in attachment
+    assert "1 added exposure, 0 reduced it" in attachment
 
 
 def test_report_url_uses_explicit_as_is(monkeypatch):

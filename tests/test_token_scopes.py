@@ -83,7 +83,14 @@ def test_missing_scopes_lists_what_would_actually_unlock_things():
     assert len(absent) == len(set(absent))       # deduplicated
 
 
-def test_report_offers_both_routes_out_of_the_delegated_limit():
+def test_report_offers_both_routes_out_of_the_delegated_limit(monkeypatch):
+    """
+    The script name is platform-aware by design (see preflight._remedy_text): Windows
+    readers get create_app_registration.ps1, everyone else gets the .sh twin. Pin the
+    platform here so the assertion — and this test's result — doesn't depend on which
+    OS happens to run the suite.
+    """
+    monkeypatch.setattr(preflight.os, "name", "posix")
     rows = preflight.run(FakeTenant(denied=["/security/", "/copilot/"]),
                          AZ_CLI_SCOPES, "delegated")
     text = preflight.format_text(rows)

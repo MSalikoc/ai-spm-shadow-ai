@@ -5,6 +5,40 @@ All notable changes to AI-SPM are documented here. Format based on
 
 ## [Unreleased]
 
+### Added
+- **The overview became a decision cockpit.** Above the existing tenant/estate/pillar
+  summary, the assessment landing page now opens with: an executive-summary paragraph
+  naming the highest-impact failing control, why it matters and its expected effect; a
+  posture gauge reusing `report._posture_score` (the same exposure formula the detail
+  page already shows, not a second one); coverage confidence — the share of the 26-test
+  catalogue this scan could actually answer, so `Not assessed` is never misread as a
+  pass, with a per-connector breakdown; risk concentration — the assets named by the
+  most failing controls, i.e. the blast radius if one is compromised or the leverage if
+  one is fixed; and prioritized actions grouped **Immediate / Next / Watch** by risk
+  band, each opening the same slide-over panel the table row does. A directional trend
+  reads real drift events (last 14 days) when a caller supplies them, and says plainly
+  when it cannot rather than drawing a fabricated line.
+  - `assessment_report.html_string()` gained an optional `changes=None` parameter to
+    feed that trend; every existing caller is unaffected by the default.
+  - Fixed a wiring gap this surfaced: `function_app.py` and `notify.py` both computed
+    drift `changes` for the detail page but never passed them into `assessment.run()`,
+    so **AISPM-5003** ("the estate is tracked over time") reported `Not assessed` on
+    every real scan even once a genuine trend existed. Both now forward `changes`.
+  - Accessibility: keyboard focus and Enter/Space activation for table rows, the view
+    switcher, sortable column headers and the new action buttons; a dialog role and
+    focus management (open → close button, close → the control that opened it) on the
+    slide-over panel; a skip-to-content link; `<header>`/`<main>` landmarks; print
+    styles that hide interactive chrome. No external CSS/JS — still one self-contained
+    file.
+
+### Fixed
+- `tests/test_token_scopes.py::test_report_offers_both_routes_out_of_the_delegated_limit`
+  asserted the `.sh` remedy script unconditionally, but `preflight._remedy_text()`
+  deliberately names the `.ps1` twin on Windows (see `test_cli.py`'s equivalent test,
+  which already pins the platform) — so the test failed on a Windows runner even though
+  production was behaving as designed. Pinned `os.name` to `"posix"` for the assertion
+  instead of weakening the platform-aware remedy text.
+
 ### Changed
 - **Four pages became two.** The assessment is the landing page and now carries the AI
   estate as its third tab; everything behind it — permissions, usage, governance, agents,
