@@ -185,7 +185,17 @@ try {
     });
   })()`,'light status foregrounds meet AA contrast on cards and passed badges');
   assert.equal(reads,0);
-  if (process.argv.includes('--screenshots')) await screenshot(path.join('docs','img','assessment.png'));
+  if (process.argv.includes('--screenshots')) {
+    await screenshot(path.join('docs','img','assessment.png'));
+    await click('nav [data-view="assessment"]');
+    await click('#control-AISPM-1001');
+    await wait(`document.getElementById('panel').getAttribute('aria-hidden')==='false'`);
+    await pause(300);
+    await screenshot(path.join('docs','img','assessment-detail.png'));
+    await click('#pclose');
+    await click('nav [data-view="overview"]');
+    await evaluate('window.scrollTo(0,0)');
+  }
   await click('[data-edit-decision="sensitive-access"]');
   await check(`document.getElementById('workflow-dialog').open &&
     document.getElementById('workflow-fields').disabled &&
