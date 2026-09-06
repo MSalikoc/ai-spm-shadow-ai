@@ -198,6 +198,7 @@ tbody tr:hover{background:var(--track)}
 .empty{color:var(--muted);font-size:14px;padding:26px 0;text-align:center}
 footer{border-top:1px solid var(--line);margin-top:44px;padding:26px 0;color:var(--muted);
  font-size:12.5px;display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}
+footer .by{color:var(--ink);font-weight:600}
 .view{display:none}.view.on{display:block}
 @media(max-width:1000px){.top3,.two{grid-template-columns:1fr}.panel{width:100%}}
 
@@ -1516,7 +1517,7 @@ def html_string(results, apps, tenant_id, estate=None, health=None, context=None
   <footer>
     <div><b>AI-SPM</b> &#8212; tenant collection is read-only. Workflow recording does not
     change Microsoft 365 configuration. Remediation stays with your team.</div>
-    <div>%(finished)s</div>
+    <div><span class="by">Created by Ali Koc</span>%(finished)s</div>
   </footer>
 </main>
 <div class="scrim" id="scrim"></div>
@@ -1534,7 +1535,8 @@ def html_string(results, apps, tenant_id, estate=None, health=None, context=None
                              decision_states),
        "assessment": _assessment_view(results),
        "estate": _estate_view(estate),
-       "finished": esc((context or {}).get("finished") or "")}
+       "finished": (" &middot; " + esc(context["finished"])
+                    if (context or {}).get("finished") else "")}
 
 
 def json_string(results, decision_states=None, now=None) -> str:
