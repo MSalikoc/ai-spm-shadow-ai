@@ -59,8 +59,10 @@ def snapshot(result: dict) -> dict:
             ai = a["agent_identity"]
             identities[aid] = {
                 "name": a.get("display_name"), "enabled": ai.get("account_enabled"),
-                "owners": sorted({o.get("id") or o.get("upn") or "" for o in ai.get("owners", [])}),
-                "sponsors": sorted({s.get("id") or s.get("upn") or "" for s in ai.get("sponsors", [])}),
+                "owners": (None if ai.get("owners") is None else
+                           sorted({o.get("id") or o.get("upn") or "" for o in ai["owners"]})),
+                "sponsors": (None if ai.get("sponsors") is None else
+                             sorted({s.get("id") or s.get("upn") or "" for s in ai["sponsors"]})),
             }
         if a.get("mdca"):
             apps[aid] = {"name": a.get("display_name"),
@@ -124,10 +126,12 @@ def diff(prev: dict, cur: dict, now=None) -> list:
         elif p["enabled"] is False and c["enabled"] is True:
             events.append(_ev(now, "AGENT_IDENTITY_ENABLED", aid, c["name"], False, True,
                               f"Agent identity re-enabled: {c['name']}"))
-        if set(c["owners"]) != set(p["owners"]):
+        if (c["owners"] is not None and p["owners"] is not None
+                and set(c["owners"]) != set(p["owners"])):
             events.append(_ev(now, "AGENT_OWNER_CHANGED", aid, c["name"], p["owners"], c["owners"],
                               f"{c['name']} owner list changed"))
-        if set(c["sponsors"]) != set(p["sponsors"]):
+        if (c["sponsors"] is not None and p["sponsors"] is not None
+                and set(c["sponsors"]) != set(p["sponsors"])):
             events.append(_ev(now, "AGENT_SPONSOR_CHANGED", aid, c["name"], p["sponsors"], c["sponsors"],
                               f"{c['name']} sponsor list changed"))
 

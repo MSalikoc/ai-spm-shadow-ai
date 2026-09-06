@@ -23,11 +23,12 @@ TENANT = "contoso-sample-0000-0000-000000000000"
 
 # What a real `--auth app` run reports about itself.
 SAMPLE_CONTEXT = {
+    "sample_data": True,
     "auth_mode": "app",
     "identity": {"kind": "application", "app_name": "AI-SPM Scanner",
                  "client_id": "04ca4c1c-0000-0000-0000-000000000000", "scope_count": 6},
     "scan_scope": "consented",
-    "activity_days": 90,
+    "activity_days": 30,
     "duration_s": 74,
     "graph": {"requests": 412, "batch_calls": 18, "batched_requests": 344, "throttled": 3},
     "tenant_profile": {"display_name": "Contoso Ltd", "primary_domain": "contoso.com",
@@ -146,7 +147,8 @@ def build_fleet():
             "usage": {
                 "available": True, "consent_user_count": users,
                 "active_users_7d": max(0, active30 // 4),
-                "active_users_30d": active30, "active_users_90d": int(active30 * 1.2),
+                "active_users_30d": active30, "active_users_90d": None,
+                "window_days": 30, "collection_status": "complete",
                 "last_delegated_signin": last_used.isoformat() if users else None,
                 "last_service_principal_signin": (NOW - timedelta(days=2)).isoformat()
                                                  if app_perms else None,
@@ -154,9 +156,10 @@ def build_fleet():
                 "unique_user_count": users, "unique_ip_count": max(1, users // 3),
                 "country_count": 1 + idx % 4,
                 "last_used_date": last_used.isoformat() if (users or app_perms) else None,
-                "never_used": not (users or app_perms),
+                "never_used": False if (users or app_perms) else None,
+                "no_signins_observed": not (users or app_perms),
                 "inactive_30d": active30 == 0 and not app_perms,
-                "inactive_90d": False,
+                "inactive_90d": None,
                 "growth_7d": max(0, active30 // 4) - prev7,
                 "daily_active_30d": daily,
             },
@@ -193,7 +196,7 @@ def main():
     changes = sample_changes(scored)
 
     # Through the real connectors, so the sample is engine output rather than a mock-up.
-    result = pipeline.run_connectors(SampleGraph())
+    result = pipeline.run_connectors(SampleGraph(), now=NOW)
     health = (result or {}).get("health")
 
     # Two pages, the same two a scan writes.
@@ -201,7 +204,7 @@ def main():
     import assessment_report
     import detail_report
 
-    estate_for_tests = portal.build_estate(scored, result)
+    estate_for_tests = portal.build_estate(scored, result, now=NOW)
     results = assessment.run(scored, estate_for_tests, health, changes, now=NOW)
 
     detail = os.path.join(docs, "sample-detail.html")
@@ -243,7 +246,7 @@ def main():
 
     counts = {lv: sum(1 for a in scored if a["risk_level"] == lv)
               for lv in ("Critical", "High", "Medium", "Low")}
-    estate = portal.build_estate(scored, result)
+    estate = portal.build_estate(scored, result, now=NOW)
     both = [v for v in estate["vendors"] if {"oauth", "web"} <= v["evidence"]]
     print(f"{len(scored)} applications — {counts}")
     print(f"{len(changes)} changes since the previous scan")

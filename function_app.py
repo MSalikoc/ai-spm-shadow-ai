@@ -69,7 +69,8 @@ def _run_scan(source: str):
             finding_records = []
         connectors_result = None
         try:  # connector drift (Step 8) — a no-op when the flags are off
-            connectors_result = pipeline.run_connectors(graph)
+            connectors_result = pipeline.run_connectors(
+                graph, tenant_id=auth.decode_token_claims(token).get("tid"))
             connectors_drift.process(connectors_result)
         except Exception:
             logging.exception("connector drift error")

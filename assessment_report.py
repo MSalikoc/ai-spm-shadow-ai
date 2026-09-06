@@ -754,7 +754,7 @@ def _source_freshness(health):
     return text
 
 
-def _coverage_confidence(results, health):
+def _coverage_confidence(results, health, apps=None):
     """
     What share of the catalogue could actually be answered this scan, and which source
     each remaining gap needs — so a page full of green never quietly includes a
@@ -762,16 +762,17 @@ def _coverage_confidence(results, health):
     """
     summary = assessment.summary(results)
     total = summary["total"]
-    answerable = (summary["by_status"].get(assessment.PASSED, 0)
-                  + summary["by_status"].get(assessment.FAILED, 0))
+    answerable = summary["assessable"]
     assessment_pct = round(100 * answerable / total) if total else 0
     sources = executive.connector_status(health)
     operational = [(name, ok, detail) for name, ok, detail in sources if ok is not None]
-    connected = 1  # Entra ID / Microsoft Graph; producing this report proves it ran.
+    core_complete = not any(a.get("collection_errors") or not (a.get("usage") or {}).get("available")
+                            for a in (apps or []))
+    connected = int(core_complete)
     connected += sum(1 for key in _HEALTH_BY_LABEL.values()
                      if (health or {}).get(key, {}).get("status") == "CONNECTED")
     telemetry_pct = round(100 * connected / len(operational)) if operational else 0
-    degraded = any((entry or {}).get("status") in
+    degraded = not core_complete or any((entry or {}).get("status") in
                    ("PARTIALLY_CONNECTED", "NO_DATA", "TIMEOUT", "ERROR")
                    for entry in (health or {}).values())
     if total and assessment_pct >= 90 and telemetry_pct == 100 and not degraded:
@@ -783,6 +784,8 @@ def _coverage_confidence(results, health):
     rows_html = []
     for name, ok, _detail in sources:
         status = (health or {}).get(_HEALTH_BY_LABEL.get(name, ""), {}).get("status")
+        if name == "Entra ID / Microsoft Graph" and not core_complete:
+            status = "PARTIALLY_CONNECTED"
         if ok is None:
             css, label = "roadmap", "Roadmap"
         elif status == "PARTIALLY_CONNECTED":
@@ -998,6 +1001,86 @@ def _workflow_states(results, stored=None, now=None):
                             for t in results)) for p in DECISION_PROGRAMS}
 
 
+def _visual_summary(results, apps, estate, coverage, score, band):
+    """Render observed inventory and control outcomes, without inferring missing data."""
+    counts = {level: sum(a.get("risk_level") == level for a in apps)
+              for level in report.LEVELS}
+    unscored = len(apps) - sum(counts.values())
+    risk_colors = {"Critical": "var(--cp-danger)", "High": "var(--cp-accent)",
+                   "Medium": "var(--cp-warning)", "Low": "var(--cp-success)"}
+    segments = [(level, counts[level], risk_colors[level]) for level in report.LEVELS]
+    if unscored:
+        segments.append(("Unrated", unscored, "var(--cp-border-strong)"))
+    risk_chart = charts.donut(segments, len(apps), "inventory records", size=156, stroke=18)
+    risk_legend = charts.legend([(label, color, value) for label, value, color in segments])
+    statuses = [assessment.FAILED, assessment.PASSED, assessment.NOT_ASSESSED, assessment.SKIPPED]
+    status_colors = {
+        assessment.FAILED: "var(--cp-danger)", assessment.PASSED: "var(--cp-success)",
+        assessment.NOT_ASSESSED: "var(--cp-border-strong)", assessment.SKIPPED: "var(--cp-warning)"}
+    totals = assessment.summary(results)["by_status"]
+    rows = [(assessment.PILLAR_SHORT[p], {
+        status: sum(t["pillar"] == p and t["status"] == status for t in results)
+        for status in statuses}) for p in assessment.PILLARS]
+    controls = charts.stacked_bar(rows, statuses, status_colors, width=420, label_w=110,
+                                  bar=18, gap=18)
+    control_legend = charts.legend([(s, status_colors[s], totals.get(s, 0)) for s in statuses])
+    posture = (charts.gauge(score, "Tenant AI posture") if apps else
+               '<p class="dashboard-empty">Not measured</p>')
+    band_text = band + " exposure" if apps else "No assessed inventory"
+    vendors = len((estate or {}).get("vendors", []))
+    agents = sum(a.get("asset_type") == "agent" for a in apps)
+    unattended = sum(bool(a.get("has_app_only_access")) for a in apps)
+    return """
+<section class="dashboard-visuals" aria-label="AI security posture dashboard">
+ <div class="dashboard-kpis">
+  <div class="card dashboard-kpi"><span>AI vendors observed</span><strong>%(vendors)d</strong>
+   <small>Across the available discovery sources</small></div>
+  <div class="card dashboard-kpi"><span>Assessed inventory</span><strong>%(assets)d</strong>
+   <small>Non-Microsoft records &middot; %(agents)d agent-labelled</small></div>
+  <div class="card dashboard-kpi"><span>Critical / High risk</span><strong>%(high_risk)d</strong>
+   <small>%(critical)d Critical &middot; %(high)d High inventory records</small></div>
+  <div class="card dashboard-kpi"><span>Unattended access</span><strong>%(unattended)d</strong>
+   <small>App-only permissions &middot; no user session required</small></div>
+ </div>
+ <div class="dashboard-charts">
+  <article class="card dashboard-posture">
+   <h2>AI security posture</h2><p class="dashboard-subtitle">Exposure index &middot; higher is worse</p>
+   %(posture)s
+   <strong class="dashboard-band">%(band)s</strong>
+   <p class="dashboard-subtitle">Permission, consent and unattended-access findings.
+   Not a compliance score or a probability of breach.</p>
+  </article>
+  <article class="card">
+   <h2>Where risk sits</h2><p class="dashboard-subtitle">Risk distribution of assessed inventory</p>
+   <div class="dashboard-donut">%(risk_chart)s</div>%(risk_legend)s
+  </article>
+  <article class="card">
+   <h2>Control outcomes</h2><p class="dashboard-subtitle">Observed results across five security pillars</p>
+   %(controls)s %(control_legend)s
+   <p class="dashboard-subtitle">Each bar is one pillar; the number is its total controls.
+   Unknown and skipped are never counted as passed.</p>
+  </article>
+ </div>
+ <div class="card dashboard-coverage">
+  <div><span class="dashboard-eyebrow">Visibility &amp; evidence</span>
+   <strong>%(confidence)s coverage confidence</strong></div>
+  <div><span>Controls with complete evidence <b>%(assessable)d / %(total)d</b></span>
+   <div class="confbar"><i style="width:%(assessment_pct)d%%"></i></div></div>
+  <div><span>Sources completed collection <b>%(connected)d / %(operational)d</b></span>
+   <div class="confbar telemetry"><i style="width:%(telemetry_pct)d%%"></i></div></div>
+  <p>Available sources only, not total tenant visibility. Collection completion does not
+  establish source-event freshness.</p>
+ </div>
+</section>
+""" % {
+        "vendors": vendors, "assets": len(apps), "agents": agents,
+        "high_risk": counts.get("Critical", 0) + counts.get("High", 0),
+        "critical": counts.get("Critical", 0), "high": counts.get("High", 0),
+        "unattended": unattended, "posture": posture, "band": esc(band_text),
+        "risk_chart": risk_chart, "risk_legend": risk_legend,
+        "controls": controls, "control_legend": control_legend, **coverage}
+
+
 def _cockpit(results, apps, estate, health, changes, context=None, decision_states=None):
     """
     The hero: one screen a decision-maker can act on without opening a single row.
@@ -1007,7 +1090,7 @@ def _cockpit(results, apps, estate, health, changes, context=None, decision_stat
     shadow_apps = [a for a in apps if not a.get("first_party_microsoft")]
     score, band = _posture(shadow_apps)
     trend_cls, trend_text = _trend(changes)
-    coverage = _coverage_confidence(results, health)
+    coverage = _coverage_confidence(results, health, shadow_apps)
     scan_counts = assessment.summary(results)["by_status"]
     counts = {lv: sum(1 for app in shadow_apps if app.get("risk_level") == lv)
               for lv in report.LEVELS}
@@ -1025,15 +1108,15 @@ def _cockpit(results, apps, estate, health, changes, context=None, decision_stat
 
     return """
 <div class="cockpit">
+%(visual_summary)s
   <div class="executive-strip">
-    <span><strong>%(score)d / 100</strong> exposure · %(band)s</span>
-    <span><strong>%(assessment_pct)d%%</strong> control coverage</span>
+    <span><strong>Leadership action queue</strong></span>
     <span>%(failed)d failed · %(unknown)d not assessed · %(skipped)d skipped</span>
-    <span>Scan as of <b>%(scan_as_of)s</b></span>
     <button class="workflow-btn" id="print-brief">Print / board brief</button>
     <p>Coverage is not risk reduction or compliance certification. Unassessed and skipped
     controls remain unknown. Source event freshness may be unknown.</p>
   </div>
+  <p class="dashboard-change trend %(trend_cls)s"><b>Since the previous scan:</b> %(trend_text)s</p>
   <div class="attention" id="decision-attention" role="status" aria-live="polite">%(attention)s</div>
   %(decisions)s
   %(review)s
@@ -1080,6 +1163,7 @@ def _cockpit(results, apps, estate, health, changes, context=None, decision_stat
   </details>
 </div>
 """ % {"narrative": narrative, "trend_cls": trend_cls, "trend_text": trend_text,
+       "visual_summary": _visual_summary(results, shadow_apps, estate, coverage, score, band),
        "score": score, "band": band, "scan_as_of": esc(scan_as_of), "review": review,
        "failed": scan_counts.get(assessment.FAILED, 0),
        "unknown": scan_counts.get(assessment.NOT_ASSESSED, 0),
@@ -1089,7 +1173,8 @@ def _cockpit(results, apps, estate, health, changes, context=None, decision_stat
            "%d unassigned · %d evidence conflicts — snapshot as of %s" %
            (attention["overdue"], attention["expiring"], attention["expired"],
             attention["unassigned"], attention["conflicting"], scan_as_of)),
-       "gauge": charts.gauge(score, "Tenant AI posture"),
+       "gauge": (charts.gauge(score, "Tenant AI posture") if shadow_apps else
+                 '<p class="dashboard-empty">Not measured: no assessed inventory</p>'),
        "critical": counts.get("Critical", 0), "high": counts.get("High", 0),
        "assessable": coverage["assessable"], "total": coverage["total"],
        "assessment_pct": coverage["assessment_pct"],
@@ -1134,7 +1219,12 @@ def _overview(ctx, results, apps, estate, tenant_id, context, changes=None,
                             decision_states)
 
     return """
-<h1>%(org)s</h1>
+<header class="dashboard-header">
+ <div><span class="dashboard-eyebrow">AI-SPM / Security command center</span>
+ <h1>AI security, in focus.</h1>
+ <p>%(org)s &middot; Identity, data exposure, Shadow AI and governance</p></div>
+ <div class="dashboard-context">%(data_label)s<span>Scan as of %(scan_as_of)s</span></div>
+</header>
 %(cockpit)s
 <details class="details-block"><summary>Tenant, estate and full assessment coverage</summary>
 <div class="grid top3">
@@ -1202,6 +1292,9 @@ def _overview(ctx, results, apps, estate, tenant_id, context, changes=None,
 </div>
 </details>
 """ % {"org": esc(org), "domain": esc(profile.get("primary_domain") or "&#8212;"),
+       "data_label": ("<b>DEMO / SYNTHETIC DATA</b>" if (context or {}).get("sample_data") else
+                      "<b>ASSESSMENT SNAPSHOT</b>"),
+       "scan_as_of": esc(_scan_as_of(context)),
        "tenant": esc(tenant_id), "scanner": esc(scanned.get("app_name") or "AI-SPM"),
        "finished": esc(finished or "this scan"), "cockpit": cockpit_html,
        "tiles": _tiles(ctx, estate, shadow), "pillrows": pillrows,

@@ -2,6 +2,10 @@
   "_comment": "Kod-dışı AI uygulama kataloğu (Adım 4). MDCA kategorisi eşleşmese bile bu listedeki isim/domain'ler AI sayılır. Yeni AI SaaS çıktıkça kod değiştirmeden buraya eklenir. domains: alt-domain eşleşmesi (endswith) yapılır.",
   "version": 1,
   "ai_categories": [
+    "generativeAi",
+    "aiModelProvider",
+    "clientAiApp",
+    "mcpServer",
     "Generative AI",
     "Artificial Intelligence",
     "AI",

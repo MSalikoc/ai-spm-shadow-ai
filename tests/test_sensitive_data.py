@@ -160,3 +160,102 @@ def test_blueprint_relates_not_merges():
         assert ident["related"]["blueprint_asset_id"] == blueprints[0]["asset_id"]
     assert set(blueprints[0]["related"]["identity_asset_ids"]) == {
         i["asset_id"] for i in identities}
+
+
+def test_blocked_sensitive_event_plus_unrelated_upload_is_not_sensitive_sharing():
+    assets = [
+        _mdca_app("ChatGPT", "mdca-chatgpt", "unsanctioned", uploaded=100),
+        _interaction("blocked", "user@example.test", "ChatGPT", "BLOCKED",
+                     "2026-07-25T00:00:00Z", label="Confidential"),
+        _observation("ChatGPT", "mdca-chatgpt", 100, "2026-07-25T00:00:00Z"),
+        _interaction("nonsensitive-share", "other@example.test", "ChatGPT", "SHARED",
+                     "2026-07-25T00:00:00Z"),
+    ]
+    profile = build_app_profiles(assets, now=NOW)[0]
+    assert profile["sensitive_directions"]["BLOCKED"] == 1
+    assert profile["sensitive_directions"]["SHARED"] == 0
+    assert "SENSITIVE_DATA_SHARED_WITH_UNSANCTIONED_AI" not in {f["type"] for f in profile["findings"]}
+
+
+def test_default_window_uses_wall_clock_not_newest_import_timestamp():
+    old = _interaction("old", "user@example.test", "ChatGPT", "SHARED",
+                       "2000-01-01T00:00:00Z", label="Confidential")
+    profile = build_app_profiles([old])[0]
+    assert profile["interactions_7d"] == profile["sensitive_30d"] == 0
+    assert profile["findings"] == []
+    future = _interaction("future", "user@example.test", "ChatGPT", "SHARED",
+                          "2099-01-01T00:00:00Z", label="Confidential")
+    assert build_app_profiles([future])[0]["sensitive_30d"] == 0
+
+
+def test_agent_id_attribution_and_multiple_resource_labels():
+    agent = model.make_asset(EntityType.AI_AGENT, "Sales", Source.AGENT_365)
+    agent["agent365"] = {"elements": [{"declarative_agent_id": "agent-guid"}]}
+    event = _interaction("event", "user@example.test", "BizChat", "ACCESSED",
+                         "2026-07-25T00:00:00Z", label="Confidential")
+    event["interaction"]["agent_id"] = "CopilotStudio.Declarative.agent-guid"
+    event["interaction"]["sensitivity_label_ids"] = ["Confidential", "Restricted"]
+    profiles = build_app_profiles([agent, event], now=NOW)
+    assert len(profiles) == 1
+    assert profiles[0]["label_distribution"] == {"Confidential": 1, "Restricted": 1}
+
+
+def test_identically_named_inventory_does_not_arbitrarily_receive_events():
+    first = _mdca_app("Shared name", "first", "sanctioned")
+    second = _mdca_app("Shared name", "second", "unsanctioned")
+    event = _interaction("event", "user@example.test", "Shared name", "SHARED",
+                         "2026-07-25T00:00:00Z", label="Confidential")
+    profiles = build_app_profiles([first, second, event], now=NOW)
+    synthetic = next(p for p in profiles if not p["matched_to_inventory"])
+    assert synthetic["sensitive_30d"] == 1
+    assert all(p["sensitive_30d"] == 0 for p in profiles if p["matched_to_inventory"])
+
+
+def test_transfer_outcome_requires_sensitive_same_event_and_explicit_transfer():
+    from connectors.sensitive_data import attributed_interactions
+    events = [
+        _interaction("allowed", "u", "App", "ALLOWED", "2026-07-25T00:00:00Z", label="Secret"),
+        _interaction("blocked", "u", "App", "BLOCKED", "2026-07-25T00:00:00Z", label="Secret"),
+        _interaction("unknown", "u", "App", "UNKNOWN_DIRECTION", "2026-07-25T00:00:00Z", label="Secret"),
+        _interaction("access", "u", "App", "ACCESSED", "2026-07-25T00:00:00Z", label="Secret"),
+        _interaction("generated", "u", "App", "GENERATED", "2026-07-25T00:00:00Z", label="Secret"),
+        _interaction("nonsensitive", "u", "App", "UPLOADED", "2026-07-25T00:00:00Z"),
+    ]
+    records = attributed_interactions(events, now=NOW)
+    assert [r["transfer_allowed"] for r in records] == [True, False, None, None, None, None]
+
+
+def test_unknown_package_merged_with_verified_identity_remains_attributable():
+    from connectors.agent365 import Agent365Collector
+    from connectors.entra_agent_id import EntraAgentIdCollector
+    from connectors.purview_audit import PurviewAuditCollector
+    from connectors.sensitive_data import attributed_interactions
+    package = Agent365Collector().normalize([{
+        "id": "package", "appId": "client-id", "displayName": "Catalog package",
+        "_detail_status": "UNAVAILABLE",
+    }])[0]
+    identity = EntraAgentIdCollector().normalize([{
+        "_kind": "identity", "sp": {"id": "client-id", "displayName": "Verified identity",
+                                  "servicePrincipalType": "ServiceIdentity"},
+        "owners": [], "sponsors": [],
+    }])[0]
+    event = PurviewAuditCollector().normalize([{
+        "id": "event", "createdDateTime": "2026-07-25T00:00:00Z", "operation": "CopilotInteraction",
+        "auditData": {"AppId": "client-id", "CopilotEventData": {
+            "AppHost": "BizChat", "AccessedResources": [
+                {"Id": "document", "Action": "Read", "SensitivityLabelId": "Confidential"}]}},
+    }])[0]
+    assets = correlation.correlate([package, identity, event])
+    merged = next(a for a in assets if a.get("agent_identity"))
+    assert merged["asset_type"] == EntityType.AGENT_PACKAGE
+    profiles = build_app_profiles(assets, now=NOW)
+    assert len(profiles) == 1 and profiles[0]["matched_to_inventory"]
+    assert profiles[0]["asset_id"] == merged["asset_id"]
+    assert profiles[0]["sensitive_30d"] == 1
+    record = attributed_interactions(assets, now=NOW)[0]
+    assert record["matched_to_inventory"] and record["asset_id"] == merged["asset_id"]
+    assert record["attribution_method"] == "app_id"
+
+    standalone_profiles = build_app_profiles([package, event], now=NOW)
+    assert len(standalone_profiles) == 1 and not standalone_profiles[0]["matched_to_inventory"]
+    assert not attributed_interactions([package, event], now=NOW)[0]["matched_to_inventory"]

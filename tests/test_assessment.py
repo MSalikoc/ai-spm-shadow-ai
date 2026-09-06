@@ -683,6 +683,42 @@ def test_decisions_precede_expandable_detail_and_print_keeps_as_of():
     assert "expected_revision:editorRevision" in doc
 
 
+def test_visual_dashboard_counts_inventory_not_people_and_keeps_unrated():
+    apps = [_app(risk_level="Critical", has_app_only_access=True, asset_type="agent"),
+            _app(risk_level="High"), _app(risk_level=None),
+            _app(first_party_microsoft=True, risk_level="Critical")]
+    results = assessment.run(apps, health=CONNECTED)
+    doc = assessment_report.html_string(results, apps, "t", health=CONNECTED)
+    visual = doc.split('<section class="dashboard-visuals"')[1].split("</section>")[0]
+    assert 'Assessed inventory</span><strong>3</strong>' in visual
+    assert 'Critical / High risk</span><strong>2</strong>' in visual
+    assert 'Unattended access</span><strong>1</strong>' in visual
+    assert "1 agent-labelled" in visual
+    assert 'aria-label="inventory records: 3"' in visual
+    assert "Unrated: 1 (33%)" in visual
+    assert doc.index('class="dashboard-visuals"') < doc.index('<article class="decision"')
+    assert "DEMO / SYNTHETIC DATA" not in doc
+
+
+def test_visual_dashboard_shows_all_control_states_and_missing_measurements():
+    results = assessment.run([_app()], health=CONNECTED)[:4]
+    statuses = [assessment.FAILED, assessment.PASSED, assessment.NOT_ASSESSED, assessment.SKIPPED]
+    for result, status in zip(results, statuses):
+        result["status"] = status
+        result["evidence_complete"] = True
+    coverage = assessment_report._coverage_confidence(results, {})
+    visual = assessment_report._visual_summary(results, [], {}, coverage, 0, "Low")
+    for status in statuses:
+        assert f'{status} <b>1</b>' in visual
+    assert "Controls with complete evidence <b>2 / 4</b>" in visual
+    assert "Not measured" in visual
+    assert "Nothing to chart yet" in visual
+    assert "Low exposure" not in visual
+    assert "Tenant AI posture: 0" not in assessment_report.html_string([], [], "t")
+    sample = assessment_report.html_string([], [], "t", context={"sample_data": True})
+    assert "DEMO / SYNTHETIC DATA" in sample
+
+
 def test_source_collection_times_compare_instants_not_lexical_offsets():
     text = assessment_report._source_freshness({
         "agent365": {"collected_at": "2026-09-05T09:30:00+03:00"},

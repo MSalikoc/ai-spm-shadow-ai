@@ -55,10 +55,12 @@ def _blank(vendor, matched):
     return {"vendor": vendor, "catalog_match": matched, "evidence": set(),
             "oauth_apps": [], "agents": [], "web": None,
             "interactions": 0, "blocked": 0, "sensitive_types": set(),
+            "sensitive_allowed": 0, "sensitive_blocked": 0, "sensitive_unknown": 0,
+            "sensitivity_label_ids": set(),
             "users": 0, "risk_score": 0, "risk_level": "Low", "reasons": []}
 
 
-def build_estate(scored, connectors_result=None) -> dict:
+def build_estate(scored, connectors_result=None, *, now=None) -> dict:
     """
     The AI estate, plus everything deliberately kept out of it.
 
@@ -113,7 +115,7 @@ def build_estate(scored, connectors_result=None) -> dict:
         rec["users"] = max(rec["users"], app.get("user_count", 0) or 0)
 
     if connectors_result:
-        a = _assessment(connectors_result)
+        a = _assessment(connectors_result, now=now)
 
         # --- Defender for Cloud Apps: browser-observed usage ------------------
         # These already passed the connector's own AI filter, so each one is a vendor.
@@ -149,17 +151,36 @@ def build_estate(scored, connectors_result=None) -> dict:
             rec["agents"].append(ident.get("display_name"))
 
         # --- Purview sensitive interactions -----------------------------------
-        for ix in (a.get("sensitive_interactions") or {}).get("sample", []):
-            rec = attach(ix.get("app_host"))
+        sensitive = a.get("sensitive_interactions") or {}
+        for ix in sensitive.get("records", sensitive.get("sample", [])):
+            if ix.get("in_window_30d") is False:
+                continue
+            matches = [rec for rec in rollup.values() if ix.get("app_id") and
+                       any(app.get("app_id") == ix["app_id"] for app in rec["oauth_apps"])]
+            rec = matches[0] if len(matches) == 1 else attach(
+                ix.get("app_display_name") or ix.get("app_name"), ix.get("app_host"))
             if rec is None:
                 unattached_interactions += 1
                 continue
-            rec["evidence"].add("sensitive")
             rec["interactions"] += 1
             if str(ix.get("direction")) == "BLOCKED":
                 rec["blocked"] += 1
             for sit in ix.get("sits") or []:
-                rec["sensitive_types"].add(sit)
+                if sit:
+                    rec["sensitive_types"].add(sit)
+            labels = {label for label in (ix.get("sensitivity_label_ids") or
+                                          ix.get("label_ids") or []) if label}
+            rec["sensitivity_label_ids"].update(labels)
+            rec["sensitive_types"].update("Label ID: " + label for label in labels)
+            if labels or any(ix.get("sits") or []):
+                rec["evidence"].add("sensitive")
+                if str(ix.get("direction")) == "BLOCKED":
+                    rec["sensitive_blocked"] += 1
+                elif ix.get("is_shared") is True or ix.get("transfer_allowed") is True or (
+                        "transfer_allowed" not in ix and ix.get("direction") == "ALLOWED"):
+                    rec["sensitive_allowed"] += 1
+                else:
+                    rec["sensitive_unknown"] += 1
 
     for rec in rollup.values():
         _score_vendor(rec)
@@ -177,10 +198,10 @@ def vendor_rollup(scored, connectors_result=None) -> list[dict]:
     return build_estate(scored, connectors_result)["vendors"]
 
 
-def _assessment(connectors_result):
+def _assessment(connectors_result, now=None):
     """connectors_result may be the raw run or an already-built assessment."""
     import connectors_report
-    return connectors_report.assessment(connectors_result)
+    return connectors_report.assessment(connectors_result, now=now)
 
 
 def _score_vendor(rec) -> None:
@@ -235,13 +256,16 @@ def _score_vendor(rec) -> None:
             parts.append((5, "Never reviewed in Defender for Cloud Apps"))
 
     if rec["interactions"]:
-        allowed = rec["interactions"] - rec["blocked"]
+        allowed = rec["sensitive_allowed"]
         if allowed > 0:
             score += 15
             parts.append((15, f"{allowed} sensitive interaction(s) were allowed through"))
         if rec["blocked"]:
             parts.append((0, f"{rec['blocked']} blocked by DLP — no points, this is the "
                              f"control working"))
+        if rec["sensitive_unknown"]:
+            parts.append((0, f"{rec['sensitive_unknown']} sensitive event(s) have an unknown "
+                             "transfer outcome; not scored as allowed sharing"))
         if rec["sensitive_types"]:
             parts.append((0, "Data types seen: "
                              + ", ".join(sorted(rec["sensitive_types"])[:4])))
@@ -452,12 +476,12 @@ def html_string(scored, tenant_id="", connectors_result=None, changes=None,
     The portal carries all of their content in its own tabs regardless.
     """
     now = now or datetime.now(timezone.utc)
-    estate = build_estate(scored, connectors_result)
+    estate = build_estate(scored, connectors_result, now=now)
     vendors = estate["vendors"]
     ts = now.strftime("%d.%m.%Y %H:%M UTC")
 
     counts = {lv: sum(1 for v in vendors if v["risk_level"] == lv) for lv in LEVELS}
-    health = _health_of(connectors_result)
+    health = {**(_health_of(connectors_result) or {}), "core_graph": collectors.core_health(scored)}
 
     with_web = [v for v in vendors if "web" in v["evidence"]]
     with_oauth = [v for v in vendors if "oauth" in v["evidence"]]

@@ -132,3 +132,19 @@ def test_rules_generate_expected_findings():
     keys = {v["rule_key"] for v in gen.values()}
     assert {"owner-missing", "admin-consent-sensitive", "app-only-highpriv",
             "unknown-classification"} <= keys
+
+
+def test_missing_activity_does_not_resolve_existing_usage_findings(monkeypatch):
+    store = {}
+    monkeypatch.setattr(F.storage, "read_json", lambda _: store)
+    monkeypatch.setattr(F.storage, "write_json", lambda _, value: store.update(value))
+    app = _app("used", lifecycle={"status": "Blocked"},
+               usage={"available": True, "window_days": 30, "active_users_30d": 5})
+    initial = F.process([app], now=NOW)
+    assert next(r for r in initial if r["rule_key"] == "blocked-still-active")["status"] == "Open"
+    app["usage"] = {"available": False, "active_users_30d": None}
+    partial = F.process([app], now=NOW)
+    assert next(r for r in partial if r["rule_key"] == "blocked-still-active")["status"] == "Open"
+    app["usage"] = {"available": True, "window_days": 30, "active_users_30d": 0}
+    complete = F.process([app], now=NOW)
+    assert next(r for r in complete if r["rule_key"] == "blocked-still-active")["status"] == "Resolved"

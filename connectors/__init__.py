@@ -25,12 +25,12 @@ __all__ = [
 ]
 
 
-def default_collectors(graph=None):
+def default_collectors(graph=None, tenant_id=None):
     """The four Microsoft connectors + the DSPM import adapter (all env-gated)."""
     return [
         Agent365Collector(graph),
         EntraAgentIdCollector(graph),
         DefenderCloudAppsCollector(graph),
-        PurviewAuditCollector(graph),
+        PurviewAuditCollector(graph, tenant_id=tenant_id),
         PurviewDspmImportCollector(),
     ]

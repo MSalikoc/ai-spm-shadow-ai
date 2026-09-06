@@ -9,7 +9,9 @@ Endpoints: GET /v1.0/servicePrincipals/microsoft.graph.agentIdentity          (i
            GET /servicePrincipals/{id}/appRoleAssignments                       (app-only permissions)
            GET /servicePrincipals/{id}/oauth2PermissionGrants                   (delegated permissions)
            GET /servicePrincipals/{id}/memberOf                                 (group membership)
-Permission: Application.Read.All + Directory.Read.All (for owner/sponsor/grant).
+Permissions: AgentIdentity.Read.All + AgentIdentityBlueprint.Read.All +
+             Application.Read.All + Directory.Read.All.
+Sponsor reads are separately opt-in; the current API documents AgentIdentity.ReadWrite.All.
 No license/access: PERMISSION_MISSING / API_UNAVAILABLE / LICENSE_MISSING.
 
 Each agent identity is normalized to a merged AGENT_IDENTITY asset, each blueprint to an
@@ -28,6 +30,9 @@ from .model import make_asset, raw_reference
 class EntraAgentIdCollector(BaseCollector):
     name = "entra_agent_id"
     source = Source.ENTRA_AGENT_ID
+    required_read_roles = ("AgentIdentity.Read.All", "AgentIdentityBlueprint.Read.All",
+                           "Application.Read.All", "Directory.Read.All")
+    sponsor_role = "AgentIdentity.ReadWrite.All"
 
     def __init__(self, graph=None):
         super().__init__()
@@ -40,20 +45,31 @@ class EntraAgentIdCollector(BaseCollector):
     def collect(self, since=None) -> list:
         if self._graph is None:
             raise ApiUnavailable("No Graph client")
+        identity_error = None
         try:
             identities = self._graph.get_all(
-                "/servicePrincipals/microsoft.graph.agentIdentity", {"$top": "999"})
+                "/servicePrincipals/microsoft.graph.agentIdentity", {"$top": "100"})
         except RuntimeError as e:
-            raise self._classify(e)
+            identities = []
+            identity_error = e
+            self._status = ConnectorStatus.PARTIALLY_CONNECTED
+            self._error = f"identities: {str(e)[:160]}"
 
         # The blueprint list may sit behind a separate permission/preview gate → identities still come through if it fails.
         try:
             blueprints = self._graph.get_all(
-                "/applications/microsoft.graph.agentIdentityBlueprint", {"$top": "999"})
+                "/applications/microsoft.graph.agentIdentityBlueprint", {"$top": "100"})
         except RuntimeError as e:
+            if identity_error is not None:
+                raise self._classify(identity_error)
             blueprints = []
             self._status = ConnectorStatus.PARTIALLY_CONNECTED
             self._error = self._error or f"blueprints: {str(e)[:160]}"
+
+        sponsors_enabled = os.environ.get("ENABLE_ENTRA_AGENT_SPONSORS", "").lower() == "true"
+        if identities and not sponsors_enabled:
+            self._status = ConnectorStatus.PARTIALLY_CONNECTED
+            self._error = self._error or "Sponsor collection not enabled; sponsor ownership is unknown."
 
         def _fetch_identity(sp):
             oid = sp.get("id")
@@ -62,7 +78,8 @@ class EntraAgentIdCollector(BaseCollector):
                 "_kind": "identity",
                 "sp": sp,
                 "owners": self._sub(f"{base}/owners"),
-                "sponsors": self._sub(f"{base}/sponsors"),
+                "sponsors": self._sub(f"{base}/sponsors") if sponsors_enabled else None,
+                "sponsors_enabled": sponsors_enabled,
                 "app_roles": self._sub(f"/servicePrincipals/{oid}/appRoleAssignments"),
                 "oauth_grants": self._sub(f"/servicePrincipals/{oid}/oauth2PermissionGrants"),
                 "groups": self._sub(f"/servicePrincipals/{oid}/memberOf"),
@@ -79,13 +96,13 @@ class EntraAgentIdCollector(BaseCollector):
     def _sub(self, path):
         """Sub-resource GET — a single failure doesn't drop the whole collect, just marks the connector PARTIAL."""
         if self._graph is None:
-            return []
+            return None
         try:
-            return self._graph.get_all(path, {"$top": "999"}) or []
+            return self._graph.get_all(path) or []
         except RuntimeError as e:
             self._status = ConnectorStatus.PARTIALLY_CONNECTED
             self._error = self._error or str(e)[:160]
-            return []
+            return None
 
     @staticmethod
     def _classify(err):
@@ -104,14 +121,15 @@ class EntraAgentIdCollector(BaseCollector):
     def _normalize_identity(self, r: dict) -> dict:
         sp = r.get("sp") or {}
         oid = sp.get("id")
-        app_id = sp.get("appId")
-        # The blueprint link isn't a fixed schema yet → try a few possible keys, don't lose it.
+        app_id = sp.get("appId") or oid
         ai = sp.get("agentIdentity") or {}
         blueprint_id = (sp.get("blueprintId") or sp.get("agentIdentityBlueprintId")
                         or ai.get("blueprintId") or ai.get("agentIdentityBlueprintId"))
 
-        owners = [self._principal(o) for o in (r.get("owners") or [])]
-        sponsors = [self._principal(o) for o in (r.get("sponsors") or [])]
+        owners = ([self._principal(o) for o in r["owners"]]
+                  if r.get("owners") is not None else None)
+        sponsors = ([self._principal(o) for o in r["sponsors"]]
+                    if r.get("sponsors") is not None else None)
         app_perms = [self._app_role(a) for a in (r.get("app_roles") or [])]
         delegated = [self._oauth(g) for g in (r.get("oauth_grants") or [])]
         groups = [self._group(g) for g in (r.get("groups") or [])]
@@ -143,12 +161,18 @@ class EntraAgentIdCollector(BaseCollector):
             "application_permissions": app_perms,     # app-only (appRoleAssignments)
             "delegated_permissions": delegated,       # delegated (oauth2PermissionGrants)
             "group_memberships": groups,
+            "collection_status": {
+                key: ("COLLECTED" if r.get(key) is not None else
+                      "NOT_COLLECTED" if key == "sponsors" and not r.get("sponsors_enabled", True)
+                      else "UNAVAILABLE")
+                for key in ("owners", "sponsors", "app_roles", "oauth_grants", "groups")
+            },
             "raw_reference": raw_reference(self.source, object_id=oid),
         }
         return asset
 
     def _normalize_blueprint(self, app: dict) -> dict:
-        bid = app.get("id")
+        bid = app.get("appId")
         asset = make_asset(
             EntityType.AGENT_BLUEPRINT,
             app.get("displayName"),
@@ -162,12 +186,13 @@ class EntraAgentIdCollector(BaseCollector):
         )
         asset["agent_blueprint"] = {
             "blueprint_id": bid,
+            "object_id": app.get("id"),
             "app_id": app.get("appId"),
             "publisher_domain": app.get("publisherDomain"),
             "created_date": app.get("createdDateTime"),
             "sign_in_audience": app.get("signInAudience"),
             "required_resource_access": app.get("requiredResourceAccess") or [],
-            "raw_reference": raw_reference(self.source, blueprint_id=bid),
+            "raw_reference": raw_reference(self.source, blueprint_id=bid, object_id=app.get("id")),
         }
         return asset
 
@@ -223,11 +248,17 @@ def metrics(assets, now=None):
         "total_identities": len(ids),
         "enabled": sum(1 for x in ids if g(x).get("account_enabled")),
         "disabled": sum(1 for x in ids if g(x).get("account_enabled") is False),
-        "without_owner": sum(1 for x in ids if not g(x).get("owners")),
-        "without_sponsor": sum(1 for x in ids if not g(x).get("sponsors")),
+        "without_owner": sum(1 for x in ids if g(x).get("owners") == []),
+        "without_sponsor": sum(1 for x in ids if g(x).get("sponsors") == []),
+        "owner_unknown": sum(1 for x in ids if g(x).get("owners") is None),
+        "sponsor_unknown": sum(1 for x in ids if g(x).get("sponsors") is None),
         "without_blueprint": sum(1 for x in ids if not g(x).get("blueprint_id")),
         "with_app_only_permissions": sum(1 for x in ids if g(x).get("application_permissions")),
         "with_delegated_permissions": sum(1 for x in ids if g(x).get("delegated_permissions")),
+        "application_permissions_unknown": sum(
+            1 for x in ids if g(x).get("collection_status", {}).get("app_roles") == "UNAVAILABLE"),
+        "delegated_permissions_unknown": sum(
+            1 for x in ids if g(x).get("collection_status", {}).get("oauth_grants") == "UNAVAILABLE"),
         # identities lacking the strong key (appId) to link to an Agent365 package:
         "uncorrelated": sum(1 for x in ids if not x["external_ids"].get("entra_app_id")),
         "total_blueprints": len(bps),

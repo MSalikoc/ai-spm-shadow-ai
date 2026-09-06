@@ -13,6 +13,7 @@ Shaped deliberately so the portal has something to show:
   * sensitive interactions with real DLP outcomes, both blocked and allowed.
 """
 import hashlib
+import json
 import random
 from datetime import datetime, timedelta, timezone
 
@@ -93,17 +94,14 @@ def _mdca_app(rng, name, publisher, domain, users, up_gb, down_gb, risk, sanctio
         "id": f"mdca-{_id(name)}",
         "displayName": name,
         "category": "generativeAi",
-        "domain": domain,
-        "publisher": publisher,
+        "domains": [domain],
         "userCount": int(users * share),
-        "deviceCount": int(users * share * 0.82),
         "ipAddressCount": int(users * share * 0.95),
         "transactionCount": int(users * share * rng.uniform(3.5, 5.5)),
-        "uploadedBytes": int(up_gb * gb * share),
-        "downloadedBytes": int(down_gb * gb * share),
+        "uploadNetworkTrafficInBytes": int(up_gb * gb * share),
+        "downloadNetworkTrafficInBytes": int(down_gb * gb * share),
         "riskScore": risk,
-        "sanctionedState": sanction,
-        "firstSeenDateTime": _iso(88),
+        "tags": [sanction],
         "lastSeenDateTime": _iso(2),
     }
 
@@ -112,37 +110,36 @@ def _package(name, publisher, idx, blocked=False, scope="everyone"):
     return {
         "id": f"pkg-{_id(name)}",
         "displayName": name,
-        "packageType": "declarativeAgent",
+        "type": "external" if publisher else "custom",
+        "elementTypes": ["declarativeAgent"],
         "publisher": publisher,
-        "applicationId": f"APP-{_id(name).upper()}",
+        "appId": f"APP-{_id(name).upper()}",
         "assetId": f"asset-{_id(name)}",
         "manifestId": f"manifest-{_id(name)}",
         "version": "1.4.2",
         "manifestVersion": "1.17",
         "platform": "M365Copilot",
-        "supportedHosts": ["Teams", "Outlook"],
-        "blocked": blocked,
-        "availableToScope": scope,
-        "deployedToScope": "everyone" if idx % 3 == 0 else "Pilot-Group",
+        "supportedHosts": ["Copilot", "Teams", "Outlook"],
+        "isBlocked": blocked,
+        "availableTo": scope,
+        "deployedTo": "everyone" if idx % 3 == 0 else "Pilot-Group",
         "lastModifiedDateTime": _iso(idx % 40),
         "categories": ["Productivity"],
-        "elementDetails": [{"elementType": "declarativeAgent",
-                            "definition": {"declarativeAgentId": f"da-{_id(name)}",
-                                           "scopes": ["Files.Read.All"]}}],
+        "elementDetails": [{"elementType": "declarativeAgent", "elements": [
+            {"id": f"da-{_id(name)}",
+             "definition": json.dumps({"id": f"da-{_id(name)}", "version": "1.0", "name": name})}]}],
     }
 
 
 def _identity(name, idx, owners=True, sponsors=True):
-    oid = f"OID-{_id(name)}"
+    oid = f"APP-{_id(name).upper()}"
     rec = {
         "sp": {
-            "id": oid, "appId": f"APP-{_id(name).upper()}", "displayName": name,
+            "id": oid, "displayName": name,
             "accountEnabled": idx % 9 != 0,
             "createdDateTime": _iso(120 - idx),
-            "servicePrincipalType": "Application",
-            "signInAudience": "AzureADMyOrg",
-            "blueprintId": "BP-STUDIO" if "Copilot Studio" in name else None,
-            "appOwnerOrganizationId": "TENANT-1",
+            "servicePrincipalType": "ServiceIdentity",
+            "agentIdentityBlueprintId": "APP-BP-STUDIO" if "Copilot Studio" in name else None,
         },
         "owners": ([{"@odata.type": "#microsoft.graph.user", "id": f"USR-{idx}",
                      "displayName": "Alice Admin",
@@ -161,7 +158,7 @@ def _identity(name, idx, owners=True, sponsors=True):
 
 
 def _audit_record(rng, idx, host, operation):
-    """A Purview record; roughly a third are blocked by DLP, the rest allowed."""
+    """Synthetic Purview evidence with explicit block/allow actions, not audit-only inference."""
     blocked = idx % 3 == 0
     sit = SITS[idx % len(SITS)]
     user = USERS[idx % len(USERS)]
@@ -174,17 +171,22 @@ def _audit_record(rng, idx, host, operation):
             "Operation": operation,
             "Workload": "Copilot" if operation == "CopilotInteraction" else "AIApp",
             "UserId": user,
+            "AppIdentity": ("Copilot.MicrosoftCopilot." if operation == "CopilotInteraction"
+                            else "AIApp.SaaS.") + host,
             "CopilotEventData": {
                 "AppHost": host,
-                "SensitivityLabelId": "label-confidential" if idx % 4 == 0 else None,
-                "Contexts": [{"Id": f"https://contoso.sharepoint.com/finance/doc-{idx}.xlsx",
-                              "Type": "File", "Name": f"doc-{idx}.xlsx"}] if idx % 2 else [],
+                "Contexts": [{"Id": f"conversation-{idx}", "Type": "TeamsChat"}],
+                "AccessedResources": [{
+                    "Id": f"https://contoso.sharepoint.com/finance/doc-{idx}.xlsx",
+                    "Type": "File", "Name": f"doc-{idx}.xlsx", "Action": "Read",
+                    "SensitivityLabelId": "label-confidential" if idx % 4 == 0 else None,
+                }],
             },
             "PolicyDetails": [{
                 "PolicyName": "Sensitive data to AI services",
                 "Rules": [{
                     "RuleName": f"{sit} rule",
-                    "Actions": ["BlockAccess"] if blocked else ["Audit"],
+                    "Actions": ["BlockAccess"] if blocked else ["Allow"],
                     "ConditionsMatched": {
                         "SensitiveInformation": [{"SensitiveInformationTypeName": sit,
                                                   "Count": rng.randint(1, 12)}]},
@@ -216,7 +218,7 @@ class SampleGraph:
             + [_identity("Glean Search Agent", 50),
                _identity("Otter.ai Notetaker Agent", 51, owners=False)])
         self.blueprints = [{
-            "id": "BP-STUDIO", "displayName": "Copilot Studio blueprint",
+            "id": "BP-STUDIO", "appId": "APP-BP-STUDIO", "displayName": "Copilot Studio blueprint",
             "createdDateTime": _iso(200),
         }]
         # Two collection streams, so the aggregation across streams is exercised.
@@ -234,7 +236,7 @@ class SampleGraph:
         self.records = records
 
     # --- Graph surface -----------------------------------------------------
-    def get_all(self, path, params=None, max_items=None, beta=False):
+    def get_all(self, path, params=None, max_items=None, beta=False, headers=None):
         if path == "/copilot/admin/catalog/packages":
             return self.packages
         if path == "/servicePrincipals/microsoft.graph.agentIdentity":
@@ -267,5 +269,11 @@ class SampleGraph:
             return {"id": "query-1", "status": "succeeded"}
         return {}
 
-    def post(self, path, body, beta=False):
+    def get_checked(self, path, params=None, beta=False, headers=None):
+        result = self.get(path, params, beta)
+        if not result:
+            raise RuntimeError(f"Unknown synthetic Graph resource: {path}")
+        return result
+
+    def post(self, path, body, beta=False, headers=None):
         return {"id": "query-1", "status": "succeeded"}

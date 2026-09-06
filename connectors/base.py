@@ -138,6 +138,9 @@ class BaseCollector(ABC):
         Runs collect+normalize resiliently. NEVER raises — writes status to
         self._status and returns an entity list (which may be empty).
         """
+        self._status = ConnectorStatus.NOT_CONFIGURED
+        self._error = None
+        self._count = self._raw_count = 0
         try:
             if not self.is_configured():
                 if self._status == ConnectorStatus.NOT_CONFIGURED:

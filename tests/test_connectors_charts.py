@@ -78,6 +78,7 @@ def test_analysis_cards_are_dropped_rather_than_drawn_empty():
 
 
 def test_dashboard_renders_the_analysis_cards_end_to_end(monkeypatch):
+    from datetime import datetime, timezone
     import pipeline
     from test_connectors_report import MegaFakeGraph
 
@@ -86,7 +87,8 @@ def test_dashboard_renders_the_analysis_cards_end_to_end(monkeypatch):
         monkeypatch.setenv(flag, "true")
     monkeypatch.delenv("PURVIEW_DSPM_IMPORT_PATH", raising=False)
 
-    doc = cr.html_string(pipeline.run_connectors(MegaFakeGraph()), "t")
+    now = datetime.now(timezone.utc)
+    doc = cr.html_string(pipeline.run_connectors(MegaFakeGraph(), now=now), "t", now=now)
     assert "What happened to sensitive data" in doc
     assert "Shadow AI: reach against risk" in doc
     assert "--viz-cat-1" in doc            # the shared chart tokens are on the page

@@ -3,6 +3,7 @@ import html
 import re
 import json
 import math
+from collectors import usage_complete, core_health
 from datetime import datetime, timezone
 
 import charts
@@ -159,7 +160,7 @@ def _executive_section(apps, changes, findings):
     cards = [
         (m["total_applications"], "AI Applications", "apps", ""),
         (m["total_agents"], "AI Agents", "apps", ""),
-        (m["active_users"], "Active AI Users", "usage", ""),
+        (m["active_users"], "App-user counts (30d, not unique)", "usage", ""),
         (m["unapproved"], "Unapproved AI", "apps", "high"),
         (m["local_agents"], "Local AI Agents", "governance", "muted"),
         (m["mcp_servers"], "MCP Servers", "governance", "muted"),
@@ -173,7 +174,7 @@ def _executive_section(apps, changes, findings):
         (f'{m["assessment_coverage"]}%', "Assessment Coverage", "governance", "low"),
     ]
     kpi = "".join(
-        f'<a class="card kpi {cls}" data-goto="{goto}"><span class="n">{v}</span>'
+        f'<a class="card kpi {cls}" data-goto="{goto}"><span class="n">{v if v is not None else "—"}</span>'
         f'<span class="l">{html.escape(lbl)}</span></a>' for v, lbl, goto, cls in cards)
 
     na_html = "".join(f"<li>{html.escape(x)}</li>" for x in na) or \
@@ -239,6 +240,7 @@ def view_switcher(current, portal_href=None, report_href=None, connectors_href=N
 
 
 def _coverage_section(apps, connector_health=None):
+    connector_health = {**(connector_health or {}), "core_graph": core_health(apps)}
     """
     Ownership coverage only — how much of the estate a human has claimed.
 
@@ -443,14 +445,14 @@ _PERM_CHIP = {"both": ("delegated + app-only", "#7c3aed"),
               "none": ("no permissions", "#6b7280")}
 
 _USAGE_CHIP = {"active": ("active", "#2e8b57"), "inactive": ("inactive 30d+", "#b45309"),
-               "unused": ("never used", "#c0392b"), "unknown": ("no activity", "#6b7280")}
+               "unused": ("no observed use", "#c0392b"), "unknown": ("activity unknown", "#6b7280")}
 
 
 def _usage_type(app):
     u = app.get("usage")
     if not u or not u.get("available"):
         return "unknown"
-    if u.get("never_used"):
+    if u.get("no_signins_observed") or u.get("never_used"):
         return "unused"
     if u.get("inactive_30d"):
         return "inactive"
@@ -480,9 +482,10 @@ def _trend_svg(values, width=680, height=150):
 def _usage_block(app):
     u = app.get("usage")
     if not u or not u.get("available"):
-        return '<h4>Usage</h4><p class="f-pub">No activity data (Entra ID P1)</p>'
-    if u.get("never_used"):
-        last = "never used"
+        return ('<h4>Usage</h4><p class="f-pub">Activity unavailable or incomplete. Check Entra ID P1, '
+                'permissions and collection errors. No inference of non-use is made.</p>')
+    if u.get("no_signins_observed") or u.get("never_used"):
+        last = "no successful sign-in observed in retained window"
     else:
         d = _days_ago(u.get("last_used_date"))
         last = f"{d} days ago" if d is not None else "—"
@@ -490,13 +493,18 @@ def _usage_block(app):
     if app.get("has_app_only_access") and u.get("last_service_principal_signin"):
         dsp = _days_ago(u["last_service_principal_signin"])
         sp = f'<li>Last SP (app-only) sign-in: {dsp} days ago</li>' if dsp is not None else ""
+    window = u.get("window_days", 30)
+    def metric(field, days):
+        value = u.get(field)
+        return value if window >= days and value is not None else "unavailable"
     return (
         '<h4>Usage</h4><ul>'
         f'<li>Last used: <b>{html.escape(last)}</b></li>'
-        f'<li>Active users: {u.get("active_users_7d",0)} (7d) · '
-        f'{u.get("active_users_30d",0)} (30d) · {u.get("active_users_90d",0)} (90d)</li>'
+        f'<li>Active users: {metric("active_users_7d",7)} (7d) · '
+        f'{metric("active_users_30d",30)} (30d) · {metric("active_users_90d",90)} (90d)</li>'
+        f'<li>Observed window: {window} days; successful sign-ins only, not lifetime use.</li>'
         f'<li>Consent: {u.get("consent_user_count",0)} users</li>'
-        f'<li>Sign-ins (30d): {u.get("successful_signins_30d",0)} successful / '
+        f'<li>Sign-ins (observed window): {u.get("successful_signins_30d",0)} successful / '
         f'{u.get("failed_signins_30d",0)} failed</li>'
         f'<li>{u.get("unique_ip_count",0)} IP · {u.get("country_count",0)} countries</li>'
         f'{sp}</ul>')
@@ -532,7 +540,11 @@ def _governance_block(app):
         return html.escape(x) if x else "—"
 
     cred_exp = ti.get("credential_next_expiry")
-    cred = f'{ti.get("credential_count", 0)} credential'
+    errors = app.get("collection_errors") or {}
+    if errors.get("owners"):
+        sp_owners = "Unavailable (owner collection failed)"
+    cred = ("Credential metadata unavailable" if errors.get("inventory") else
+            f'{ti.get("credential_count", 0)} credential')
     if cred_exp:
         cred += f' · nearest expiry {html.escape(cred_exp[:10])}'
     review = lc.get("next_review_date")
@@ -941,8 +953,8 @@ def _build(apps: list[dict], tenant_id: str, changes=None, findings=None,
                for p in a.get("application_permissions", [])))
 
     # Usage / activity (Entra ID P1 — graceful if unavailable)
-    activity_available = any((a.get("usage") or {}).get("available") for a in shadow)
-    active_users_30d = sum((a.get("usage") or {}).get("active_users_30d", 0) for a in shadow)
+    activity_available = bool(shadow) and all(usage_complete(a, 30) for a in shadow)
+    active_users_30d = sum((a.get("usage") or {}).get("active_users_30d") or 0 for a in shadow)
     inactive_apps = sum(1 for a in shadow if (a.get("usage") or {}).get("inactive_30d"))
     apponly_active = sum(
         1 for a in shadow if a.get("has_app_only_access")
@@ -954,12 +966,12 @@ def _build(apps: list[dict], tenant_id: str, changes=None, findings=None,
         d = (a.get("usage") or {}).get("daily_active_30d") or []
         for i, v in enumerate(d[:30]):
             trend[i] += v
-    most_used = sorted(shadow, key=lambda a: (a.get("usage") or {}).get("active_users_30d", 0),
+    most_used = sorted(shadow, key=lambda a: (a.get("usage") or {}).get("active_users_30d") or 0,
                        reverse=True)
-    most_used = [a for a in most_used if (a.get("usage") or {}).get("active_users_30d", 0) > 0][:6]
-    growing = sorted(shadow, key=lambda a: (a.get("usage") or {}).get("growth_7d", 0),
+    most_used = [a for a in most_used if ((a.get("usage") or {}).get("active_users_30d") or 0) > 0][:6]
+    growing = sorted(shadow, key=lambda a: (a.get("usage") or {}).get("growth_7d") or 0,
                      reverse=True)
-    growing = [a for a in growing if (a.get("usage") or {}).get("growth_7d", 0) > 0][:6]
+    growing = [a for a in growing if ((a.get("usage") or {}).get("growth_7d") or 0) > 0][:6]
     most_used_bars = _bars([(a.get("display_name") or "—", a.get("vendor", ""),
                              (a.get("usage") or {}).get("active_users_30d", 0), "#2e8b57")
                             for a in most_used], max(((a.get("usage") or {}).get("active_users_30d", 0)
@@ -1156,7 +1168,7 @@ def _build(apps: list[dict], tenant_id: str, changes=None, findings=None,
       <div class="tiles">
         <div class="card tile"><span class="n">{estate['total_applications']}</span><span class="l">AI Applications</span></div>
         <div class="card tile"><span class="n">{estate['total_agents']}</span><span class="l">AI Agents</span></div>
-        <div class="card tile"><span class="n">{estate['active_users']}</span><span class="l">Active AI Users</span></div>
+        <div class="card tile"><span class="n">{estate['active_users'] if estate['active_users'] is not None else '—'}</span><span class="l">App-user counts (30d, not unique)</span></div>
         <div class="card tile high"><span class="n">{estate['unapproved']}</span><span class="l">Unapproved AI</span></div>
       </div>
       <div class="card hero-donut">
@@ -1250,7 +1262,7 @@ def _build(apps: list[dict], tenant_id: str, changes=None, findings=None,
         <button data-group="usage" data-value="all" class="active">Usage: All</button>
         <button data-group="usage" data-value="active">Active</button>
         <button data-group="usage" data-value="inactive">Inactive (30d+)</button>
-        <button data-group="usage" data-value="unused">Never used</button>
+        <button data-group="usage" data-value="unused">No observed use</button>
       </div>
       <div class="filters">
         <label>Category <select data-group="cat"><option value="all">All</option>{cat_opts}</select></label>

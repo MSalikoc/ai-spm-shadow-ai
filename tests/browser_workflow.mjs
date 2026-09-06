@@ -156,6 +156,16 @@ try {
   await check(`document.getElementById('workflow-mode').textContent.includes('Read-only snapshot')`,'static is read-only');
   await check(`document.documentElement.scrollWidth<=innerWidth`,'desktop has no horizontal overflow');
   await check(`(() => {
+    const charts=[...document.querySelectorAll('.dashboard-charts svg')];
+    return charts.length===3 && charts.every(chart=>{
+      const box=chart.getBoundingClientRect();
+      return !chart.closest('details') && box.height>0 && box.top>=0 && box.bottom<900;
+    });
+  })()`,'three real dashboard charts are visible before scrolling on desktop');
+  await check(`document.querySelector('.dashboard-context').textContent.includes('DEMO / SYNTHETIC DATA') &&
+    [...document.querySelectorAll('.dashboard-kpi strong')].map(n=>n.textContent).join(',')==='28,24,13,7'`,
+    'demo is labelled and headline values agree with the synthetic scan');
+  await check(`(() => {
     const canvas=document.createElement('canvas'),ctx=canvas.getContext('2d');
     function luminance(color) {
       ctx.fillStyle=color;ctx.fillRect(0,0,1,1);
@@ -187,6 +197,7 @@ try {
   await check(`document.documentElement.dataset.theme==='dark'`,'toggle switches theme');
   await check(`getComputedStyle(document.body).backgroundColor==='rgb(61, 59, 58)'`,'dark legacy aliases use Clawpilot background');
   await call('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
+  await evaluate('window.scrollTo(0,0)');
   await check(`document.documentElement.scrollWidth<=innerWidth`,'mobile no horizontal overflow');
   if (process.argv.includes('--screenshots')) await screenshot('.browser-mobile.png');
   await click('[data-edit-decision="sensitive-access"]');
@@ -288,7 +299,8 @@ try {
   await call('Emulation.setEmulatedMedia',{media:'print'});
   await check(`getComputedStyle(document.getElementById('workflow-auth')).display==='none' &&
     getComputedStyle(document.getElementById('v-overview')).display==='block' &&
-    document.querySelector('.executive-strip').textContent.includes('2026-08-01')`,'print omits credentials and includes scan as of');
+    getComputedStyle(document.querySelector('.dashboard-header')).display!=='none' &&
+    document.querySelector('.dashboard-context').textContent.includes('2026-08-01')`,'print omits credentials and includes scan as of');
   await call('Emulation.setEmulatedMedia',{media:''});
 
   // A scan with no active cards must still reveal a subsequently recorded decision.

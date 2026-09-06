@@ -28,6 +28,10 @@ _APP_ASSET_TYPES = {EntityType.AI_APPLICATION, EntityType.AI_AGENT, EntityType.A
 
 
 # ---------- helpers ----------
+def _is_app_asset(asset):
+    return asset.get("asset_type") in _APP_ASSET_TYPES or bool(asset.get("agent_identity"))
+
+
 def _parse_iso(s):
     if not s:
         return None
@@ -52,10 +56,14 @@ def _event_view(e):
             "user": i.get("user"),
             "app_name": i.get("app_host"),
             "app_id": i.get("app_id"),
+            "app_identity": i.get("app_identity"),
+            "agent_id": i.get("agent_id"),
             "mdca_app_id": None,
             "direction": i.get("direction") or "UNKNOWN_DIRECTION",
             "sits": [s.get("name") for s in (i.get("sensitive_info_types") or []) if s.get("name")],
             "label": i.get("sensitivity_label_id"),
+            "labels": i.get("sensitivity_label_ids") or
+                      ([i["sensitivity_label_id"]] if i.get("sensitivity_label_id") else []),
             "workload": i.get("workload"),
             "sources": e.get("sources", []),
         }
@@ -81,15 +89,25 @@ def _event_view(e):
 
 
 def _index_apps(app_assets):
-    idx = {"app_id": {}, "mdca": {}, "name": {}, "domain": {}}
+    idx = {"app_id": {}, "agent": {}, "mdca": {}, "name": {}, "domain": {}}
     for a in app_assets:
         ext = a.get("external_ids") or {}
         if ext.get("entra_app_id"):
             idx["app_id"][ext["entra_app_id"]] = a
         if ext.get("mdca_app_id"):
             idx["mdca"][ext["mdca_app_id"]] = a
+        if ext.get("agent_identity_id"):
+            idx["agent"][ext["agent_identity_id"]] = a
+        for e in (a.get("agent365") or {}).get("elements") or []:
+            for key in ("declarative_agent_id", "custom_engine_agent_id", "bot_id"):
+                if e.get(key):
+                    idx["agent"][e[key]] = a
         if a.get("display_name"):
-            idx["name"].setdefault(_norm(a["display_name"]), a)
+            name = _norm(a["display_name"])
+            if name in idx["name"] and idx["name"][name] != a:
+                idx["name"][name] = None
+            else:
+                idx["name"][name] = a
         if a.get("domain"):
             idx["domain"].setdefault(_norm(a["domain"]), a)
     return idx
@@ -99,11 +117,78 @@ def _resolve(view, idx):
     """Matches event → app asset (strong→weak). None if no match (synthetic app)."""
     if view.get("app_id") and view["app_id"] in idx["app_id"]:
         return idx["app_id"][view["app_id"]]
+    agent_id = view.get("agent_id")
+    if agent_id:
+        for key in (agent_id, agent_id.rsplit(".", 1)[-1]):
+            if key in idx["agent"]:
+                return idx["agent"][key]
     if view.get("mdca_app_id") and view["mdca_app_id"] in idx["mdca"]:
         return idx["mdca"][view["mdca_app_id"]]
     if view.get("app_name") and _norm(view["app_name"]) in idx["name"]:
         return idx["name"][_norm(view["app_name"])]
     return None
+
+
+def _event_key(view, asset):
+    if asset is not None:
+        return asset["asset_id"]
+    return ("agent:" + str(view["agent_id"]) if view.get("agent_id") else
+            "app:" + str(view["app_id"]) if view.get("app_id") else
+            "identity:" + str(view["app_identity"]) if view.get("app_identity") else
+            "name:" + _norm(view["app_name"] or "unknown"))
+
+
+def attributed_interactions(all_assets, now=None):
+    """Complete event evidence for downstream assessments; never export raw AI content."""
+    now = now or datetime.now(timezone.utc)
+    idx = _index_apps([a for a in all_assets if _is_app_asset(a)])
+    keys = ("interaction_id", "operation", "user", "user_id", "timestamp", "app_host", "app_id",
+            "app_identity", "agent_id", "agent_name", "host", "workload", "sensitivity_label_id",
+            "sensitive_info_types", "referenced_resources", "contexts", "dlp_policies",
+            "dlp_action", "direction", "raw_reference")
+    records = []
+    for event in all_assets:
+        interaction = event.get("interaction")
+        if not interaction:
+            continue
+        view = _event_view(event)
+        asset = _resolve(view, idx)
+        record = {key: interaction.get(key) for key in keys}
+        labels = list(dict.fromkeys(view["labels"]))
+        direction = view["direction"]
+        sensitive = bool(view["sits"] or labels)
+        blocked = direction == "BLOCKED"
+        unblocked = direction in _SHARING_DIRECTIONS | {"ACCESSED"}
+        transfer_allowed = (False if blocked else
+                            True if sensitive and direction in {"SHARED", "UPLOADED", "ALLOWED"}
+                            else None)
+        match = ("app_id" if asset and view.get("app_id") in idx["app_id"] else
+                 "agent_id" if asset and view.get("agent_id") and
+                 (view["agent_id"] in idx["agent"] or view["agent_id"].rsplit(".", 1)[-1] in idx["agent"])
+                 else "name" if asset else "unmatched")
+        record.update({
+            "app_key": _event_key(view, asset),
+            "asset_id": asset.get("asset_id") if asset else None,
+            "matched_to_inventory": asset is not None,
+            "attribution_method": match,
+            "attribution_confidence": {"app_id": 98, "agent_id": 96, "name": 40, "unmatched": 0}[match],
+            "app_display_name": asset.get("display_name") if asset else view.get("app_name"),
+            "app_name": asset.get("display_name") if asset else view.get("app_name"),
+            "sanctioned_state": (asset.get("mdca") or {}).get("sanctioned_state") if asset else None,
+            "sources": event.get("sources") or [],
+            "sits": view["sits"],
+            "sensitivity_label_ids": labels,
+            "label_ids": labels,
+            "is_sensitive": sensitive,
+            "is_blocked": blocked,
+            "is_unblocked": unblocked,
+            "is_shared": direction in _SHARING_DIRECTIONS,
+            "transfer_allowed": transfer_allowed,
+            "block_status": "BLOCKED" if blocked else "NOT_BLOCKED" if unblocked else "UNKNOWN",
+            "in_window_30d": bool(view["ts"] and timedelta(0) <= now - view["ts"] <= timedelta(days=30)),
+        })
+        records.append(record)
+    return records
 
 
 def _blank_profile(key, name, asset=None):
@@ -124,6 +209,7 @@ def _blank_profile(key, name, asset=None):
         },
         "affected_users": set(),
         "directions": {d: 0 for d in DIRECTIONS},
+        "sensitive_directions": {d: 0 for d in DIRECTIONS},
         "sit_distribution": defaultdict(int),
         "label_distribution": defaultdict(int),
         "workload_distribution": defaultdict(int),
@@ -137,11 +223,10 @@ def _blank_profile(key, name, asset=None):
 # ---------- main API ----------
 def build_app_profiles(all_assets, now=None):
     """Produces per-application sensitive data profiles from the correlated asset+event list."""
-    app_assets = [a for a in all_assets if a.get("asset_type") in _APP_ASSET_TYPES]
+    app_assets = [a for a in all_assets if _is_app_asset(a)]
     events = [v for v in (_event_view(e) for e in all_assets) if v]
     if now is None:
-        ts_all = [v["ts"] for v in events if v["ts"]]
-        now = max(ts_all) if ts_all else datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc)
     idx = _index_apps(app_assets)
 
     profiles = {}
@@ -152,10 +237,8 @@ def build_app_profiles(all_assets, now=None):
     # 2) link events to apps
     for v in events:
         asset = _resolve(v, idx)
-        if asset is not None:
-            key = asset["asset_id"]
-        else:
-            key = "name:" + _norm(v["app_name"] or "unknown")
+        key = _event_key(v, asset)
+        if asset is None:
             if key not in profiles:
                 profiles[key] = _blank_profile(key, v["app_name"])
         p = profiles[key]
@@ -177,7 +260,6 @@ def build_app_profiles(all_assets, now=None):
 
 def _apply_event(p, v, now):
     d = v["direction"] if v["direction"] in p["directions"] else "UNKNOWN_DIRECTION"
-    p["directions"][d] += 1
     if v["kind"] == "observation":
         # observation: a usage signal; NOT sensitivity (Purview will correlate)
         p["usage"]["observed_users"] = max(p["usage"]["observed_users"], v.get("observed_users", 0))
@@ -186,19 +268,24 @@ def _apply_event(p, v, now):
         return
     # interaction (Purview audit/DSPM)
     p["_interaction_count"] += 1
+    if not v["ts"] or not timedelta(0) <= now - v["ts"] <= timedelta(days=30):
+        return
+    p["directions"][d] += 1
     if v["user"]:
         p["affected_users"].add(v["user"])
     for s in v["sits"]:
         p["sit_distribution"][s] += 1
-    if v["label"]:
-        p["label_distribution"][v["label"]] += 1
+    for label in v.get("labels") or []:
+        p["label_distribution"][label] += 1
     if v["workload"]:
         p["workload_distribution"][v["workload"]] += 1
     if d == "BLOCKED":
         p["blocked"] += 1
     if d == "ALLOWED":
         p["allowed"] += 1
-    is_sensitive = bool(v["sits"]) or bool(v["label"])
+    is_sensitive = bool(v["sits"]) or bool(v.get("labels"))
+    if is_sensitive:
+        p["sensitive_directions"][d] += 1
     if v["ts"]:
         age = now - v["ts"]
         if age <= timedelta(days=30):
@@ -233,7 +320,7 @@ def evaluate_findings(p):
     findings = []
     name = p["display_name"]
     sanctioned = p.get("sanctioned_state")
-    shared_sensitive = sum(p["directions"][d] for d in _SHARING_DIRECTIONS)
+    shared_sensitive = sum(p.get("sensitive_directions", {}).get(d, 0) for d in _SHARING_DIRECTIONS)
     has_sensitive = bool(p["sit_distribution"]) or bool(p["label_distribution"])
 
     if sanctioned == "unsanctioned" and has_sensitive and shared_sensitive > 0:
@@ -250,7 +337,7 @@ def evaluate_findings(p):
             "type": "SENSITIVE_DATA_BLOCKED_TO_AI",
             "severity": "info",
             "app": name,
-            "detail": f"{p['blocked']} sensitive interactions were blocked by DLP for {name} (positive control).",
+            "detail": f"{p['blocked']} interactions were blocked by DLP for {name} (positive control).",
         })
     if (p["usage"].get("uploaded_bytes", 0) > 0
             and p["usage"].get("data_sensitivity") == "UNDETERMINED_REQUIRES_PURVIEW"

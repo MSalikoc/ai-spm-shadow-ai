@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 
 import storage
 from scoring import _scope_weight
+from collectors import usage_complete
 
 IMPORTANCE = {
     "NEW_APP_ONLY_ACCESS": "Critical", "ADMIN_CONSENT_ADDED": "High",
@@ -47,7 +48,7 @@ def snapshot(findings) -> dict:
         ti = f.get("technical_inventory") or {}
         own = f.get("ownership") or {}
         usage = f.get("usage") or {}
-        avail = bool(usage.get("available"))
+        avail = usage_complete(f, 30)
         snap[aid] = {
             "name": f.get("display_name") or "—",
             "vendor": f.get("vendor") or "",
@@ -57,7 +58,8 @@ def snapshot(findings) -> dict:
             "has_app_only": bool(f.get("has_app_only_access")),
             "admin_consent": f.get("consent_type") == "AllPrincipals",
             "owners": sorted(o.get("id") or o.get("name") or ""
-                             for o in own.get("service_principal_owners", [])),
+                             for o in own.get("service_principal_owners", []))
+                      if not (f.get("collection_errors") or {}).get("owners") else None,
             "business_owner": own.get("business_owner") or "",
             "classification": (f.get("classification") or {}).get("category") or "",
             "lifecycle": (f.get("lifecycle") or {}).get("status") or "",
@@ -117,8 +119,9 @@ def diff(prev: dict, cur: dict, now=None) -> list:
         if p["admin_consent"] and not c["admin_consent"]:
             events.append(_ev(now, "ADMIN_CONSENT_REMOVED", aid, nm, True, False,
                               "Admin consent removed"))
-        oadd = set(c["owners"]) - set(p["owners"])
-        orem = set(p["owners"]) - set(c["owners"])
+        owners_known = c["owners"] is not None and p["owners"] is not None
+        oadd = set(c["owners"] or []) - set(p["owners"] or []) if owners_known else set()
+        orem = set(p["owners"] or []) - set(c["owners"] or []) if owners_known else set()
         if oadd and orem:
             events.append(_ev(now, "OWNER_CHANGED", aid, nm, p["owners"], c["owners"], "Owner changed"))
         elif oadd:

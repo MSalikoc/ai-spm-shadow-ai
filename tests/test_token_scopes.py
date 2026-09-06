@@ -12,6 +12,7 @@ import json
 
 import auth
 import preflight
+from graph_client import GraphError
 from test_cli import FakeTenant
 
 
@@ -110,8 +111,8 @@ def test_no_delegated_lecture_when_running_as_an_application():
     assert "application token" in text
 
 
-def test_a_not_provisioned_source_is_never_blamed_on_scopes():
-    """404 means the tenant does not have the feature; granting a scope will not help."""
+def test_an_unavailable_endpoint_is_not_blindly_blamed_on_scopes():
+    """404 alone establishes neither license status nor a missing token role."""
     rows = preflight.run(FakeTenant(missing=["/copilot/"]), AZ_CLI_SCOPES, "delegated")
     row = next(r for r in rows if r["key"] == "agent365")
     assert row["status"] == preflight.UNAVAILABLE
@@ -126,3 +127,87 @@ def test_preflight_still_works_without_token_scopes():
     assert row["scope_in_token"] is None
     assert row["note"] == "the identity lacks this permission"
     assert "DELEGATED token" not in preflight.format_text(rows)
+
+
+def test_agent_inventory_requires_specialized_read_roles():
+    rows = {r["key"]: r for r in preflight.run(
+        FakeTenant(denied=["microsoft.graph.agent"]), AZ_CLI_SCOPES, "application")}
+    assert rows["entra_agent_id"]["scopes"] == ["AgentIdentity.Read.All"]
+    assert rows["entra_agent_blueprints"]["scopes"] == ["AgentIdentityBlueprint.Read.All"]
+    assert rows["entra_agent_id"]["scope_in_token"] is False
+    assert rows["entra_agent_blueprints"]["scope_in_token"] is False
+    assert "ReadWrite" not in str(preflight.PROBES)
+
+
+def test_empty_known_token_has_no_roles_not_unknown_roles():
+    rows = preflight.run(FakeTenant(denied=["/copilot/"]), set(), "application")
+    row = next(r for r in rows if r["key"] == "agent365")
+    assert row["scope_in_token"] is False
+    assert row["note"] == "the application token lacks this role"
+
+
+def test_invalid_query_is_error_not_missing_license():
+    class InvalidQuery(FakeTenant):
+        def get_all(self, path, params=None, max_items=None, beta=False):
+            raise GraphError(400, path, "Request_UnsupportedQuery")
+
+    rows = preflight.run(InvalidQuery())
+    assert all(row["status"] == preflight.FAILED for row in rows)
+    assert all("licensed" not in row["note"] for row in rows)
+
+
+def test_explicit_graph_license_error_is_distinct_from_query_failure():
+    class LicenseRequired(FakeTenant):
+        def get_all(self, path, params=None, max_items=None, beta=False):
+            if path == "/auditLogs/signIns":
+                raise GraphError(403, path, json.dumps({"error": {
+                    "code": "Authentication_RequestFromNonPremiumTenantOrB2CTenant"}}))
+            return super().get_all(path, params, max_items, beta)
+
+    row = next(r for r in preflight.run(LicenseRequired()) if r["key"] == "signin_logs")
+    assert row["status"] == preflight.LICENSE_MISSING
+    assert "explicitly" in row["note"]
+
+
+def test_probe_limits_and_sampled_relationship_failures():
+    class CheckedTenant(FakeTenant):
+        def get_all(self, path, params=None, max_items=None, beta=False):
+            assert max_items == 1
+            assert int((params or {}).get("$top", 1)) <= 100
+            if path.endswith(("/appRoleAssignments", "/owners")):
+                raise GraphError(403, path, "Authorization_RequestDenied")
+            return super().get_all(path, params, max_items, beta)
+
+    rows = {r["key"]: r for r in preflight.run(CheckedTenant())}
+    assert rows["app_role_assignments"]["status"] == preflight.DENIED
+    assert rows["service_principal_owners"]["status"] == preflight.DENIED
+    assert rows["service_principals"]["status"] == preflight.OK
+
+
+def test_absent_sample_does_not_claim_relationship_readable():
+    class EmptyTenant(FakeTenant):
+        def get_all(self, path, params=None, max_items=None, beta=False):
+            return []
+
+    rows = {r["key"]: r for r in preflight.run(EmptyTenant())}
+    assert rows["app_role_assignments"]["status"] == preflight.NOT_TESTED
+    assert rows["service_principal_owners"]["status"] == preflight.NOT_TESTED
+
+
+def test_discovery_success_is_not_every_source_access():
+    rows = preflight.run(FakeTenant())
+    text = preflight.format_text(rows)
+    assert "Every source is readable" not in text
+    assert "full source access is not verified" in text
+    assert "Purview audit queries" in text and "MDCA ingestion" in text
+    assert "Microsoft Agent 365" in next(r for r in rows if r["key"] == "agent365")["permission"]
+    remedy = preflight._remedy_text()
+    assert "Administrator is not sufficient" in remedy
+
+
+def test_blueprint_only_access_still_enables_partial_agent_collection():
+    rows = preflight.run(FakeTenant(denied=["microsoft.graph.agentIdentity/"]))
+    for row in rows:
+        if row["key"] == "entra_agent_id":
+            row["status"] = preflight.DENIED
+    assert preflight.connector_flags(rows)["ENABLE_ENTRA_AGENT_ID"]

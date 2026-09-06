@@ -7,6 +7,7 @@ separate CONNECTOR; until connected their counts are 0 and Coverage shows this o
 (NO fabricated inventory).
 """
 from datetime import datetime, timezone
+from collectors import usage_complete, core_health
 
 # Data source / connector status. Unconnected ones produce a coverage gap.
 # Sources that exist as real connectors, keyed by the name registry.run() reports them
@@ -57,7 +58,11 @@ def connector_status(health=None):
     listed Defender for *Endpoint*, which has no collector, in place of Defender for
     Cloud Apps, which does.
     """
-    rows = [("Entra ID / Microsoft Graph", True, "AI application & OAuth consent discovery")]
+    core = (health or {}).get("core_graph")
+    core_detail = "AI application & OAuth consent discovery"
+    if core and core.get("status") != "CONNECTED":
+        core_detail += " — partial: " + core.get("detail", "some enrichment is unavailable")
+    rows = [("Entra ID / Microsoft Graph", True, core_detail)]
     for key, label, purpose in _LIVE_CONNECTORS:
         entry = (health or {}).get(key)
         if not entry:
@@ -102,7 +107,8 @@ def estate_metrics(apps, changes=None, findings=None):
     findings = findings or []
     non_ms = [a for a in apps if not a.get("first_party_microsoft")]
     agents = _agents(apps)
-    active_users = sum((a.get("usage") or {}).get("active_users_30d", 0) for a in apps)
+    active_users = (sum((a.get("usage") or {}).get("active_users_30d", 0) for a in apps)
+                    if apps and all(usage_complete(a, 30) for a in apps) else None)
     open_f = sum(1 for f in findings
                  if f.get("status") in ("Open", "Assigned", "In Progress", "Pending Review", "Reopened"))
     now = datetime.now(timezone.utc)
@@ -150,6 +156,7 @@ def usage_surface(apps):
 
 
 def coverage(apps, health=None):
+    health = {**(health or {}), "core_graph": core_health(apps)}
     non_ms = [a for a in apps if not a.get("first_party_microsoft")]
     agents = _agents(apps)
     return {

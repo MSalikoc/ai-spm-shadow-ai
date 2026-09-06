@@ -29,7 +29,7 @@ class ActivityGraph:
             flt = (params or {}).get("$filter", "")
             if params and params.get("$top") == "1":  # probe
                 return self._user[:1]
-            if "signInEventTypes" in flt:
+            if "t eq 'servicePrincipal'" in flt:
                 # v1.0 has no such property; only beta answers this filter at all.
                 if not beta:
                     raise RuntimeError(
@@ -64,11 +64,11 @@ def test_usage_windows_and_last_used():
     assert u["available"] is True
     assert u["consent_user_count"] == 150
     assert u["active_users_7d"] == 2          # u1,u2
-    assert u["active_users_30d"] == 3         # u1,u2,u3
-    assert u["active_users_90d"] == 4         # +u4
-    assert u["unique_user_count"] == 4
-    assert u["unique_ip_count"] == 3
-    assert u["country_count"] == 3
+    assert u["active_users_30d"] == 2         # successful u1,u2 only
+    assert u["active_users_90d"] is None     # Graph retention cannot establish this
+    assert u["unique_user_count"] == 2
+    assert u["unique_ip_count"] == 2
+    assert u["country_count"] == 2
     assert u["successful_signins_30d"] == 2   # u1,u2 (u3 failed, u4 outside 30d)
     assert u["failed_signins_30d"] == 1       # u3
     assert u["never_used"] is False
@@ -82,15 +82,17 @@ def test_never_used_and_inactive():
     apps = [{"app_id": "a1", "user_count": 5}]
     collectors.enrich_with_signin_activity(graph, apps, now=NOW)
     u = apps[0]["usage"]
-    assert u["never_used"] is True
-    assert u["inactive_30d"] is True and u["inactive_90d"] is True
+    assert u["never_used"] is None
+    assert u["no_signins_observed"] is True
+    assert u["inactive_30d"] is True and u["inactive_90d"] is None
     assert report._usage_type(apps[0]) == "unused"
 
 
 def test_app_only_service_principal_signin():
     graph = ActivityGraph(
         user_signins=[],
-        sp_signins=[{"appId": "a1", "createdDateTime": _iso(3), "servicePrincipalId": "sp1"}])
+        sp_signins=[{"appId": "a1", "createdDateTime": _iso(3), "servicePrincipalId": "sp1",
+                     "status": {"errorCode": 0}}])
     apps = [{"app_id": "a1", "user_count": 0, "has_app_only_access": True}]
     collectors.enrich_with_signin_activity(graph, apps, now=NOW)
     u = apps[0]["usage"]
@@ -152,7 +154,8 @@ def test_bulk_pull_routes_rows_to_the_right_app():
 
     assert apps[0]["usage"]["unique_user_count"] == 2
     assert apps[1]["usage"]["unique_user_count"] == 1
-    assert apps[2]["usage"]["never_used"] is True     # no rows, still assessed
+    assert apps[2]["usage"]["no_signins_observed"] is True
+    assert apps[2]["usage"]["never_used"] is None
 
 
 def test_signin_pull_is_chunked_not_one_query_per_app():
@@ -178,9 +181,9 @@ def test_activity_window_is_configurable(monkeypatch):
     monkeypatch.setenv("AISPM_ACTIVITY_DAYS", "30")
     assert collectors.activity_days() == 30
     monkeypatch.setenv("AISPM_ACTIVITY_DAYS", "999")   # clamped to the log retention max
-    assert collectors.activity_days() == 90
+    assert collectors.activity_days() == 30
     monkeypatch.setenv("AISPM_ACTIVITY_DAYS", "nonsense")
-    assert collectors.activity_days() == 90
+    assert collectors.activity_days() == 30
 
 
 def test_service_principal_pass_uses_beta_because_v1_lacks_the_property():
@@ -193,24 +196,25 @@ def test_service_principal_pass_uses_beta_because_v1_lacks_the_property():
     class Recording(ActivityGraph):
         def get_all(self, path, params=None, max_items=None, beta=False):
             if path == "/auditLogs/signIns" and (params or {}).get("$top") != "1":
-                calls.append((beta, "signInEventTypes" in (params or {}).get("$filter", "")))
+                calls.append((beta, (params or {}).get("$filter", "")))
             return super().get_all(path, params, max_items, beta)
 
     graph = Recording(
         user_signins=[],
-        sp_signins=[{"appId": "a1", "createdDateTime": _iso(3)}])
+        sp_signins=[{"appId": "a1", "createdDateTime": _iso(3), "status": {"errorCode": 0}}])
     apps = [{"app_id": "a1", "user_count": 0, "has_app_only_access": True}]
     collectors.enrich_with_signin_activity(graph, apps, now=NOW)
 
-    assert (False, False) in calls          # user pass on v1.0
-    assert (True, True) in calls            # service principal pass on beta
+    assert all(beta for beta, _ in calls)
+    assert any("nonInteractiveUser" in flt and "interactiveUser" in flt for _, flt in calls)
+    assert any("servicePrincipal" in flt for _, flt in calls)
     assert apps[0]["usage"]["last_service_principal_signin"] is not None
 
 
 def test_a_failing_signin_pass_degrades_without_a_traceback_per_chunk(caplog):
     class BrokenSp(ActivityGraph):
         def get_all(self, path, params=None, max_items=None, beta=False):
-            if "signInEventTypes" in (params or {}).get("$filter", ""):
+            if "servicePrincipal" in (params or {}).get("$filter", ""):
                 raise RuntimeError("Graph 400: BadRequest")
             return super().get_all(path, params, max_items, beta)
 
@@ -221,5 +225,35 @@ def test_a_failing_signin_pass_degrades_without_a_traceback_per_chunk(caplog):
     # One summary line for the whole pass, not one stack trace per chunk.
     warnings = [r for r in caplog.records if "sign-in pull" in r.message]
     assert len(warnings) == 1
-    assert "2 chunk(s) failed" in warnings[0].getMessage()
-    assert all(a["usage"]["available"] for a in apps)   # scan still produced metrics
+    assert "incomplete" in warnings[0].getMessage()
+    assert all(not a["usage"]["available"] for a in apps)
+    assert all(a["usage"]["no_signins_observed"] is None for a in apps)
+
+
+def test_short_window_does_not_claim_thirty_day_inactivity(monkeypatch):
+    monkeypatch.setenv("AISPM_ACTIVITY_DAYS", "7")
+    apps = [{"app_id": "a1"}]
+    collectors.enrich_with_signin_activity(ActivityGraph(), apps, now=NOW)
+    usage = apps[0]["usage"]
+    assert usage["window_days"] == 7
+    assert usage["inactive_30d"] is None and usage["inactive_90d"] is None
+    assert usage["never_used"] is None
+    assert "unavailable (30d)" in report._usage_block(apps[0])
+
+
+def test_row_cap_is_partial_not_evidence_of_non_use(monkeypatch):
+    monkeypatch.setattr(collectors, "_SIGNIN_CAP", 1)
+    apps = [{"app_id": "a1"}, {"app_id": "a2"}]
+    rows = [{"appId": "a1", "createdDateTime": _iso(1), "userId": "u", "status": {"errorCode": 0}}]
+    collectors.enrich_with_signin_activity(ActivityGraph(user_signins=rows), apps, now=NOW)
+    assert all(not a["usage"]["available"] for a in apps)
+    assert apps[1]["usage"]["inactive_30d"] is None
+
+
+def test_failed_authentication_never_counts_as_successful_activity():
+    failed = {"createdDateTime": _iso(1), "userId": "u", "status": {"errorCode": 50126}}
+    usage = collectors._usage_from_rows({}, [failed], [failed], NOW)
+    assert usage["active_users_30d"] == 0
+    assert usage["last_used_date"] is None
+    assert usage["failed_signins_30d"] == 1
+    assert usage["never_used"] is None

@@ -138,3 +138,17 @@ def test_deterministic_asset_id():
     a2 = model.make_asset(EntityType.AI_AGENT, "Y different name", Source.ENTRA_AGENT_ID,
                           external_ids={"entra_app_id": "APP-9"})
     assert a1["asset_id"] == a2["asset_id"] == "entra_app_id:APP-9"   # deterministic
+
+
+def test_reusing_collector_resets_previous_health():
+    collector = MockAgent365()
+    assert len(collector.safe_run()) == 1
+    collector.collect = lambda since=None: []
+    assert collector.safe_run() == []
+    assert collector.get_health()["status"] == ConnectorStatus.NO_DATA
+    assert collector.get_health()["count"] == collector.get_health()["raw_count"] == 0
+    collector._status = ConnectorStatus.PARTIALLY_CONNECTED
+    collector._error = "previous failure"
+    collector.safe_run()
+    assert collector.get_health()["error"] is None
+    assert collector.get_health()["status"] == ConnectorStatus.NO_DATA

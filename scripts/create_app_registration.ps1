@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Creates an app registration that can read EVERY AI-SPM data source, and grants it the
+  Creates an app registration for AI-SPM endpoint access checks, and grants it the
   Graph APPLICATION permissions. PowerShell twin of create_app_registration.sh.
 
 .DESCRIPTION
@@ -14,7 +14,7 @@
   Uses the Azure CLI rather than the Microsoft.Graph module, so there is nothing extra to
   install: if you can run `az login`, you can run this.
 
-  100% read-only permissions. Nothing here can change your tenant.
+  Requests read-only data permissions. Setup itself creates registrations, grants and credentials.
 
 .EXAMPLE
   ./scripts/create_app_registration.ps1
@@ -24,8 +24,8 @@
 
 .NOTES
   Requires a role that can grant application permissions — Privileged Role Administrator,
-  Cloud Application Administrator or Global Administrator — the same requirement
-  postdeploy.sh has.
+  Global Administrator or an appropriately scoped custom role. Cloud Application
+  Administrator cannot grant Microsoft Graph application roles.
 
   Global Reader is NOT enough. It is read-only, so it can neither create the registration
   nor consent the permissions, and the attempt fails partway through. Note that an
@@ -39,6 +39,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. "$PSScriptRoot\permission_helpers.ps1"
 $GraphAppId = "00000003-0000-0000-c000-000000000000"
 
 # Read-only Graph application permissions. Names are resolved live against the tenant's
@@ -48,6 +49,8 @@ $Roles = @(
   "Application.Read.All"        # enterprise app + service principal inventory
   "Directory.Read.All"          # OAuth grants, owners, directory context
   "AuditLog.Read.All"           # sign-in activity (also needs Entra ID P1)
+  "AgentIdentity.Read.All"      # agent identity inventory
+  "AgentIdentityBlueprint.Read.All" # agent blueprint inventory
   "CopilotPackages.Read.All"    # Agent 365 catalogue
   "CloudApp-Discovery.Read.All" # Defender for Cloud Apps — Shadow AI web usage
   "AuditLogsQuery.Read.All"     # Purview Audit — sensitive AI interactions
@@ -56,70 +59,70 @@ $Roles = @(
 if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
   throw "Azure CLI not found. Install it from https://aka.ms/InstallAzureCLI, then run 'az login'."
 }
-try { az account show -o none 2>$null } catch { throw "Run 'az login' first." }
-if ($LASTEXITCODE -ne 0) { throw "Run 'az login' first." }
+Invoke-Az account show -o none | Out-Null
 
-$TenantId = az account show --query tenantId -o tsv
-$SignedInAs = az account show --query user.name -o tsv
+$TenantId = Invoke-Az account show --query tenantId -o tsv
+$SignedInAs = Invoke-Az account show --query user.name -o tsv
 Write-Host "==> Tenant: $TenantId"
 Write-Host "==> Signed in as: $SignedInAs"
 Write-Host "    This needs a role that can grant application permissions (Privileged Role"
-Write-Host "    Administrator, Cloud Application Administrator or Global Administrator)."
+Write-Host "    Administrator, Global Administrator or appropriately scoped custom role)."
 Write-Host "    Global Reader is read-only and cannot complete it."
 
 Write-Host "==> 1/4 Creating app registration: $AppName"
-$AppId = az ad app list --display-name $AppName --query "[0].appId" -o tsv 2>$null
+$AppId = Invoke-Az ad app list --display-name $AppName --query "[0].appId" -o tsv
 if ($AppId -and $AppId -ne "None") {
   Write-Host "    Already exists, reusing: $AppId"
 } else {
-  $AppId = az ad app create --display-name $AppName --sign-in-audience AzureADMyOrg `
+  $AppId = Invoke-Az ad app create --display-name $AppName --sign-in-audience AzureADMyOrg `
            --query appId -o tsv
   Write-Host "    Created: $AppId"
 }
 
 # The service principal is what actually holds the app roles.
-az ad sp show --id $AppId -o none 2>$null
-if ($LASTEXITCODE -ne 0) { az ad sp create --id $AppId -o none }
-Start-Sleep -Seconds 5   # directory replication
+if (-not $AppId -or $AppId -eq "None") { throw "App registration returned no application ID." }
+$SpObjectId = Invoke-Az ad sp list --filter "appId eq '$AppId'" --query "[0].id" -o tsv
+if (-not $SpObjectId -or $SpObjectId -eq "None") {
+  $SpObjectId = Invoke-Az ad sp create --id $AppId --query id -o tsv
+}
+if (-not $SpObjectId -or $SpObjectId -eq "None") { throw "No service principal ID returned." }
 
 Write-Host "==> 2/4 Requesting Graph application permissions..."
-$GraphSpId = az ad sp show --id $GraphAppId --query id -o tsv
-$SpObjectId = az ad sp show --id $AppId --query id -o tsv
+$GraphSpId = Invoke-Az ad sp show --id $GraphAppId --query id -o tsv
+if (-not $GraphSpId -or $GraphSpId -eq "None") { throw "Microsoft Graph service principal was not found." }
 $Missing = @()
 $RoleIds = @{}
 
 foreach ($role in $Roles) {
-  $roleId = az ad sp show --id $GraphAppId `
-    --query "appRoles[?value=='$role' && contains(allowedMemberTypes,'Application')].id | [0]" -o tsv
+  $roleId = Invoke-Az ad sp show --id $GraphAppId `
+    --query "appRoles[?value=='$role' && isEnabled && contains(allowedMemberTypes,'Application')].id | [0]" -o tsv
   if (-not $roleId -or $roleId -eq "None") {
-    # A role this tenant's Graph does not expose (preview or licence gated). Reported
-    # rather than pretended to be granted.
+    if ($role -in @("Application.Read.All", "Directory.Read.All", "AuditLog.Read.All")) {
+      throw "Required Graph application role '$role' is unavailable."
+    }
     $Missing += $role
     continue
   }
   $RoleIds[$role] = $roleId
-  az ad app permission add --id $AppId --api $GraphAppId --api-permissions "$roleId=Role" -o none 2>$null
-  Write-Host "    + $role"
 }
 
+foreach ($role in $RoleIds.Keys) {
+  Invoke-Az ad app permission add --id $AppId --api $GraphAppId `
+    --api-permissions "$($RoleIds[$role])=Role" -o none | Out-Null
+}
 Write-Host "==> 3/4 Granting admin consent..."
 # `az ad app permission admin-consent` is flaky on freshly created apps; assigning the
 # app role directly is the reliable equivalent and is idempotent. The body goes through a
 # temp file because inline JSON quoting differs between PowerShell and cmd.
 foreach ($role in $RoleIds.Keys) {
-  $body = @{ principalId = $SpObjectId; resourceId = $GraphSpId; appRoleId = $RoleIds[$role] } |
-          ConvertTo-Json -Compress
-  $tmp = New-TemporaryFile
-  Set-Content -Path $tmp -Value $body -Encoding utf8
-  az rest --method POST `
-    --uri "https://graph.microsoft.com/v1.0/servicePrincipals/$SpObjectId/appRoleAssignments" `
-    --headers "Content-Type=application/json" --body "@$tmp" -o none 2>$null
-  Remove-Item $tmp -Force
+  Grant-AzGraphRole $SpObjectId $GraphSpId $RoleIds[$role]
+  Write-Host "    Verified grant: $role"
 }
 
 Write-Host "==> 4/4 Creating a client secret (2 years)..."
-$Secret = az ad app credential reset --id $AppId --append `
+$Secret = Invoke-Az ad app credential reset --id $AppId --append `
           --display-name "aispm-cli" --years 2 --query password -o tsv
+if (-not $Secret -or $Secret -eq "None") { throw "Credential creation returned no secret." }
 
 # Print the interpreter that will actually work here: a venv holds the dependencies when
 # one exists, and Windows has no bare `python3`.
@@ -131,7 +134,8 @@ else                                                        { $Py = "python3" }
 
 Write-Host ""
 Write-Host "============================================================"
-Write-Host "Ready. Paste these three lines first:"
+Write-Host "Available grants verified; endpoint access and licensing still need doctor/scan checks."
+Write-Host "Paste these three lines first:"
 Write-Host ""
 Write-Host "`$env:AISPM_TENANT_ID = `"$TenantId`""
 Write-Host "`$env:AISPM_CLIENT_ID = `"$AppId`""
@@ -158,7 +162,6 @@ if ($Missing.Count -gt 0) {
   # "The string is missing the terminator". 5.1 is still the default shell on Windows.
   $MissingList = $Missing -join ", "
   Write-Host "  $MissingList"
-  Write-Host "That usually means the Microsoft feature is not provisioned at all (no"
-  Write-Host "Microsoft 365 Copilot licence hides CopilotPackages.Read.All, for example)."
-  Write-Host "doctor will report them as NOT_AVAILABLE — it never fabricates."
+  Write-Host "These roles were NOT GRANTED. Role availability does not establish license status."
+  Write-Host "Agent 365 requires Microsoft Agent 365 licensing; MDCA also needs discovery ingestion."
 }

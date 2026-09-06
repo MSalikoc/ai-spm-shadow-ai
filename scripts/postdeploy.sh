@@ -30,7 +30,7 @@ echo "==> 1/4 Kod deploy ediliyor (func publish, remote build)..."
 cd "$ROOT"
 # Varsa desteklenmeyen URL ayarını temizle
 az functionapp config appsettings delete -g "$RG" -n "$FUNC" \
-  --setting-names WEBSITE_RUN_FROM_PACKAGE -o none 2>/dev/null || true
+  --setting-names WEBSITE_RUN_FROM_PACKAGE -o none
 
 if command -v func >/dev/null 2>&1; then
   func azure functionapp publish "$FUNC" --python
@@ -38,7 +38,9 @@ else
   echo "    func bulunamadı, config-zip ile deploy ediliyor..."
   az functionapp config appsettings set -g "$RG" -n "$FUNC" \
     --settings SCM_DO_BUILD_DURING_DEPLOYMENT=true ENABLE_ORYX_BUILD=true -o none
-  TMP="$(mktemp -d)"
+  TMP="$ROOT/.aispm-deploy-$$"
+  mkdir "$TMP"
+  trap 'rm -rf -- "$TMP"' EXIT
   # Tüm kök .py dosyaları + host.json + requirements.txt (notify.py dahil, yeni
   # modül eklendiğinde manuel liste güncellemeye gerek kalmasın diye).
   #
@@ -69,7 +71,8 @@ echo "    Managed Identity: $MI"
 echo "==> 3/4 Microsoft AI Data Sources connector'ları açılıyor..."
 "$ROOT/scripts/enable_connectors.sh" "$RG" "$FUNC"
 
-KEY="$(az functionapp keys list -g "$RG" -n "$FUNC" --query functionKeys.default -o tsv 2>/dev/null || true)"
+KEY="$(az functionapp keys list -g "$RG" -n "$FUNC" --query functionKeys.default -o tsv)"
+[[ -n "$KEY" && "$KEY" != "None" ]] || { echo "ERROR: Function key not returned." >&2; exit 1; }
 echo "==> 4/4 Tamam."
 echo "    İlk taramayı tetikle          :  curl -s \"https://$FUNC.azurewebsites.net/api/scan?code=$KEY\""
 echo "    AI Data Sources dashboard     :  https://$FUNC.azurewebsites.net/api/connectors?code=$KEY&format=html"
@@ -81,5 +84,6 @@ echo "      az functionapp config appsettings set -g $RG -n $FUNC \\"
 echo "        --settings AISPM_SCAN_SCOPE=consented -o none"
 echo "    (Rol yayılması + Function App yeniden başlaması birkaç dakika sürebilir —"
 echo "     bu sürede AI Data Sources dashboard'u bazı kaynakları PERMISSION_MISSING"
-echo "     gösterebilir; birkaç dakika sonra sayfayı yenileyin. LICENSE_MISSING ise"
-echo "     tenant'ta o Microsoft özelliğinin lisansı yok demektir, script hatası değildir.)"
+echo "     gösterebilir; birkaç dakika sonra sayfayı yenileyin.)"
+echo "    Discovery probes and grants do not verify all source access. Check licensing,"
+echo "    provisioning and ingestion separately; missing Graph roles do not prove license status."

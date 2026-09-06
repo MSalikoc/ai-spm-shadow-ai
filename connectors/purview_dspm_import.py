@@ -10,10 +10,12 @@ Versioned schema (IMPORT_SCHEMA_VERSION). Incompatible major version → ApiUnav
 (an honest error). No portal HTML scraping.
 """
 import csv
+import hashlib
 import json
 import os
+from datetime import datetime
 
-from .base import ApiUnavailable, BaseCollector, EntityType, Source
+from .base import ApiUnavailable, BaseCollector, ConnectorStatus, EntityType, Source
 from .model import make_asset, raw_reference
 
 IMPORT_SCHEMA_VERSION = "1.0"
@@ -42,7 +44,17 @@ class PurviewDspmImportCollector(BaseCollector):
                     data = json.load(f)
                 if isinstance(data, dict):
                     self._file_schema = str(data.get("schema_version") or "")
-                    rows = data.get("records") or []
+                    if "ResultData" in data:
+                        rows = data["ResultData"]
+                        if isinstance(rows, str):
+                            rows = json.loads(rows)
+                        if data.get("LastPage") is not True:
+                            self._status = ConnectorStatus.PARTIALLY_CONNECTED
+                            self._error = "Activity Explorer export is not a complete paginated export."
+                    elif "records" in data:
+                        rows = data["records"]
+                    else:
+                        raise ApiUnavailable("Unsupported DSPM JSON envelope; expected records or ResultData")
                 else:
                     rows = data
             elif ext == ".csv":
@@ -57,28 +69,47 @@ class PurviewDspmImportCollector(BaseCollector):
             raise ApiUnavailable(
                 f"incompatible DSPM export schema {self._file_schema} "
                 f"(supported major {_major(IMPORT_SCHEMA_VERSION)})")
-        return rows or []
+        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+            raise ApiUnavailable("DSPM export records must be an array of objects")
+        return rows
 
     def normalize(self, raw_records: list) -> list:
         out = []
         for i, row in enumerate(raw_records):
-            out.append(self._normalize_row(row, i))
+            try:
+                out.append(self._normalize_row(row, i))
+            except (ValueError, TypeError) as e:
+                self._status = ConnectorStatus.PARTIALLY_CONNECTED
+                self._error = f"Invalid DSPM row {i + 1}: {e}"
+        if raw_records and not out:
+            raise ApiUnavailable(self._error or "No valid DSPM rows")
         return out
 
     def _normalize_row(self, row: dict, idx: int) -> dict:
-        app = _pick(row, "app", "application", "appName", "AppName", "CloudApp")
+        app = _pick(row, "app", "application", "Application", "appName", "AppName", "CloudApp",
+                    "CopilotAppHost", "AgentName")
         user = _pick(row, "user", "upn", "userPrincipalName", "User", "UserId")
         ts = _pick(row, "timestamp", "date", "Date", "activityTime", "CreationTime")
-        action = _pick(row, "action", "Action", "dlpAction")
+        action = _pick(row, "action", "Action", "dlpAction", "PolicyRuleAction")
         direction = (_pick(row, "direction", "Direction", "activity", "Activity")
                      or "UNKNOWN_DIRECTION")
         label = _pick(row, "label", "sensitivityLabel", "SensitivityLabel")
-        rec_id = _pick(row, "id", "recordId", "RecordId") or f"dspm:{idx}"
+        if not app or not ts:
+            raise ValueError("application and timestamp are required")
+        datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        rec_id = _pick(row, "id", "recordId", "RecordId") or hashlib.sha256(
+            json.dumps(row, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
         sits = []
         raw_sit = _pick(row, "sit", "sensitiveInfoType", "SensitiveInfoType", "sensitiveInfoTypes")
         if isinstance(raw_sit, list):
-            sits = [{"name": s} for s in raw_sit if s]
+            for s in raw_sit:
+                if isinstance(s, str) and s:
+                    sits.append({"name": s})
+                elif isinstance(s, dict):
+                    name = _pick(s, "name", "Name", "SensitiveInformationTypeName", "SensitiveInfoTypeName")
+                    if name:
+                        sits.append({"name": name, "count": s.get("Count")})
         elif isinstance(raw_sit, str) and raw_sit:
             sits = [{"name": s.strip()} for s in raw_sit.split(";") if s.strip()]
 
@@ -101,7 +132,8 @@ class PurviewDspmImportCollector(BaseCollector):
             "sensitive_info_types": sits,
             "referenced_resources": [],
             "dlp_action": action,
-            "direction": _norm_direction(direction),
+            "direction": ("BLOCKED" if action and "block" in str(action).lower()
+                          else _norm_direction(direction)),
             "import_schema_version": self._file_schema or IMPORT_SCHEMA_VERSION,
             "raw_reference": raw_reference(self.source, record_id=rec_id),
         }
@@ -125,5 +157,7 @@ def _pick(row, *keys):
 
 def _norm_direction(d):
     s = str(d).strip().upper().replace(" ", "_")
+    s = {"UPLOADFILE": "UPLOADED", "UPLOADTEXT": "UPLOADED",
+         "FILEUPLOADEDTOCLOUD": "UPLOADED", "PASTEDTOBROWSER": "SHARED"}.get(s, s)
     known = {"ACCESSED", "SHARED", "UPLOADED", "GENERATED", "BLOCKED", "ALLOWED"}
     return s if s in known else "UNKNOWN_DIRECTION"

@@ -103,3 +103,67 @@ def test_package_correlates_with_entra_app(monkeypatch):
     assert set(fin[0]["sources"]) == {"AGENT_365", "ENTRA_AGENT_ID"}
     assert fin[0]["external_ids"]["agent_identity_id"] == "OID-1"
     assert fin[0]["correlation_confidence"] == 98
+
+
+def test_documented_nested_elements_and_custom_type():
+    package = {
+        "id": "package", "displayName": "Contoso Sales Agent", "type": "custom",
+        "publisher": "Contoso", "supportedHosts": ["teams", "Copilot"],
+        "elementDetails": [
+            {"elementType": "bot", "elements": [
+                {"id": "bot-element", "definition": json.dumps({
+                    "botId": "bot-001", "scopes": ["personal"], "supportsFiles": True})}]},
+            {"elementType": "declarativeAgent", "elements": [
+                {"id": "declarative-001", "definition": '{"id":"declarative-001","version":"1.0"}'}]},
+        ],
+    }
+    asset = Agent365Collector().normalize([package])[0]
+    assert asset["asset_type"] == EntityType.AI_AGENT
+    assert asset["agent365"]["build_type"] == "custom"
+    bot, declarative = asset["agent365"]["elements"]
+    assert bot["bot_id"] == "bot-001" and bot["file_support"] is True
+    assert bot["supported_scopes"] == ["personal"]
+    assert declarative["declarative_agent_id"] == "declarative-001"
+
+
+def test_package_filter_excludes_addins_but_preserves_agent_varieties_and_unknown():
+    packages = [
+        {"id": "addin", "displayName": "Document Uploader", "type": "external",
+         "elementTypes": ["officeAddIn"], "supportedHosts": ["word"]},
+        {"id": "declarative", "elementTypes": ["DeclarativeAgent"]},
+        {"id": "custom", "elementTypes": ["CustomEngineAgent"]},
+        {"id": "bot", "elementTypes": ["Bots"]},
+        {"id": "future", "supportedHosts": ["Copilot"], "elementTypes": ["futureElement"]},
+        {"id": "unknown", "type": "custom"},
+    ]
+    assets = Agent365Collector().normalize(packages)
+    assert len(assets) == 5
+    assert metrics(assets)["total_registered"] == 4
+    assert assets[-1]["asset_type"] == EntityType.AGENT_PACKAGE
+
+
+def test_partial_detail_failure_retains_list_inventory(monkeypatch):
+    monkeypatch.setenv("ENABLE_AGENT365", "true")
+
+    class Graph(FakeGraph):
+        def get_checked(self, path):
+            if path.endswith("pkg-finance-001"):
+                raise RuntimeError("Graph 403 Forbidden")
+            return self.get(path)
+
+    collector = Agent365Collector(Graph(_packages()))
+    assets = collector.safe_run()
+    assert len(assets) == 2
+    assert collector.get_health()["status"] == ConnectorStatus.PARTIALLY_CONNECTED
+    assert assets[0]["agent365"]["detail_status"] == "UNAVAILABLE"
+    assert assets[1]["agent365"]["detail_status"] == "COLLECTED"
+
+
+def test_malformed_definition_is_retained_not_dropped():
+    asset = Agent365Collector().normalize([{
+        "id": "broken", "elementDetails": [{"elementType": "customEngineAgent", "elements": [
+            {"id": "custom-id", "definition": "{invalid json"}]}]}])[0]
+    element = asset["agent365"]["elements"][0]
+    assert element["raw_definition"] == "{invalid json"
+    assert element["definition_status"] == "UNAVAILABLE"
+    assert element["custom_engine_agent_id"] == "custom-id"

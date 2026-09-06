@@ -3,6 +3,7 @@ import html
 import json
 import os
 import re
+from datetime import datetime, timedelta, timezone
 
 import connectors
 import connectors_report
@@ -24,9 +25,11 @@ class MegaFakeGraph:
             self.defender = json.load(f)
         with open(os.path.join(FXDIR, "purview_audit_records.json"), encoding="utf-8") as f:
             self.audit_records = json.load(f)
+        for idx, record in enumerate(self.audit_records):
+            record["createdDateTime"] = (datetime.now(timezone.utc) - timedelta(days=idx + 1)).isoformat()
         self._poll_done = False
 
-    def get_all(self, path, params=None, max_items=None):
+    def get_all(self, path, params=None, max_items=None, headers=None):
         if path == "/copilot/admin/catalog/packages":
             return self.pkgs
         if path == "/servicePrincipals/microsoft.graph.agentIdentity":
@@ -69,7 +72,7 @@ class MegaFakeGraph:
 
 def _enable_all(monkeypatch):
     for f in ("ENABLE_AGENT365", "ENABLE_ENTRA_AGENT_ID", "ENABLE_DEFENDER_CLOUD_APPS",
-              "ENABLE_PURVIEW_AUDIT", "ENABLE_PREVIEW_CONNECTORS"):
+              "ENABLE_PURVIEW_AUDIT", "ENABLE_PREVIEW_CONNECTORS", "ENABLE_ENTRA_AGENT_SPONSORS"):
         monkeypatch.setenv(f, "true")
     monkeypatch.delenv("PURVIEW_DSPM_IMPORT_PATH", raising=False)
 
@@ -225,6 +228,85 @@ def test_risk_tier_derives_from_score():
     assert connectors_report._risk_tier(50) == "medium"
     assert connectors_report._risk_tier(20) == "low"
     assert connectors_report._risk_tier(5) == "info"
+
+
+def test_complete_event_contract_preserves_labels_attribution_and_unknown_outcomes():
+    from datetime import datetime, timezone
+    from connectors.model import make_asset
+    from connectors.base import EntityType, Source
+    now = datetime(2026, 9, 6, tzinfo=timezone.utc)
+    app = make_asset(EntityType.AI_APPLICATION, "Finance AI", Source.ENTRA_APPS,
+                     external_ids={"entra_app_id": "client-id"})
+    events = []
+    for idx in range(28):
+        event = make_asset(EntityType.SENSITIVE_INTERACTION, f"Event {idx}", Source.PURVIEW_AUDIT)
+        event["interaction"] = {
+            "interaction_id": f"record-{idx}", "app_id": "client-id",
+            "app_host": "BizChat", "app_identity": "ConnectedAIApp.Entra.client-id",
+            "timestamp": "2026-09-05T00:00:00Z", "user": f"user-{idx}@example.test",
+            "direction": ("BLOCKED" if idx == 25 else "ACCESSED" if idx == 26 else "UNKNOWN_DIRECTION"),
+            "sensitivity_label_id": "confidential" if idx >= 25 else None,
+            "sensitivity_label_ids": ["confidential", "restricted"] if idx >= 25 else [],
+            "sensitive_info_types": [], "raw_content": {"prompt": "must never be exported"},
+        }
+        events.append(event)
+    assessment = connectors_report.assessment({"assets": [app] + events}, now=now)
+    section = assessment["sensitive_interactions"]
+    assert section["schema_version"] == 2
+    assert len(section["records"]) == 28 and len(section["sample"]) == 25
+    assert section["sample_truncated"] is True
+    blocked, accessed, unknown = section["records"][25:]
+    assert blocked["is_sensitive"] and blocked["is_blocked"] and not blocked["is_unblocked"]
+    assert accessed["is_unblocked"] and not accessed["is_shared"]
+    assert unknown["block_status"] == "UNKNOWN" and not unknown["is_unblocked"]
+    assert blocked["sensitivity_label_ids"] == ["confidential", "restricted"]
+    assert blocked["label_ids"] == ["confidential", "restricted"]
+    assert blocked["transfer_allowed"] is False
+    assert accessed["transfer_allowed"] is unknown["transfer_allowed"] is None
+    assert blocked["asset_id"] == app["asset_id"] and blocked["attribution_method"] == "app_id"
+    assert blocked["app_display_name"] == "Finance AI"
+    assert blocked["app_name"] == "Finance AI"
+    counts = section["event_metrics"]["window_30d"]
+    assert counts["sensitive_count"] == 3
+    assert counts["sensitive_blocked_count"] == counts["sensitive_unblocked_count"] == 1
+    assert counts["sensitive_unknown_outcome_count"] == 1
+    assert counts["sensitive_allowed_count"] == 0 and counts["sensitive_unknown_count"] == 2
+    assert "must never be exported" not in json.dumps(section)
+
+
+def test_missing_ownership_is_unknown_not_failed_in_report():
+    from connectors.model import make_asset
+    from connectors.base import EntityType, Source
+    asset = make_asset(EntityType.AGENT_IDENTITY, "Unknown ownership", Source.ENTRA_AGENT_ID)
+    asset["agent_identity"] = {
+        "account_enabled": True, "owners": None, "sponsors": None,
+        "blueprint_id": "blueprint", "collection_status": {
+            "owners": "UNAVAILABLE", "sponsors": "NOT_COLLECTED"},
+    }
+    result = {"assets": [asset]}
+    assessment = connectors_report.assessment(result)
+    item = connectors_report._identity_items(assessment["agent_identities"]["identities"])[0]
+    assert item["status_label"] == "Unknown"
+    assert item["score"] == 0
+    assert "No owner assigned" not in str(item["reasons"])
+    assert ("Owner", "Unknown") in item["facts"]
+    assert assessment["users_and_groups"]["identities_without_owner_but_in_groups"] == []
+    assert "Unknown" in connectors_report.html_string(result)
+
+
+def test_missing_device_count_and_total_only_traffic_render_honestly():
+    from connectors.model import make_asset
+    from connectors.base import EntityType, Source
+    app = make_asset(EntityType.AI_APPLICATION, "Example AI", Source.DEFENDER_CLOUD_APPS)
+    app["mdca"] = {
+        "devices": None, "vendor": None, "traffic_bytes": 1_048_576,
+        "sanctioned_state": "unreviewed",
+    }
+    assessment = connectors_report.assessment({"assets": [app]})
+    items = connectors_report._shadow_items(assessment["shadow_ai_usage"]["applications"])
+    assert ("Devices (30d)", "Unknown") in items[0]["facts"]
+    table = connectors_report._shadow_traffic_section("shadow", "Title", "Subtitle", items, "Empty")
+    assert "1.0 MB" in table and ">Unknown</td>" in table
 
 
 def test_html_tables_render_even_with_only_partial_data(monkeypatch):

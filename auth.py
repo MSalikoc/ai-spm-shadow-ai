@@ -2,7 +2,7 @@
 Entra ID authentication. Two modes:
 
   delegated : device code flow — under the analyst's own permissions, no client
-              secret needed on the app registration. Ideal for demos/hackathons.
+              secret needed on the app registration. Available data depends on delegated scopes.
   app       : client credentials — for automation/CI. Requires a client secret.
 
 Required Graph permissions (at minimum):
@@ -20,9 +20,9 @@ def get_token_azure_cli(tenant_id: str | None = None) -> str:
 
     This is the path that removes setup entirely for a first look: no app registration
     to create, no client secret to store, no Function App to deploy. The token carries
-    the operator's own delegated permissions, so a Global Reader or Security Reader can
-    run a scan against their tenant from a laptop and get the same dashboards the
-    deployed version produces.
+    the Azure CLI client's delegated permissions intersected with the operator's
+    privileges. Core discovery may work, but specialised connectors still require
+    their own supported permissions; the user's directory role does not add scopes.
     """
     from azure.identity import AzureCliCredential
     cred = AzureCliCredential(tenant_id=tenant_id) if tenant_id else AzureCliCredential()

@@ -2,7 +2,7 @@
 
 # AI-SPM
 
-**Find every AI application, agent and Shadow AI tool in your Microsoft 365 tenant —
+**Discover AI applications, agents and Shadow AI evidence in your Microsoft 365 tenant —
 and know which one to fix first.**
 
 Read-only. Runs from your laptop in two minutes, or on a schedule in Azure.
@@ -13,7 +13,7 @@ Read-only. Runs from your laptop in two minutes, or on a schedule in Azure.
 </div>
 
 <div align="center">
-  <img src="docs/img/assessment.png" alt="The AI-SPM decision cockpit: scan-as-of and coverage strip, executive attention counts, three accountable decisions, and workflow review above expandable control evidence" width="820">
+  <img src="docs/img/assessment.png" alt="The AI-SPM security dashboard: observed inventory, exposure gauge, risk distribution, five-pillar control outcomes and evidence coverage above executive decisions" width="820">
 </div>
 
 ---
@@ -27,12 +27,16 @@ Read-only. Runs from your laptop in two minutes, or on a schedule in Azure.
 |  **Agents** | Copilot agents and Entra agent identities, with owners and permissions |
 |  **Sensitive data** | What Purview saw reaching AI, blocked versus allowed |
 
-It lands as a **decision cockpit**, not just a table: one exposure score, how much of the
-26-test catalogue across five pillars could actually be answered this scan (so *Not
-assessed* is never mistaken for a pass), which assets concentrate the failing controls'
-blast radius, and what to fix — grouped **Immediate / Next / Watch** — with a one-paragraph
-executive summary naming the highest-impact decision and its expected effect. A failing
-test names the applications that failed it and what to do about them.
+It opens as an **AI security dashboard**: observed vendors and inventory, Critical/High-risk
+records, unattended access, an exposure gauge, risk distribution and stacked control
+outcomes across five pillars. Graphs use the same scan data as the evidence tables;
+unrated inventory, unassessed and skipped controls stay distinct from low risk or passed.
+Control coverage and source collection are shown separately. The sample is explicitly
+labelled synthetic, and every report carries its scan timestamp.
+
+Below the charts, up to **three accountable decision programs** connect findings to
+owners, due dates and time-bound risk acceptance. A failing test names the applications
+that failed it and what to do about them.
 
 The AI estate sits on the same page: one row per vendor, whichever route it came in by.
 ChatGPT consented as an app *and* used in the browser is one row, not two.
@@ -125,10 +129,12 @@ python aispm.py scan --open
 
 <br>
 
-### 2 · App registration — all four data sources
+### 2 · App registration — additional Microsoft AI data sources
 
-One script creates the registration, grants six read-only Graph permissions and consents
-them. No Azure resources are created.
+One script creates the registration and grants the supported read-only Graph application
+permissions. Grant failures stop setup rather than being reported as success. Feature
+licenses, telemetry ingestion and audit configuration remain separate prerequisites.
+No Azure hosting resources are created.
 
 ```bash
 ./scripts/create_app_registration.sh
@@ -171,7 +177,7 @@ $env:AISPM_CLIENT_SECRET = "<SECRET>"
 ### Who can run this
 
 Creating the registration and consenting its permissions both write to the directory, so
-this needs **Privileged Role Administrator**, **Cloud Application Administrator** or
+this needs **Privileged Role Administrator** or
 **Global Administrator**.
 
 **Global Reader is not enough.** It is read-only — it runs option 1 perfectly well, but
@@ -358,7 +364,11 @@ nothing — that is the control working.
 
 ## Permissions
 
-All read-only, and granted for you by `create_app_registration.sh` or `postdeploy.sh`.
+The scanner's data-reading roles are requested by `create_app_registration.sh` (or its
+PowerShell twin) and `postdeploy.sh`. A successful grant is not proof that the feature
+is licensed or that it has produced data. Microsoft Graph application-role consent
+requires Privileged Role Administrator, Global Administrator, or a suitable custom
+role; Cloud Application Administrator alone is not sufficient.
 
 | Permission | Unlocks |
 | --- | --- |
@@ -366,7 +376,47 @@ All read-only, and granted for you by `create_app_registration.sh` or `postdeplo
 | `AuditLog.Read.All` | Usage and activity *(also needs Entra ID P1)* |
 | `CloudApp-Discovery.Read.All` | Shadow AI web traffic |
 | `CopilotPackages.Read.All` | Agent 365 catalogue |
+| `AgentIdentity.Read.All`, `AgentIdentityBlueprint.Read.All` | Entra agent identities and blueprint inventory |
 | `AuditLogsQuery.Read.All` | Purview sensitive interactions |
+
+Agent 365 requires the applicable Agent 365 license. Defender requires Cloud Discovery
+ingestion as well as licensing. Purview requires auditing and relevant events; some
+non-Microsoft AI auditing scenarios also require pay-as-you-go configuration. The
+Defender and expanded sign-in APIs use Graph beta contracts.
+
+Sponsor reads are optional: the current Agent ID sponsor API documents a write-capable
+permission. Setup does **not** automatically grant it. Unavailable sponsor evidence must
+not be interpreted as an agent having no sponsor. `ENABLE_ENTRA_AGENT_SPONSORS=true`
+opts into these reads only after an administrator has separately approved the required
+access; leave it unset for the default read-only scanner.
+
+The deployment also grants `Mail.Send` for the optional digest. It is not a data-reading
+permission; restrict it to the sender mailbox as described in the email setup. The
+scanner never changes tenant access controls, but it can create audit-search jobs,
+send configured digests, and persist its own governance records.
+
+### Evidence completeness
+
+Core discovery and permission-read failures stop the scan, preserving the previous
+report instead of publishing a falsely clean inventory. Optional ownership/activity
+failures are marked incomplete. Failed batch items, missing pages and sign-in row limits
+cannot establish absence of permissions, credentials, owners or activity.
+
+Standard Graph sign-in access provides at most a **30-day retained window**, not a
+90-day history. Only successful user and service-principal sign-ins establish use;
+non-interactive user events are included. A shorter collection window cannot establish
+30-day inactivity, and no events in the retained window does not mean "never used".
+90-day metrics stay unavailable without a separately implemented historical source.
+
+Partial connector evidence can retain a known finding, but cannot prove a clean control
+or count as complete control coverage. Sensitive-sharing findings require sensitivity
+and an allowed transfer in the **same event**; an unrelated upload and a blocked
+sensitive event are not evidence of a leak. DSPM import files are snapshots, not a live
+collection channel, and old events do not become recent just because they were imported.
+Timed-out Purview queries are resumed using tenant-scoped, versioned checkpoints. Live
+entry points take the checkpoint tenant from the acquired token, never from an unrelated
+environment setting. If the token's tenant cannot be determined, checkpoint persistence
+is explicitly disabled.
 
 ### Why only Entra connects
 
@@ -399,7 +449,7 @@ readable, denied, or not provisioned, and names the permission to grant.
 | Only Entra sources connect | [See above](#why-only-entra-connects) — go to option 2 |
 | Option 2 fails partway with `Insufficient privileges` | Your role cannot grant application permissions — see [Who can run this](#who-can-run-this) |
 | Windows PowerShell 5.1: `The string is missing the terminator` | Fixed in current `main` — `git pull` |
-| A source shows `N/A` | Not provisioned in the tenant: a licensing question, not a permission one |
+| A source shows `N/A` | Inspect the returned endpoint error, permissions, licensing and provisioning; this status alone does not identify the cause |
 | Purview "still running" | Audit searches take minutes — raise `PURVIEW_POLL_SECONDS` |
 | Fewer apps than expected | Default scope is `ai` — use `--scope consented` |
 | Slow on a large tenant | `--activity-days 30` |
@@ -414,7 +464,7 @@ Set by the setup scripts. Change these on a deployment with
 | Setting | Purpose |
 | --- | --- |
 | `AISPM_SCAN_SCOPE` | `ai` / `consented` / `all` |
-| `AISPM_ACTIVITY_DAYS` | Sign-in history window, 7–90 (default 90) |
+| `AISPM_ACTIVITY_DAYS` | Sign-in history window, 7–30 (default 30; larger requests are capped) |
 | `AISPM_CATALOG_PATH` | Your own AI vendor catalog |
 | `PURVIEW_POLL_SECONDS` | How long to wait for a Purview audit search (default 300) |
 | `SCAN_SCHEDULE`, `EMAIL_SCHEDULE` | Timers — daily 06:00 UTC, Monday 08:00 UTC |

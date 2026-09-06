@@ -17,6 +17,7 @@ Three rules the catalogue keeps to:
   * A failure names the assets that failed it. A verdict nobody can act on is a statistic.
 """
 from datetime import datetime, timezone
+from collectors import usage_complete
 
 PASSED = "Passed"
 FAILED = "Failed"
@@ -83,7 +84,8 @@ NO_SIGNIN = (NOT_ASSESSED,
 
 
 def usage_seen(ctx):
-    return any((a.get("usage") or {}).get("available") for a in ctx["apps"])
+    apps = shadow(ctx)
+    return bool(apps) and all(usage_complete(a, 30) for a in apps)
 
 
 def review_overdue(a, now):
@@ -186,6 +188,8 @@ def t_offline_access(ctx):
 
 
 def t_credentials(ctx):
+    if any((a.get("collection_errors") or {}).get("inventory") for a in shadow(ctx)):
+        return NOT_ASSESSED, "Credential metadata collection was incomplete; absence is unknown.", []
     bad = [a for a in shadow(ctx)
            if (a.get("technical_inventory") or {}).get("credential_count", 0) > 0]
     st, v = verdict(bad,
@@ -255,17 +259,18 @@ def t_unused_privileged(ctx):
                     "1 high-risk AI application has not been used in 30 days.",
                     "{n} high-risk AI applications have not been used in 30 days.",
                     "No unused application is holding high privilege.")
-    return st, v, rows(bad, lambda a: f'risk {a.get("risk_score")} · last used {(a.get("usage") or {}).get("last_used_date") or "never"}')
+    return st, v, rows(bad, lambda a: f'risk {a.get("risk_score")} · last observed {(a.get("usage") or {}).get("last_used_date") or "not in retained window"}')
 
 
 def t_never_used(ctx):
     if not usage_seen(ctx):
         return NO_SIGNIN
-    bad = [a for a in shadow(ctx) if (a.get("usage") or {}).get("never_used")]
+    bad = [a for a in shadow(ctx) if (a.get("usage") or {}).get("no_signins_observed")
+           or (a.get("usage") or {}).get("never_used") is True]
     st, v = verdict(bad,
-                    "1 AI application has never been signed in to.",
-                    "{n} AI applications have never been signed in to.",
-                    "Every consented AI application has actually been used.")
+                    "1 AI application has no successful sign-in in the retained observation window.",
+                    "{n} AI applications have no successful sign-in in the retained observation window.",
+                    "Successful sign-ins were observed for each application in the retained window.")
     return st, v, rows(bad, lambda a: ", ".join(scopes(a)) or "app-only")
 
 
@@ -302,7 +307,11 @@ def t_shadow_discovery(ctx):
                 "Defender for Cloud Apps is not connected, so AI used through the browser "
                 "cannot be seen at all.", [])
     web = [v for v in ctx["estate"]["vendors"] if "web" in v["evidence"]]
-    unsanctioned = [v for v in web if not v.get("sanctioned")]
+    def sanction(v):
+        return (v.get("web") or {}).get("sanctioned", v.get("sanctioned"))
+    unsanctioned = [v for v in web if sanction(v) in (False, "unsanctioned", "unreviewed")]
+    if not unsanctioned and any(sanction(v) is None for v in web):
+        return NOT_ASSESSED, "Sanction status is unavailable for some observed AI services.", []
     st, vtx = verdict(unsanctioned,
                       "1 AI service is reached through the browser without being sanctioned.",
                       "{n} AI services are reached through the browser without being sanctioned.",
@@ -318,9 +327,9 @@ def t_sensitive_flow(ctx):
                 "established.", [])
     bad = [v for v in ctx["estate"]["vendors"] if v.get("sensitive_types")]
     st, vtx = verdict(bad,
-                      "1 AI vendor has received data carrying a sensitivity label.",
-                      "{n} AI vendors have received data carrying sensitivity labels.",
-                      "No labelled data has been observed reaching an AI vendor.")
+                      "1 AI vendor has audit interactions involving sensitive data.",
+                      "{n} AI vendors have audit interactions involving sensitive data.",
+                      "No sensitive data signal was observed in the collected AI audit events.")
     return st, vtx, [(v["vendor"], ", ".join(sorted(v["sensitive_types"]))) for v in bad]
 
 
@@ -329,13 +338,17 @@ def t_dlp_block(ctx):
         return ("Not assessed",
                 "Purview audit is not connected, so DLP outcomes for AI destinations "
                 "are unknown.", [])
-    leaked = [v for v in ctx["estate"]["vendors"]
-              if v.get("sensitive_types") and not v.get("blocked")]
+    leaked = [v for v in ctx["estate"]["vendors"] if v.get("sensitive_allowed", 0) > 0]
+    unknown = [v for v in ctx["estate"]["vendors"]
+               if v.get("sensitive_unknown", 0) > 0
+               or (v.get("sensitive_types") and "sensitive_allowed" not in v)]
+    if not leaked and unknown:
+        return NOT_ASSESSED, "Sensitive events lack an established transfer/DLP outcome.", []
     st, vtx = verdict(leaked,
-                      "1 AI vendor received sensitive data with nothing blocking it.",
-                      "{n} AI vendors received sensitive data with nothing blocking it.",
-                      "Sensitive data reaching AI is being blocked by DLP.")
-    return st, vtx, [(v["vendor"], f'{v.get("interactions", 0)} interactions · 0 blocked')
+                      "1 AI vendor has an observed allowed sensitive-data transfer.",
+                      "{n} AI vendors have observed allowed sensitive-data transfers.",
+                      "No allowed sensitive-data transfer was observed; this does not prove policy coverage.")
+    return st, vtx, [(v["vendor"], f'{v["sensitive_allowed"]} allowed sensitive event(s)')
                      for v in leaked]
 
 
@@ -353,11 +366,11 @@ def t_agent_inventory(ctx):
 
 
 def t_signin_visibility(ctx):
-    unavailable = [a for a in shadow(ctx) if not (a.get("usage") or {}).get("available")]
+    unavailable = [a for a in shadow(ctx) if not usage_complete(a, 30)]
     if unavailable:
         return ("Not assessed",
-                "Sign-in logs are unavailable — real usage needs Entra ID P1. Consent "
-                "counts are not usage.", [])
+                "Complete 30-day sign-in evidence is unavailable. Check permissions, Entra ID P1, "
+                "query failures, row limits and the selected window. Consent counts are not usage.", [])
     return ("Passed",
             "Sign-in activity is available, so consent can be told apart from actual use.",
             [])
@@ -511,16 +524,14 @@ TESTS = [
      "and an owner on every credential that remains.",
      [("Workload identity federation", "https://learn.microsoft.com/entra/workload-id/workload-identity-federation")]),
 
-    ("AISPM-2001", "Sensitive data reaching AI is blocked by DLP",
+    ("AISPM-2001", "No allowed sensitive-data transfers are observed",
      P_DATA, "High", "Medium", "High", "Purview audit", t_dlp_block,
-     ["Knowing that labelled data reached an AI vendor is a finding. Knowing that nothing "
-      "stopped it is the finding that matters — it is the difference between a policy that "
-      "exists and a policy that works.",
-      "The test pairs Purview's record of what reached each AI destination with whether a "
-      "DLP policy blocked it. A vendor that received sensitive content with zero blocks "
-      "fails; a vendor whose traffic was blocked is scored at zero risk on purpose."],
-     "Extend DLP policies to cover generative AI destinations, then re-run. A block that "
-     "appears here is the cheapest evidence that the control is live.",
+     ["The test requires sensitivity evidence and an allowed transfer in the same audit "
+      "event. A blocked sensitive event and a separate non-sensitive upload are not a leak.",
+      "Every collected event is considered, not just the display sample. Unknown transfer "
+      "outcomes remain Not assessed. No observed transfer does not prove DLP policy coverage."],
+     "Review each observed allowed sensitive transfer and its destination. Evaluate DLP "
+     "policy coverage separately; audit events alone do not establish prevention for all AI traffic.",
      [("DLP for generative AI", "https://learn.microsoft.com/purview/dlp-learn-about-dlp")]),
 
     ("AISPM-2002", "What sensitive data reaches AI is known",
@@ -631,13 +642,13 @@ TESTS = [
      "there is no user to migrate and no workflow to redesign.",
      []),
 
-    ("AISPM-4002", "Every consented application has actually been used",
+    ("AISPM-4002", "Consented applications have observed use in the retained window",
      P_SURF, "Low", "Low", "Low", "AuditLog.Read.All", t_never_used,
-     ["A consented application that has never been signed in to is often a trial somebody "
-      "authorised and abandoned. The grant outlives the interest in the product.",
-      "The test looks for applications with no recorded sign-in at all, delegated or "
-      "service principal."],
-     "Revoke these grants. If the tool is later needed, consenting again takes a minute.",
+     ["No successful sign-in in the retained window is a review signal, not proof an "
+      "application has never been used. Standard Graph sign-in retention is at most 30 days.",
+      "The test requires complete successful interactive, non-interactive and service-principal "
+      "sign-in collection. Failed authentication is not use."],
+     "Review business purpose and retention limits before removing apparently unused grants.",
      []),
 
     ("AISPM-4003", "No high-risk AI application has a large consent footprint",
@@ -725,11 +736,22 @@ def run(apps, estate=None, health=None, changes=None, now=None) -> list:
             status, verdict_text, assets = fn(ctx)
         except Exception as exc:                    # one bad test must not blank the page
             status, verdict_text, assets = SKIPPED, "This test could not run: %s" % exc, []
+        dependencies = {
+            "AISPM-2001": ("purview_audit",), "AISPM-2002": ("purview_audit",),
+            "AISPM-2003": ("defender_cloud_apps",), "AISPM-2004": ("defender_cloud_apps",),
+            "AISPM-5002": ("agent365", "entra_agent_id"),
+        }.get(tid, ())
+        incomplete = any((ctx["health"].get(source) or {}).get("status") != "CONNECTED"
+                         for source in dependencies)
+        if incomplete and status in (PASSED, FAILED):
+            if status == PASSED:
+                status = NOT_ASSESSED
+            verdict_text += " Source coverage is incomplete; no complete-coverage claim is made."
         out.append({"id": tid, "name": name, "pillar": pillar, "risk": risk,
                     "impact": impact, "effort": effort, "requirement": req,
                     "status": status, "verdict": verdict_text, "assets": assets,
                     "checked": checked, "recommendation": recommendation,
-                    "actions": actions})
+                    "actions": actions, "evidence_complete": not incomplete})
     out.sort(key=lambda t: (STATUS_ORDER[t["status"]], RISK_ORDER[t["risk"]], t["name"]))
     return out
 
@@ -747,4 +769,5 @@ def summary(results) -> dict:
     return {"total": len(results), "by_status": by_status, "by_pillar": by_pillar,
             "failed_high": sum(1 for t in results
                                if t["status"] == FAILED and t["risk"] == "High"),
-            "assessable": by_status.get(PASSED, 0) + by_status.get(FAILED, 0)}
+            "assessable": sum(t["status"] in (PASSED, FAILED)
+                              and t.get("evidence_complete", True) for t in results)}

@@ -32,7 +32,7 @@ def test_run_connectors_end_to_end(monkeypatch):
     from connectors.base import Source
 
     class _FG:
-        def get_all(self, path, params=None, max_items=None):
+        def get_all(self, path, params=None, max_items=None, headers=None):
             if path == "/copilot/admin/catalog/packages":
                 return [{"id": "p1", "displayName": "Finance Assistant",
                          "applicationId": "APP-1", "publisher": "Contoso"}]
@@ -50,4 +50,31 @@ def test_run_connectors_end_to_end(monkeypatch):
     assert result is not None
     assert result["counts"]["raw"] == 1
     assert "profiles" in result and "portfolio" in result
-    assert result["health"]["agent365"]["status"] == "CONNECTED"
+    assert result["health"]["agent365"]["status"] == "PARTIALLY_CONNECTED"
+
+
+def test_synthetic_tenant_uses_documented_shapes_and_explicit_sample_clock(monkeypatch):
+    import connectors_report
+    import portal
+    import scoring
+    from scripts.make_sample import build_fleet
+    from scripts.sample_tenant import NOW, SampleGraph
+    for flag in ("ENABLE_AGENT365", "ENABLE_ENTRA_AGENT_ID", "ENABLE_DEFENDER_CLOUD_APPS",
+                 "ENABLE_PREVIEW_CONNECTORS", "ENABLE_PURVIEW_AUDIT"):
+        monkeypatch.setenv(flag, "true")
+    monkeypatch.delenv("PURVIEW_DSPM_IMPORT_PATH", raising=False)
+    graph = SampleGraph()
+    result = pipeline.run_connectors(graph, now=NOW)
+    assert result["health"]["defender_cloud_apps"]["status"] == "CONNECTED"
+    assert result["coverage"]["purview_audit"]["checkpoint_status"] == "DISABLED_NO_VERIFIED_TENANT"
+    section = connectors_report.assessment(result, now=NOW)["sensitive_interactions"]
+    assert len(section["records"]) == len(graph.records)
+    assert section["event_metrics"]["window_30d"]["sensitive_allowed_count"] > 0
+    assert section["event_metrics"]["window_30d"]["sensitive_blocked_count"] > 0
+    mdca = next(a["mdca"] for a in result["assets"] if a.get("mdca"))
+    assert mdca["devices"] is None
+    assert mdca["traffic_bytes"] == mdca["uploaded_bytes"] + mdca["downloaded_bytes"]
+    estate = portal.build_estate(scoring.score_all(build_fleet()), result, now=NOW)
+    assert sum({"oauth", "web"} <= set(v["evidence"]) for v in estate["vendors"]) >= 9
+    assert all(a["agent365"]["detail_status"] == "COLLECTED"
+               for a in result["assets"] if a.get("agent365"))

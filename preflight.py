@@ -8,6 +8,7 @@ against a real endpoint, and the result says which of the two it was and what to
 
 Nothing here writes, and every probe is capped at one item.
 """
+import json
 import os
 
 from graph_client import GraphError
@@ -16,12 +17,16 @@ OK = "OK"
 DENIED = "PERMISSION_MISSING"
 UNAVAILABLE = "NOT_AVAILABLE"
 FAILED = "ERROR"
+NOT_TESTED = "NOT_TESTED"
+LICENSE_MISSING = "LICENSE_MISSING"
 
 _STATUS_NOTE = {
-    OK: "readable",
+    OK: "probe endpoint readable; full collection is not verified",
     DENIED: "the identity lacks this permission",
-    UNAVAILABLE: "not provisioned or licensed in this tenant",
+    UNAVAILABLE: "endpoint unavailable; this alone does not establish license status",
     FAILED: "the call failed",
+    NOT_TESTED: "not tested: no service principal available to sample",
+    LICENSE_MISSING: "Graph explicitly reported a licensing prerequisite",
 }
 
 # (key, label, path, permission, beta, what it powers, required, graph scopes that satisfy it)
@@ -38,6 +43,16 @@ PROBES = [
      "Directory.Read.All", False,
      "which permissions users consented to, and the risk score", True,
      ["Directory.Read.All"]),
+    ("app_role_assignments", "Application role grants",
+     "/servicePrincipals/{service_principal_id}/appRoleAssignments",
+     "Application.Read.All or Directory.Read.All", False,
+     "application permissions on a sampled service principal", False,
+     ["Application.Read.All", "Directory.Read.All"]),
+    ("service_principal_owners", "Application owners",
+     "/servicePrincipals/{service_principal_id}/owners",
+     "Application.Read.All or Directory.Read.All", False,
+     "owner relationship access on a sampled service principal", False,
+     ["Application.Read.All", "Directory.Read.All"]),
     ("signin_logs", "Sign-in logs", "/auditLogs/signIns",
      "AuditLog.Read.All + Entra ID P1", False,
      "real usage: active users, unused apps, activity trend", False,
@@ -46,27 +61,38 @@ PROBES = [
      "Directory.Read.All", False, "privileged-role context on owners", False,
      ["Directory.Read.All"]),
     ("agent365", "Agent 365 catalog", "/copilot/admin/catalog/packages",
-     "CopilotPackages.Read.All + Microsoft 365 Copilot", False,
+     "CopilotPackages.Read.All + Microsoft Agent 365", False,
      "registered Copilot agent packages", False,
      ["CopilotPackages.Read.All"]),
     ("entra_agent_id", "Entra Agent ID", "/servicePrincipals/microsoft.graph.agentIdentity",
-     "Application.Read.All + Directory.Read.All", False,
-     "agent identities: owners, sponsors, permissions", False,
-     ["Application.Read.All", "Directory.Read.All"]),
+     "AgentIdentity.Read.All", False,
+     "agent identity inventory only; sponsors and enrichment are not verified", False,
+     ["AgentIdentity.Read.All"]),
+    ("entra_agent_blueprints", "Entra Agent blueprints",
+     "/applications/microsoft.graph.agentIdentityBlueprint",
+     "AgentIdentityBlueprint.Read.All", False,
+     "agent identity blueprint inventory", False,
+     ["AgentIdentityBlueprint.Read.All"]),
     ("defender_cloud_apps", "Defender for Cloud Apps",
      "/security/dataDiscovery/cloudAppDiscovery/uploadedStreams",
      "CloudApp-Discovery.Read.All + Defender for Cloud Apps", True,
-     "Shadow AI web usage: traffic, users, devices", False,
+     "discovery stream listing only; beta access and ingested traffic are required", False,
      ["CloudApp-Discovery.Read.All"]),
     ("purview_audit", "Purview Audit", "/security/auditLog/queries",
      "AuditLogsQuery.Read.All + Purview Audit turned on", False,
-     "sensitive AI interactions, blocked vs allowed", False,
+     "query listing only; POST query and GET records require a successful audit query", False,
      ["AuditLogsQuery.Read.All"]),
 ]
 
 
 def _probe(graph, path, beta):
     try:
+        if "{service_principal_id}" in path:
+            sample = graph.get_all("/servicePrincipals", {"$top": "1", "$select": "id"},
+                                   max_items=1)
+            if not sample or not sample[0].get("id"):
+                return NOT_TESTED, "No service principal available for a relationship probe."
+            path = path.replace("{service_principal_id}", sample[0]["id"])
         graph.get_all(path, {"$top": "1"}, max_items=1, beta=beta)
         return OK, ""
     except GraphError as e:
@@ -81,9 +107,15 @@ def _probe(graph, path, beta):
                 e = retry
             except Exception:
                 return FAILED, "retry without a page size also failed"
+        try:
+            code = json.loads(e.body).get("error", {}).get("code", "")
+        except (ValueError, TypeError, AttributeError):
+            code = ""
+        if code == "Authentication_RequestFromNonPremiumTenantOrB2CTenant":
+            return LICENSE_MISSING, e.body
         if e.is_permission:
             return DENIED, e.body
-        if e.is_missing:
+        if e.status in (404, 501):
             return UNAVAILABLE, e.body
         return FAILED, e.body
     except Exception as e:                      # a fake client, or something unforeseen
@@ -91,7 +123,7 @@ def _probe(graph, path, beta):
         low = text.lower()
         if "403" in low or "401" in low or "forbidden" in low:
             return DENIED, text[:300]
-        if "404" in low or "400" in low or "not found" in low:
+        if "404" in low or "not found" in low:
             return UNAVAILABLE, text[:300]
         return FAILED, text[:300]
 
@@ -114,10 +146,10 @@ def run(graph, held_scopes: set[str] | None = None, token_kind: str = "unknown")
     rows = []
     for key, label, path, permission, beta, powers, required, scopes in PROBES:
         status, detail = _probe(graph, path, beta)
-        satisfied = any(s.lower() in held for s in scopes) if held else None
+        satisfied = any(s.lower() in held for s in scopes) if held_scopes is not None else None
         note = _STATUS_NOTE[status]
         if status == DENIED and satisfied is False:
-            note = NOT_IN_TOKEN
+            note = NOT_IN_TOKEN if token_kind == "delegated" else "the application token lacks this role"
         rows.append({"key": key, "label": label, "path": path, "permission": permission,
                      "powers": powers, "required": required, "scopes": scopes,
                      "status": status, "detail": detail, "note": note,
@@ -143,20 +175,22 @@ def blocking(rows) -> list[dict]:
 
 def connector_flags(rows) -> dict[str, bool]:
     """
-    Which connectors this identity can actually feed — used to switch them on
-    automatically instead of asking the operator to guess at env vars.
+    Enable collection attempts after successful discovery probes, not a guarantee
+    that every downstream endpoint, query, enrichment or data source is readable.
     """
     by_key = {r["key"]: r["status"] == OK for r in rows}
     return {
         "ENABLE_AGENT365": by_key.get("agent365", False),
-        "ENABLE_ENTRA_AGENT_ID": by_key.get("entra_agent_id", False),
+        "ENABLE_ENTRA_AGENT_ID": (by_key.get("entra_agent_id", False)
+                                  or by_key.get("entra_agent_blueprints", False)),
         "ENABLE_DEFENDER_CLOUD_APPS": by_key.get("defender_cloud_apps", False),
         "ENABLE_PREVIEW_CONNECTORS": by_key.get("defender_cloud_apps", False),
         "ENABLE_PURVIEW_AUDIT": by_key.get("purview_audit", False),
     }
 
 
-_ICON = {OK: "  OK  ", DENIED: "DENIED", UNAVAILABLE: " N/A  ", FAILED: " FAIL "}
+_ICON = {OK: "  OK  ", DENIED: "DENIED", UNAVAILABLE: " N/A  ", FAILED: " FAIL ",
+         NOT_TESTED: "UNTEST", LICENSE_MISSING: "LICENSE"}
 
 
 def _remedy_text() -> str:
@@ -185,8 +219,9 @@ below. Being a Global Administrator does not change this; the limit is on the cl
 application, not on you.
 
 Two ways to get them, both using APPLICATION permissions instead. Both need a role that
-can GRANT application permissions — Privileged Role Administrator, Cloud Application
-Administrator or Global Administrator. Global Reader is read-only and cannot do either;
+can GRANT Microsoft Graph application permissions — Privileged Role Administrator,
+Global Administrator or an appropriately scoped custom role. Cloud Application
+Administrator is not sufficient. Global Reader is read-only and cannot do either;
 if that is you, an admin runs step 1 once and hands you the three values.
 
 
@@ -236,6 +271,8 @@ def format_text(rows) -> str:
             lines.append(f"Ready to scan. {len(degraded)} optional source(s) unavailable — "
                          "those sections will say so rather than appear empty.")
         else:
-            lines.append("Ready to scan. Every source is readable.")
+            lines.append("Ready to scan. Discovery probes passed; full source access is not verified.")
+    lines.append("Read-only probes do not execute Purview audit queries or verify MDCA ingestion, "
+                 "agent sponsors, or every application's enrichment.")
     lines.append("")
     return "\n".join(lines)

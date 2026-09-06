@@ -18,7 +18,7 @@ class FakeGraph:
         self._fail = fail                # stream list error
         self._stream_fail = stream_fail  # make this stream_id's agg call fail
 
-    def get_all(self, path, params=None, max_items=None):
+    def get_all(self, path, params=None, max_items=None, headers=None):
         if path.endswith("/uploadedStreams"):
             if self._fail:
                 raise RuntimeError(self._fail)
@@ -192,3 +192,34 @@ def test_users_and_transactions_survive_a_renamed_field():
     m = _one({"distinctUserCount": 486, "totalTransactions": 570})
     assert m["users"] == 486
     assert m["transactions"] == 570
+
+
+def test_documented_enum_and_network_traffic_fields(monkeypatch):
+    _enable(monkeypatch)
+    app = {
+        "id": "12345", "displayName": "New uncatalogued AI", "category": "generativeAi",
+        "domains": ["new-ai.example"], "tags": ["Unsanctioned"], "riskScore": 3,
+        "uploadNetworkTrafficInBytes": 1024, "downloadNetworkTrafficInBytes": 2048,
+        "userCount": 3, "transactionCount": 20, "ipAddressCount": 5,
+        "lastSeenDateTime": "2026-09-01T00:00:00Z",
+    }
+
+    class Graph:
+        def get_all(self, path, params=None, headers=None):
+            if path.endswith("/uploadedStreams"):
+                return [{"id": "stream", "displayName": "Endpoint"}]
+            assert headers == {"Prefer": "include-unknown-enum-members"}
+            return [app]
+
+    assets = DefenderCloudAppsCollector(Graph()).safe_run()
+    mdca = assets[0]["mdca"]
+    assert mdca["uploaded_bytes"] == 1024 and mdca["traffic_bytes"] == 3072
+    assert mdca["devices"] is None and mdca["vendor"] is None
+    assert mdca["field_status"]["devices"] == "NOT_EXPOSED_BY_API"
+    assert metrics(assets)["total_ai_apps"] == 1
+
+
+def test_new_ai_category_members_do_not_need_catalog_name_match():
+    collector = DefenderCloudAppsCollector()
+    for category in ("generativeAi", "aiModelProvider", "clientAiApp", "mcpServer"):
+        assert collector._is_ai(category, "New product", "new.example")

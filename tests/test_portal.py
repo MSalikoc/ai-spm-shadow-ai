@@ -40,6 +40,41 @@ def _assessment(web=(), packages=(), identities=(), interactions=()):
     }
 
 
+def test_all_interactions_are_correlated_by_app_identity_not_display_sample():
+    app = dict(_oauth("Internal assistant", "ChatGPT"), app_id="actual-client-id")
+    data = _assessment(interactions=[])
+    data["sensitive_interactions"]["records"] = [
+        {"app_id": "actual-client-id", "app_host": "Office",
+         "sensitivity_label_ids": ["confidential"], "sits": [],
+         "direction": "TO_AI", "is_shared": True, "in_window_30d": True} for _ in range(30)]
+    row = portal.build_estate([app], data)["vendors"][0]
+    assert row["interactions"] == 30
+    assert row["sensitive_allowed"] == 30
+    assert row["sensitivity_label_ids"] == {"confidential"}
+
+
+def test_unrelated_upload_is_not_sensitive_sharing():
+    data = _assessment(interactions=[
+        {"app_host": "ChatGPT", "direction": "BLOCKED", "sits": ["SSN"]},
+        {"app_host": "ChatGPT", "direction": "ALLOWED", "sits": []},
+        {"app_host": "ChatGPT", "direction": "UNKNOWN", "sits": ["SSN"]}])
+    row = portal.build_estate([_oauth("ChatGPT")], data)["vendors"][0]
+    assert row["sensitive_allowed"] == 0
+    assert row["sensitive_blocked"] == 1
+    assert row["sensitive_unknown"] == 1
+    assert not any("were allowed through" in reason for reason in row["reasons"])
+
+
+def test_historical_import_does_not_become_current_vendor_exposure():
+    data = _assessment()
+    data["sensitive_interactions"]["records"] = [{
+        "app_host": "ChatGPT", "sits": ["SSN"], "is_shared": True,
+        "direction": "ALLOWED", "in_window_30d": False}]
+    row = portal.build_estate([_oauth("ChatGPT")], data)["vendors"][0]
+    assert row["interactions"] == 0
+    assert row["sensitive_allowed"] == 0
+
+
 def _web(name, users=100, uploaded=0, risk=5, sanctioned="unreviewed"):
     return {"display_name": name, "users": users, "uploaded_bytes": uploaded,
             "downloaded_bytes": 0, "traffic_bytes": uploaded, "risk_score": risk,

@@ -9,9 +9,10 @@
       "Workload": "Copilot",
       "CopilotEventData": {
         "AppHost": "Microsoft Teams",
-        "SensitivityLabelId": "label-confidential",
-        "Contexts": [
-          {"Id": "https://contoso.sharepoint.com/finance/Q3.xlsx", "Type": "File", "Name": "Q3.xlsx"}
+        "Contexts": [{"Id": "conversation-1", "Type": "TeamsChat"}],
+        "AccessedResources": [
+          {"Id": "https://contoso.sharepoint.com/finance/Q3.xlsx", "Type": "File", "Name": "Q3.xlsx",
+           "SensitivityLabelId": "label-confidential", "Action": "Read"}
         ]
       },
       "PolicyDetails": [
@@ -49,7 +50,8 @@
       "Operation": "CopilotInteraction",
       "CopilotEventData": {
         "AppHost": "Microsoft Teams",
-        "Contexts": [{"Id": "doc-2", "Type": "File", "Name": "notes.docx"}]
+        "Contexts": [{"Id": "chat-context", "Type": "TeamsChat"}],
+        "AccessedResources": [{"Id": "doc-2", "Type": "File", "Name": "notes.docx", "Action": "Read"}]
       }
     }
   }

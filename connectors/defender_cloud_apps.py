@@ -31,6 +31,7 @@ _DEFAULT_CATALOG = os.path.join(os.path.dirname(__file__), "catalogs", "ai_appli
 class DefenderCloudAppsCollector(BaseCollector):
     name = "defender_cloud_apps"
     source = Source.DEFENDER_CLOUD_APPS
+    required_read_roles = ("CloudApp-Discovery.Read.All",)
 
     def __init__(self, graph=None, period="P30D", catalog_path=None):
         super().__init__()
@@ -54,7 +55,7 @@ class DefenderCloudAppsCollector(BaseCollector):
         except (OSError, ValueError):
             cat = {}
         self._catalog = {
-            "categories": {c.strip().lower() for c in cat.get("ai_categories", [])},
+            "categories": {c.strip().lower().replace(" ", "") for c in cat.get("ai_categories", [])},
             "names": {a.get("name", "").strip().lower()
                       for a in cat.get("applications", []) if a.get("name")},
             "domains": {d.strip().lower() for a in cat.get("applications", [])
@@ -64,7 +65,7 @@ class DefenderCloudAppsCollector(BaseCollector):
 
     def _is_ai(self, category, name, domain) -> bool:
         cat = self._load_catalog()
-        if (category or "").strip().lower() in cat["categories"] and cat["categories"]:
+        if (category or "").strip().lower().replace(" ", "") in cat["categories"]:
             return True
         if (name or "").strip().lower() in cat["names"]:
             return True
@@ -92,7 +93,7 @@ class DefenderCloudAppsCollector(BaseCollector):
                 continue
             url = f"{_STREAMS}/{sid}/aggregatedAppsDetails(period=duration'{self._period}')"
             try:
-                apps = self._graph.get_all(url)
+                apps = self._graph.get_all(url, headers={"Prefer": "include-unknown-enum-members"})
             except RuntimeError as e:
                 # If one stream fails, let the others continue → connector PARTIAL.
                 self._status = ConnectorStatus.PARTIALLY_CONNECTED
@@ -134,7 +135,7 @@ class DefenderCloudAppsCollector(BaseCollector):
                     "mdca_id": mdca_id, "name": name, "domain": domain,
                     "category": category, "vendor": app.get("publisher") or app.get("vendor"),
                     "risk_score": m["risk_score"], "sanctioned_state": self._sanction(app),
-                    "users": 0, "devices": 0, "ips": 0, "transactions": 0,
+                    "users": 0, "devices": None, "ips": 0, "transactions": 0,
                     "uploaded_bytes": 0, "downloaded_bytes": 0, "traffic_bytes": 0,
                     "streams": set(),
                     "first_seen": m["first_seen"], "last_seen": m["last_seen"],
@@ -142,7 +143,8 @@ class DefenderCloudAppsCollector(BaseCollector):
             # users/IPs/devices can't be deduped across different streams → conservative
             # max; traffic/transactions are additive → sum. (see known correlation gaps)
             agg["users"] = max(agg["users"], m["users"])
-            agg["devices"] = max(agg["devices"], m["devices"])
+            if m["devices"] is not None:
+                agg["devices"] = max(agg["devices"] or 0, m["devices"])
             agg["ips"] = max(agg["ips"], m["ips"])
             agg["transactions"] += m["transactions"]
             agg["uploaded_bytes"] += m["uploaded_bytes"]
@@ -173,6 +175,10 @@ class DefenderCloudAppsCollector(BaseCollector):
             "mdca_app_id": a["mdca_id"],
             "category": a["category"],
             "vendor": a.get("vendor"),
+            "field_status": {
+                "devices": "NOT_EXPOSED_BY_API" if a["devices"] is None else "COLLECTED",
+                "vendor": "NOT_EXPOSED_BY_API" if a.get("vendor") is None else "COLLECTED",
+            },
             "risk_score": a["risk_score"],
             "sanctioned_state": a["sanctioned_state"],
             "users": a["users"],
@@ -288,11 +294,12 @@ class DefenderCloudAppsCollector(BaseCollector):
         downloaded = num("downloadedBytes", "downloadedVolume", "dataDownloaded",
                          "bytesDownloaded") \
             or cls._num_field(app, ("download",), exclude=("upload",))
+        device_values = [v for k, v in app.items() if "device" in k.lower()
+                         and isinstance(v, (int, float)) and not isinstance(v, bool)]
         return {
             "users": num("userCount", "usersCount", "distinctUsers", "distinctUsersCount")
                      or cls._num_field(app, ("user",)),
-            "devices": num("deviceCount", "devicesCount", "distinctDevices")
-                       or cls._num_field(app, ("device",)),
+            "devices": int(device_values[0]) if device_values else None,
             "ips": num("ipAddressCount", "ipCount", "distinctIpAddresses")
                    or cls._num_field(app, ("ipaddress", "ipcount")),
             "transactions": num("transactionCount", "transactionsCount", "requestCount")
@@ -302,7 +309,7 @@ class DefenderCloudAppsCollector(BaseCollector):
             # Total traffic is reported separately by MDCA; keep it when upload and
             # download are not broken out, so the dashboard is not left with nothing.
             "traffic_bytes": cls._num_field(app, ("traffic", "totalvolume"),
-                                            exclude=("upload", "download")),
+                                            exclude=("upload", "download")) or uploaded + downloaded,
             "risk_score": rs,
             "first_seen": app.get("firstSeenDateTime") or app.get("firstSeen"),
             "last_seen": app.get("lastSeenDateTime") or app.get("lastSeen"),

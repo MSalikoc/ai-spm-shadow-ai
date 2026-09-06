@@ -24,7 +24,8 @@ class FakeSession:
         self.calls = []
 
     def request(self, method, url, headers=None, params=None, json=None, timeout=None):
-        self.calls.append({"method": method, "url": url, "params": params, "json": json})
+        self.calls.append({"method": method, "url": url, "params": params, "json": json,
+                           "headers": headers})
         if not self._responses:
             return FakeResponse(200, {"value": []})
         nxt = self._responses.pop(0)
@@ -62,6 +63,22 @@ def test_missing_feature_is_distinguishable_from_missing_permission():
 def test_get_still_swallows_errors_for_callers_that_want_a_dict():
     client, _ = _client([FakeResponse(403, text="nope")])
     assert client.get("/servicePrincipals/x") == {}
+
+
+def test_collection_headers_are_retained_on_next_pages():
+    client, session = _client([
+        FakeResponse(body={"value": [{"id": "a"}],
+                           "@odata.nextLink": "https://graph.microsoft.com/beta/apps?skip=1"}),
+        FakeResponse(body={"value": [{"id": "b"}]})])
+    assert len(client.get_all("/apps", headers={"Prefer": "include-unknown-enum-members"})) == 2
+    assert all(c["headers"]["Prefer"] == "include-unknown-enum-members" for c in session.calls)
+    assert all(c["headers"]["Authorization"] == "Bearer tok" for c in session.calls)
+
+
+def test_malformed_collection_cannot_be_an_empty_inventory():
+    client, _ = _client([FakeResponse(body={"unexpected": []})])
+    with pytest.raises(GraphError):
+        client.get_all("/servicePrincipals")
 
 
 # --- retries are bounded ---------------------------------------------------
@@ -177,3 +194,37 @@ def test_exhausted_time_budget_stops_instead_of_running_past_the_deadline(monkey
     with pytest.raises(GraphError):
         client.get_all("/servicePrincipals")
     assert session.calls == []
+
+
+def test_denied_batch_collection_is_not_empty_success():
+    client, _ = _client([FakeResponse(200, {"responses": [
+        {"id": "sp", "status": 403, "body": {"error": {"code": "Denied"}}}]})])
+    with pytest.raises(GraphError) as error:
+        client.batch_collection([{"id": "sp", "url": "/servicePrincipals/sp/appRoleAssignments"}])
+    assert error.value.status == 403
+
+
+def test_failed_batch_continuation_is_not_partial_success():
+    client, _ = _client([FakeResponse(200, {"responses": [
+        {"id": "sp", "status": 200, "body": {"value": [{"id": "first"}],
+         "@odata.nextLink": "https://graph.microsoft.com/v1.0/next"}}]}),
+        FakeResponse(403, text="continuation denied")])
+    with pytest.raises(GraphError):
+        client.batch_collection([{"id": "sp", "url": "/servicePrincipals/sp/owners"}])
+
+
+def test_batch_throttled_item_retries_individually():
+    client, _ = _client([FakeResponse(200, {"responses": [
+        {"id": "sp", "status": 429, "body": {}}]}),
+        FakeResponse(200, {"value": [{"id": "retry"}]})])
+    assert client.batch_collection([{"id": "sp", "url": "/items"}]) == {"sp": [{"id": "retry"}]}
+
+
+def test_budget_expiration_during_paging_never_returns_truncated_inventory(monkeypatch):
+    client, _ = _client([FakeResponse(200, {
+        "value": [{"id": "first"}], "@odata.nextLink": "https://graph.microsoft.com/v1.0/next"})],
+        deadline=5)
+    clock = iter([0, 10])
+    monkeypatch.setattr(graph_client.time, "monotonic", lambda: next(clock))
+    with pytest.raises(GraphError, match="before collection completed"):
+        client.get_all("/servicePrincipals")

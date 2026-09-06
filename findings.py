@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 import storage
 from config import FINDING_STATUSES as STATUSES
 from scoring import _scope_weight
+from collectors import usage_complete
 
 OPEN_STATUSES = {"Open", "Assigned", "In Progress", "Pending Review", "Reopened"}
 CLOSED_STATUSES = {"Resolved", "Accepted", "False Positive"}
@@ -73,7 +74,8 @@ RULES = [
      "High-risk application that hasn't been used in the last 30 days — pure attack surface.",
      "Usage", "Medium", "P2", "Remove access / delete the application if not needed.",
      "No business value but the permission risk persists.",
-     lambda a, now: (a.get("usage") or {}).get("inactive_30d") and a.get("risk_score", 0) >= 50),
+     lambda a, now: usage_complete(a, 30) and (a.get("usage") or {}).get("inactive_30d")
+     and a.get("risk_score", 0) >= 50),
 
     ("lifecycle-review-overdue", "Lifecycle review overdue",
      "The application's scheduled review date has passed.",
@@ -86,7 +88,7 @@ RULES = [
      "Governance", "High", "P1", "Technically cut off access (remove consent / disable).",
      "Policy violation — a blocked app is being used.",
      lambda a, now: (a.get("lifecycle") or {}).get("status") == "Blocked"
-     and (a.get("usage") or {}).get("active_users_30d", 0) > 0),
+     and usage_complete(a, 30) and ((a.get("usage") or {}).get("active_users_30d") or 0) > 0),
 ]
 
 
@@ -98,10 +100,7 @@ def generate(apps, now):
         if not aid:
             continue
         for key, title, desc, cat, sev, prio, action, impact, applies in RULES:
-            try:
-                if not applies(app, now):
-                    continue
-            except Exception:
+            if not applies(app, now):
                 continue
             fid = f"finding-{aid}-{key}"
             out[fid] = {
@@ -146,8 +145,13 @@ def process(apps, now=None):
             rec["closed_date"] = None
 
     # Open findings no longer seen → auto-Resolved
+    current_apps = {a.get("app_id") or a.get("sp_id"): a for a in apps}
     for fid, rec in store.items():
         if fid not in gen and rec.get("status") in OPEN_STATUSES:
+            app = current_apps.get(rec.get("asset_id"))
+            if (app is not None and rec.get("rule_key") in
+                    ("unused-high-risk", "blocked-still-active") and not usage_complete(app, 30)):
+                continue
             rec["history"].append({"timestamp": now.isoformat(), "field": "status",
                                    "from": rec["status"], "to": "Resolved"})
             rec["status"] = "Resolved"

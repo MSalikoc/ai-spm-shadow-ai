@@ -7,9 +7,9 @@
         "displayName": "Finance Agent Identity",
         "accountEnabled": true,
         "createdDateTime": "2026-06-01T00:00:00Z",
-        "servicePrincipalType": "Application",
+        "servicePrincipalType": "ServiceIdentity",
         "signInAudience": "AzureADMyOrg",
-        "blueprintId": "BP-1",
+        "agentIdentityBlueprintId": "APP-BP-FIN",
         "appOwnerOrganizationId": "TENANT-1"
       },
       "owners": [
@@ -41,7 +41,7 @@
         "displayName": "Orphan Agent Identity",
         "accountEnabled": false,
         "createdDateTime": "2026-07-10T00:00:00Z",
-        "servicePrincipalType": "Application",
+        "servicePrincipalType": "ServiceIdentity",
         "signInAudience": "AzureADMyOrg",
         "blueprintId": null
       },

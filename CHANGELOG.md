@@ -6,6 +6,27 @@ All notable changes to AI-SPM are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **Evidence integrity and permission-contract hardening.** Core batch/pagination
+  failures can no longer become a clean permission scan; optional collection failures
+  remain explicit. Consented scope includes non-Graph API grants. Publisher verification
+  requires a verified publisher ID. Successful interactive/non-interactive and app-only
+  sign-ins are bounded to Graph retention, with incomplete and 90-day metrics unavailable.
+  Unknown owner collection does not generate false owner-removal drift.
+- **Microsoft connector contracts corrected.** Agent 365 reads nested package definitions
+  and excludes non-agent packages. Entra Agent ID joins blueprint client IDs and treats
+  unavailable owners/sponsors as unknown. Defender recognises Graph AI category enums and
+  preserves unknown metrics. Purview retains resource sensitivity and application identity,
+  resumes tenant-scoped audit queries, and attributes sensitive transfers per event.
+- **Verified permission setup.** Setup scripts check native exit codes, verify idempotent
+  role assignments before creating credentials, and include specialised Agent ID read
+  roles. Sponsor write access is never granted automatically. Preflight distinguishes
+  endpoint access from full collection, licensing and ingestion readiness.
+- **Visual AI security landing dashboard.** Observed inventory KPIs, exposure gauge,
+  risk distribution and five-pillar control outcome charts are visible before the
+  executive decision queue. All values use scan evidence; unrated inventory and
+  unknown/skipped controls remain explicit. Empty inventory shows unmeasured posture,
+  and generated samples are labelled synthetic. Coverage and scan comparison remain
+  separate from risk scores and workflow status.
 - **Live, accessible decision review.** The deployed HTTPS assessment now loads and
   saves same-origin workflow state without a scan, with labels, modal keyboard
   containment, history, saving/error feedback, and explicit read-only static copies.

@@ -110,39 +110,31 @@ def _is_third_party(sp: dict, home_tenant: str) -> bool:
     return True
 
 
-def _consented_sp_ids(graph) -> set[str]:
+def _consented_sp_ids(graph, sps) -> tuple[set[str], dict[str, list]]:
     """
-    Every SP that holds a real grant, from two bulk calls rather than one per app:
-    the tenant's delegated grants, and everything assigned an app role on Microsoft
-    Graph (which is where essentially all app-only permission lives).
+    Include grants to every API, not only Microsoft Graph. A failed scope lookup must
+    stop discovery rather than turn missing inventory into apparent removals.
     """
     ids: set[str] = set()
-    try:
-        for g in graph.get_all("/oauth2PermissionGrants", {"$top": "999"}):
-            if g.get("clientId"):
-                ids.add(g["clientId"])
-    except Exception:
-        logging.exception("scope: could not list oauth2PermissionGrants")
-    try:
-        sps = graph.get_all("/servicePrincipals",
-                            {"$filter": f"appId eq '{MS_GRAPH_APP_ID}'", "$select": "id"})
-        if sps:
-            for a in graph.get_all(f"/servicePrincipals/{sps[0]['id']}/appRoleAssignedTo",
-                                   {"$top": "999"}):
-                if a.get("principalId") and a.get("appRoleId") != ZERO_GUID:
-                    ids.add(a["principalId"])
-    except Exception:
-        logging.exception("scope: could not list Graph appRoleAssignedTo")
-    return ids
+    for g in graph.get_all("/oauth2PermissionGrants", {"$top": "999"}):
+        if g.get("clientId"):
+            ids.add(g["clientId"])
+    candidates = [{"sp_id": sp["id"]} for sp in sps
+                  if sp.get("appOwnerOrganizationId") not in MICROSOFT_OWNER_TENANTS]
+    assignments = _batched_collection(
+        graph, candidates, lambda app: f"/servicePrincipals/{app['sp_id']}/appRoleAssignments?$top=100")
+    ids.update(sp_id for sp_id, roles in assignments.items()
+               if any(role.get("appRoleId") and role["appRoleId"] != ZERO_GUID for role in roles))
+    return ids, assignments
 
 
 def collect_service_principals(graph, home_tenant: str) -> list[dict]:
     select = ("id,appId,displayName,appOwnerOrganizationId,publisherName,"
               "verifiedPublisher,servicePrincipalType,homepage,tags,accountEnabled")
-    sps = graph.get_all("/servicePrincipals", {"$select": select, "$top": "999"})
+    sps = graph.get_all("/servicePrincipals", {"$select": select, "$top": "100"})
 
     scope = scan_scope()
-    consented = _consented_sp_ids(graph) if scope == "consented" else set()
+    consented, assignments = _consented_sp_ids(graph, sps) if scope == "consented" else (set(), {})
 
     out = []
     for sp in sps:
@@ -167,7 +159,7 @@ def collect_service_principals(graph, home_tenant: str) -> list[dict]:
             "app_id": sp.get("appId"),
             "display_name": sp.get("displayName"),
             "publisher": sp.get("publisherName") or "—",
-            "verified_publisher": bool(sp.get("verifiedPublisher")),
+            "verified_publisher": bool((sp.get("verifiedPublisher") or {}).get("verifiedPublisherId")),
             "owner_tenant": owner,
             "third_party": third_party,
             "first_party_microsoft": first_party_ms,
@@ -185,6 +177,8 @@ def collect_service_principals(graph, home_tenant: str) -> list[dict]:
             "application_permissions": [],   # [{resource, permission, permission_id}]
             "has_app_only_access": False,    # can it access without a user (app-only)
         })
+        if sp["id"] in assignments:
+            out[-1]["_app_role_assignments"] = assignments[sp["id"]]
     logging.info("discovery: %s of %s service principals kept (scope=%s, ai_match=%s)",
                  len(out), len(sps), scope, sum(1 for a in out if a["ai_match"]))
     return out
@@ -206,8 +200,9 @@ class _ResourceResolver:
         with self._lock:
             hit = self._cache.get(resource_id)
         if hit is None:
-            obj = self._graph.get(f"/servicePrincipals/{resource_id}",
-                                   {"$select": "displayName,appRoles"}) or {}
+            getter = getattr(self._graph, "get_checked", None) or self._graph.get
+            obj = getter(f"/servicePrincipals/{resource_id}",
+                         {"$select": "displayName,appRoles"}) or {}
             roles = {r.get("id"): (r.get("value") or r.get("displayName"))
                      for r in obj.get("appRoles", []) if r.get("id")}
             hit = {"name": obj.get("displayName") or fallback_name or "Unknown API",
@@ -270,9 +265,11 @@ def enrich_with_app_role_assignments(graph, discovered: list[dict]) -> None:
     of one, which is what keeps a several-hundred-app tenant inside the scan budget.
     """
     resolver = _ResourceResolver(graph)
-    assignments = _batched_collection(
-        graph, discovered,
-        lambda app: f"/servicePrincipals/{app['sp_id']}/appRoleAssignments?$top=999")
+    assignments = {app["sp_id"]: app.pop("_app_role_assignments") for app in discovered
+                   if "_app_role_assignments" in app}
+    assignments.update(_batched_collection(
+        graph, [app for app in discovered if app["sp_id"] not in assignments],
+        lambda app: f"/servicePrincipals/{app['sp_id']}/appRoleAssignments?$top=100"))
 
     for app in discovered:
         perms: list[dict] = []
@@ -303,10 +300,9 @@ def _batched_collection(graph, discovered, url_for) -> dict[str, list]:
     out: dict[str, list] = {}
 
     def _one(item):
-        try:
-            out[item["id"]] = graph.get_all(item["url"].split("?")[0], {"$top": "999"}) or []
-        except Exception:
-            out[item["id"]] = []
+        from urllib.parse import parse_qsl
+        path, _, query = item["url"].partition("?")
+        out[item["id"]] = graph.get_all(path, dict(parse_qsl(query))) or []
 
     with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as ex:
         list(ex.map(_one, spec))
@@ -324,12 +320,23 @@ def _parse_dt(s):
 
 
 def activity_days() -> int:
-    """Sign-in history window. 90 keeps the 90-day metric meaningful; lower it on very
-    large tenants where the log query is the slowest part of the scan."""
+    """Graph sign-in retention is at most 30 days for standard P1/P2 access."""
     try:
-        return max(7, min(int(os.environ.get("AISPM_ACTIVITY_DAYS", "90")), 90))
+        return max(7, min(int(os.environ.get("AISPM_ACTIVITY_DAYS", "30")), 30))
     except ValueError:
-        return 90
+        return 30
+
+
+def usage_complete(app, days=0):
+    usage = app.get("usage") or {}
+    return bool(usage.get("available") and usage.get("window_days", 30) >= days)
+
+
+def core_health(apps):
+    incomplete = sum(bool(a.get("collection_errors")) or not usage_complete(a) for a in apps)
+    return {"status": "PARTIALLY_CONNECTED" if incomplete else "CONNECTED",
+            "count": len(apps), "incomplete_records": incomplete,
+            "detail": f"{incomplete} records with incomplete ownership, inventory or activity evidence"}
 
 
 _APPID_CHUNK = 15          # appId filters per sign-in query (Graph filter length limit)
@@ -341,10 +348,12 @@ def _signin_filter(app_ids, iso_from, sp_events=False) -> str:
     flt = f"({clause}) and createdDateTime ge {iso_from}"
     if sp_events:
         flt += " and signInEventTypes/any(t:t eq 'servicePrincipal')"
+    else:
+        flt += " and signInEventTypes/any(t:t eq 'interactiveUser' or t eq 'nonInteractiveUser')"
     return flt
 
 
-def _pull_signins(graph, app_ids, iso_from, sp_events=False) -> list[dict]:
+def _pull_signins(graph, app_ids, iso_from, sp_events=False) -> tuple[list[dict], list[str]]:
     """
     Pulls sign-in records for many apps at once.
 
@@ -353,35 +362,33 @@ def _pull_signins(graph, app_ids, iso_from, sp_events=False) -> list[dict]:
     the reason large tenants timed out. Chunking the appId filter cuts it to a couple of
     queries per 15 apps, and the rows are grouped by appId in memory afterwards.
 
-    The service-principal pass goes to BETA. `signInEventTypes` does not exist on the
-    v1.0 signIn resource — v1.0 only exposes `isInteractive` — so filtering on it there
-    returns 400 BadRequest, silently costing every app-only application its last-used
-    date and making it look unused. That filter was wrong against v1.0 all along; it
-    just failed inside a bare except.
+    Both passes use beta to explicitly include non-interactive user and service-principal
+    events. The v1.0 default user list alone is not complete usage evidence.
     """
     rows: list[dict] = []
-    failed_chunks = 0
-    first_error = ""
+    errors = []
     for i in range(0, len(app_ids), _APPID_CHUNK):
         chunk = app_ids[i:i + _APPID_CHUNK]
         remaining = _SIGNIN_CAP - len(rows)
         if remaining <= 0:
             logging.warning("sign-in pull hit the %s row cap; metrics are partial", _SIGNIN_CAP)
+            errors.append("Sign-in row cap reached")
             break
         try:
             rows.extend(graph.get_all(
                 "/auditLogs/signIns",
                 {"$filter": _signin_filter(chunk, iso_from, sp_events), "$top": "999"},
-                max_items=remaining, beta=sp_events))
+                max_items=remaining, beta=True))
+            if len(rows) >= _SIGNIN_CAP:
+                errors.append("Sign-in row cap reached; full coverage cannot be established")
         except Exception as e:
             # One concise line for the whole pass rather than a traceback per chunk:
             # a tenant without P1 would otherwise print twenty stack traces.
-            failed_chunks += 1
-            first_error = first_error or str(e)[:200]
-    if failed_chunks:
-        logging.warning("sign-in pull (%s pass): %s chunk(s) failed, metrics are partial — %s",
-                        "service principal" if sp_events else "user", failed_chunks, first_error)
-    return rows
+            errors.append(str(e)[:200])
+    if errors:
+        logging.warning("sign-in pull (%s pass) incomplete: %s",
+                        "service principal" if sp_events else "user", "; ".join(errors))
+    return rows, errors
 
 
 def _group_by_app(rows: list[dict]) -> dict[str, list[dict]]:
@@ -393,19 +400,28 @@ def _group_by_app(rows: list[dict]) -> dict[str, list[dict]]:
     return by_app
 
 
-def _usage_from_rows(app, user_si, sp_si, now):
+def _usage_from_rows(app, user_si, sp_si, now, *, window_days=30, errors=None):
     """Builds one app's usage metrics from its already-fetched sign-in rows."""
-    w7, w30, w90 = now - timedelta(days=7), now - timedelta(days=30), now - timedelta(days=90)
+    w7, w30 = now - timedelta(days=7), now - timedelta(days=30)
     prev7_lo, prev7_hi = now - timedelta(days=14), now - timedelta(days=7)
-    u7, u30, u90, uprev7 = set(), set(), set(), set()
+    u7, u30, uprev7 = set(), set(), set()
     users_all, ips, countries = set(), set(), set()
     ok30 = fail30 = 0
     last_deleg = None
     daily = {}  # day-index(0..29) → set(user)
+    window_start = now - timedelta(days=window_days)
 
     for s in user_si:
         dt = _parse_dt(s.get("createdDateTime"))
-        if not dt:
+        if not dt or dt.tzinfo is None or not window_start <= dt <= now:
+            continue
+        successful = (s.get("status") or {}).get("errorCode") == 0
+        if dt >= w30:
+            if successful:
+                ok30 += 1
+            else:
+                fail30 += 1
+        if not successful:
             continue
         uid = s.get("userId") or s.get("userPrincipalName") or ""
         last_deleg = dt if last_deleg is None or dt > last_deleg else last_deleg
@@ -415,8 +431,6 @@ def _usage_from_rows(app, user_si, sp_si, now):
                 u7.add(uid)
             if dt >= w30:
                 u30.add(uid)
-            if dt >= w90:
-                u90.add(uid)
             if prev7_lo <= dt < prev7_hi:
                 uprev7.add(uid)
             didx = (now.date() - dt.date()).days
@@ -427,27 +441,30 @@ def _usage_from_rows(app, user_si, sp_si, now):
         country = (s.get("location") or {}).get("countryOrRegion")
         if country:
             countries.add(country)
-        if dt >= w30:
-            if (s.get("status") or {}).get("errorCode", 0) == 0:
-                ok30 += 1
-            else:
-                fail30 += 1
 
     last_sp = None
     for s in sp_si:
         dt = _parse_dt(s.get("createdDateTime"))
-        if dt and (last_sp is None or dt > last_sp):
+        if (dt and dt.tzinfo is not None and window_start <= dt <= now
+                and (s.get("status") or {}).get("errorCode") == 0
+                and (last_sp is None or dt > last_sp)):
             last_sp = dt
 
     last_used = max([d for d in (last_deleg, last_sp) if d], default=None)
     daily_active = [len(daily.get(i, set())) for i in range(30)]
 
     return {
-        "available": True,
+        "available": not errors,
+        "collection_status": "partial" if errors else "complete",
+        "collection_errors": errors or [],
+        "window_days": window_days,
+        "window_start": window_start.isoformat(),
+        "window_end": now.isoformat(),
+        "retention_note": "Graph retained window only; absence is not lifetime non-use.",
         "consent_user_count": app.get("user_count", 0),
         "active_users_7d": len(u7),
-        "active_users_30d": len(u30),
-        "active_users_90d": len(u90),
+        "active_users_30d": len(u30) if window_days >= 30 and not errors else None,
+        "active_users_90d": None,
         "last_delegated_signin": last_deleg.isoformat() if last_deleg else None,
         "last_service_principal_signin": last_sp.isoformat() if last_sp else None,
         "successful_signins_30d": ok30,
@@ -456,10 +473,12 @@ def _usage_from_rows(app, user_si, sp_si, now):
         "unique_ip_count": len(ips),
         "country_count": len(countries),
         "last_used_date": last_used.isoformat() if last_used else None,
-        "never_used": last_used is None,
-        "inactive_30d": last_used is None or last_used < w30,
-        "inactive_90d": last_used is None or last_used < w90,
-        "growth_7d": len(u7) - len(uprev7),
+        "never_used": False if last_used else None,
+        "no_signins_observed": last_used is None if not errors else None,
+        "inactive_30d": (last_used is None or last_used < w30)
+                       if not errors and window_days >= 30 else None,
+        "inactive_90d": None,
+        "growth_7d": len(u7) - len(uprev7) if window_days >= 14 and not errors else None,
         "daily_active_30d": daily_active,
     }
 
@@ -474,16 +493,30 @@ def enrich_with_ownership(graph, discovered) -> None:
     Application owner (the local application object) doesn't exist for most third-party
     multi-tenant apps; so application_owners stays empty.
     """
-    owners_by_sp = _batched_collection(
-        graph, discovered,
-        lambda app: (f"/servicePrincipals/{app['sp_id']}/owners"
-                     "?$select=id,displayName,userPrincipalName&$top=999"))
+    try:
+        owners_by_sp = _batched_collection(
+            graph, discovered,
+            lambda app: (f"/servicePrincipals/{app['sp_id']}/owners"
+                         "?$select=id,displayName,userPrincipalName&$top=100"))
+    except Exception as exc:
+        logging.warning("Owner collection unavailable: %s", exc)
+        owners_by_sp = {}
+        for app in discovered:
+            app.setdefault("collection_errors", {})["owners"] = str(exc)[:200]
 
     def _enrich(app):
-        obj = graph.get(
+        getter = getattr(graph, "get_checked", None) or graph.get
+        try:
+            obj = getter(
             f"/servicePrincipals/{app['sp_id']}",
             {"$select": "accountEnabled,publisherName,homepage,tags,notes,description,"
                         "servicePrincipalType,keyCredentials,passwordCredentials"}) or {}
+            if "keyCredentials" not in obj or "passwordCredentials" not in obj:
+                raise ValueError("Credential metadata absent from selected service principal")
+        except Exception as exc:
+            logging.warning("Inventory metadata unavailable for %s: %s", app["sp_id"], exc)
+            app.setdefault("collection_errors", {})["inventory"] = str(exc)[:200]
+            obj = {}
         creds = (obj.get("keyCredentials") or []) + (obj.get("passwordCredentials") or [])
         expiries = sorted(c["endDateTime"] for c in creds if c.get("endDateTime"))
         sp_owners = [{"id": o.get("id"),
@@ -498,7 +531,7 @@ def enrich_with_ownership(graph, discovered) -> None:
             "tags": obj.get("tags") or [],
             "description": obj.get("description") or obj.get("notes") or "",
             "sp_type": obj.get("servicePrincipalType"),
-            "credential_count": len(creds),
+            "credential_count": len(creds) if obj else None,
             "credential_next_expiry": expiries[0] if expiries else None,
         }
 
@@ -519,13 +552,15 @@ def enrich_with_signin_activity(graph, discovered, now=None):
     try:  # probe accessibility first
         graph.get_all("/auditLogs/signIns", {"$top": "1"}, max_items=1)
     except Exception:
+        logging.exception("Sign-in accessibility probe failed")
         for app in discovered:
             app["usage"] = None
         return
 
     app_ids = [a["app_id"] for a in discovered if a.get("app_id")]
-    user_by_app = _group_by_app(_pull_signins(graph, app_ids, iso_from))
-    sp_by_app = _group_by_app(_pull_signins(graph, app_ids, iso_from, sp_events=True))
+    user_rows, user_errors = _pull_signins(graph, app_ids, iso_from)
+    sp_rows, sp_errors = _pull_signins(graph, app_ids, iso_from, sp_events=True)
+    user_by_app, sp_by_app = _group_by_app(user_rows), _group_by_app(sp_rows)
 
     for app in discovered:
         aid = app.get("app_id")
@@ -534,7 +569,9 @@ def enrich_with_signin_activity(graph, discovered, now=None):
             continue
         try:
             app["usage"] = _usage_from_rows(app, user_by_app.get(aid, []),
-                                            sp_by_app.get(aid, []), now)
+                                            sp_by_app.get(aid, []), now,
+                                            window_days=activity_days(),
+                                            errors=user_errors + sp_errors)
         except Exception:
             logging.exception("usage computation failed for %s", aid)
             app["usage"] = None

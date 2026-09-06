@@ -2,6 +2,7 @@
 Shared scan pipeline — called by both the CLI (main.py) and the Azure Function
 (function_app.py). A single "run" function: discovery → permission mapping → scoring.
 """
+import logging
 import os
 
 import collectors
@@ -19,7 +20,7 @@ def connectors_enabled() -> bool:
     return bool(os.environ.get("PURVIEW_DSPM_IMPORT_PATH"))
 
 
-def run_connectors(graph) -> dict | None:
+def run_connectors(graph, tenant_id=None, *, now=None) -> dict | None:
     """
     Runs the unified AI+agent connector framework (Steps 1-6) in the live pipeline.
     Returns None if the env flag is off (does NOT affect the existing Entra/Graph scan).
@@ -29,8 +30,8 @@ def run_connectors(graph) -> dict | None:
     if not connectors_enabled():
         return None
     import connectors as C
-    result = C.registry.run(C.default_collectors(graph))
-    profiles = C.sensitive_data.build_app_profiles(result["assets"])
+    result = C.registry.run(C.default_collectors(graph, tenant_id=tenant_id))
+    profiles = C.sensitive_data.build_app_profiles(result["assets"], now=now)
     result["profiles"] = profiles
     result["portfolio"] = C.sensitive_data.portfolio_summary(profiles)
     return result
@@ -43,13 +44,16 @@ def run(graph, tenant_id: str) -> list[dict]:
     collectors.enrich_with_app_role_assignments(graph, discovered)  # application (app-only)
     try:
         collectors.enrich_with_ownership(graph, discovered)        # technical owner + inventory
-    except Exception:
-        pass
+    except Exception as exc:
+        logging.exception("Ownership collection failed")
+        for app in discovered:
+            app.setdefault("collection_errors", {})["inventory"] = str(exc)[:200]
     try:
         collectors.enrich_with_signin_activity(graph, discovered)  # real usage (P1)
     except Exception:
+        logging.exception("Sign-in collection failed")
         for a in discovered:                                       # criterion 10: continue uninterrupted
-            a.setdefault("usage", None)
+            a["usage"] = None
 
     scored = scoring.score_all(discovered)
     try:  # apply persistent business/lifecycle metadata (manual data isn't lost)

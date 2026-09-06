@@ -6,6 +6,7 @@ view to every app that actually holds a grant, which is what makes an unknown AI
 visible instead of silently dropped.
 """
 import collectors
+import pytest
 
 HOME = "home-tenant"
 GRAPH_SP = "graph-sp-id"
@@ -45,6 +46,8 @@ class ScopeGraph:
             return self._grants
         if path == f"/servicePrincipals/{GRAPH_SP}/appRoleAssignedTo":
             return self._roles
+        if path.endswith("/appRoleAssignments"):
+            return [role for role in self._roles if role["principalId"] == path.split("/")[2]]
         return []
 
     def get(self, path, params=None):
@@ -108,15 +111,30 @@ def test_unrecognised_scope_falls_back_to_the_safe_default(monkeypatch):
     assert collectors.scan_scope() == "ai"
 
 
-def test_scope_lookup_survives_a_failing_bulk_call(monkeypatch):
-    """A denied appRoleAssignedTo must not sink the whole discovery step."""
+def test_scope_lookup_fails_explicitly_instead_of_publishing_incomplete_inventory(monkeypatch):
     monkeypatch.setenv("AISPM_SCAN_SCOPE", "consented")
 
     class Broken(ScopeGraph):
         def get_all(self, path, params=None, max_items=None):
-            if "appRoleAssignedTo" in path:
+            if "appRoleAssignments" in path:
                 raise RuntimeError("Graph 403 Authorization_RequestDenied")
             return super().get_all(path, params, max_items)
 
-    found = collectors.collect_service_principals(Broken(grant_clients=["sp-unknown"]), HOME)
-    assert _names(found) == {"ChatGPT Enterprise", "Zephyr Workspace"}
+    with pytest.raises(RuntimeError, match="403"):
+        collectors.collect_service_principals(Broken(grant_clients=["sp-unknown"]), HOME)
+
+
+def test_consented_scope_includes_non_graph_application_permissions(monkeypatch):
+    monkeypatch.setenv("AISPM_SCAN_SCOPE", "consented")
+    graph = ScopeGraph(app_role_principals=["sp-unknown"])
+    graph._roles[0]["resourceId"] = "custom-api-not-graph"
+    found = collectors.collect_service_principals(graph, HOME)
+    assert "Zephyr Workspace" in _names(found)
+
+
+def test_null_publisher_object_is_not_verification():
+    class PublisherGraph(ScopeGraph):
+        def get_all(self, *args, **kwargs):
+            return [{**SPS[0], "verifiedPublisher": {
+                "displayName": None, "verifiedPublisherId": None, "addedDateTime": None}}]
+    assert not collectors.collect_service_principals(PublisherGraph(), HOME)[0]["verified_publisher"]

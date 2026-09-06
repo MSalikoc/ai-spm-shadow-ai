@@ -82,7 +82,8 @@ class GraphClient:
                 pass
         return min(2 ** attempt, 32) * (0.5 + random.random() / 2)
 
-    def _request(self, method: str, url: str, *, params=None, json_body=None) -> requests.Response:
+    def _request(self, method: str, url: str, *, params=None, json_body=None,
+                 headers=None) -> requests.Response:
         """One HTTP call with bounded retry on 429/5xx/transport failure."""
         last: Exception | None = None
         for attempt in range(self._max_retries):
@@ -90,10 +91,10 @@ class GraphClient:
                 raise GraphError(0, url, "Graph time budget exhausted")
             try:
                 self._count("requests")
-                headers = dict(self._headers)
+                request_headers = {**self._headers, **(headers or {})}
                 if json_body is not None:
-                    headers["Content-Type"] = "application/json"
-                resp = self._session.request(method, url, headers=headers, params=params,
+                    request_headers["Content-Type"] = "application/json"
+                resp = self._session.request(method, url, headers=request_headers, params=params,
                                              json=json_body, timeout=self._timeout)
             except requests.RequestException as e:
                 last = e
@@ -123,25 +124,27 @@ class GraphClient:
 
     # --- public API --------------------------------------------------------
     def get_all(self, path: str, params: dict | None = None,
-                max_items: int | None = None, beta: bool = False) -> list[dict]:
+                max_items: int | None = None, beta: bool = False,
+                headers: dict | None = None) -> list[dict]:
         """Follows @odata.nextLink until exhausted. `max_items` caps the result."""
         url = self._abs(path, beta)
         items: list[dict] = []
         first = True
         while url:
-            resp = self._request("GET", url, params=params if first else None)
+            resp = self._request("GET", url, params=params if first else None, headers=headers)
             first = False
             if resp.status_code >= 400:
                 self._count("errors")
                 raise GraphError(resp.status_code, url, resp.text)
             body = resp.json()
-            items.extend(body.get("value", []))
+            if not isinstance(body, dict) or not isinstance(body.get("value"), list):
+                raise GraphError(0, url, "Invalid collection response: expected a value array")
+            items.extend(body["value"])
             if max_items is not None and len(items) >= max_items:
                 return items[:max_items]
             url = body.get("@odata.nextLink")
             if url and self._out_of_time():
-                logging.warning("Graph paging stopped early (time budget) at %s items", len(items))
-                break
+                raise GraphError(0, url, "Graph time budget exhausted before collection completed")
         return items
 
     def get(self, path: str, params: dict | None = None, beta: bool = False) -> dict:
@@ -151,18 +154,20 @@ class GraphClient:
         except GraphError:
             return {}
 
-    def get_checked(self, path: str, params: dict | None = None, beta: bool = False) -> dict:
+    def get_checked(self, path: str, params: dict | None = None, beta: bool = False,
+                    headers: dict | None = None) -> dict:
         """Single-object GET that raises `GraphError` instead of hiding the failure."""
         url = self._abs(path, beta)
-        resp = self._request("GET", url, params=params)
+        resp = self._request("GET", url, params=params, headers=headers)
         if resp.status_code >= 400:
             self._count("errors")
             raise GraphError(resp.status_code, url, resp.text)
         return resp.json() if resp.text else {}
 
-    def post(self, path: str, body: dict, beta: bool = False) -> dict:
+    def post(self, path: str, body: dict, beta: bool = False,
+             headers: dict | None = None) -> dict:
         url = self._abs(path, beta)
-        resp = self._request("POST", url, json_body=body)
+        resp = self._request("POST", url, json_body=body, headers=headers)
         if resp.status_code >= 400:
             self._count("errors")
             raise GraphError(resp.status_code, url, resp.text)
@@ -219,15 +224,22 @@ class GraphClient:
         """
         raw = self.batch(requests_spec, beta=beta)
         out: dict[str, list] = {}
+        urls = {str(r["id"]): r["url"] for r in requests_spec}
         for rid, rep in raw.items():
+            status = rep.get("status", 0)
+            if status == 429 or status >= 500:
+                out[rid] = self.get_all(urls[rid], beta=beta)
+                continue
+            if not 200 <= status < 300:
+                self._count("errors")
+                raise GraphError(status, urls[rid], json.dumps(rep.get("body") or {}))
             body = rep.get("body") or {}
-            items = list(body.get("value", []) or [])
+            if not isinstance(body.get("value"), list):
+                raise GraphError(0, urls[rid], "Invalid batch collection response")
+            items = list(body["value"])
             nxt = body.get("@odata.nextLink")
             if nxt:
-                try:
-                    items.extend(self.get_all(nxt))
-                except GraphError:
-                    pass
+                items.extend(self.get_all(nxt, beta=beta))
             out[rid] = items
         return out
 

@@ -69,6 +69,7 @@ def _graph_and_scopes(args):
     scopes, kind = auth.token_scopes(token)
     client = GraphClient(token)
     client.identity = auth.identity_from_token(token)
+    client.tenant_id = auth.decode_token_claims(token).get("tid")
     return client, tenant, scopes, kind
 
 
@@ -170,7 +171,7 @@ def cmd_scan(args) -> int:
     if args.connectors and pipeline.connectors_enabled():
         print("Correlating Microsoft AI data sources...", flush=True)
         try:
-            connectors_result = pipeline.run_connectors(graph)
+            connectors_result = pipeline.run_connectors(graph, tenant_id=graph.tenant_id)
         except Exception as e:
             print(f"  ! AI data sources step failed, continuing: {e}")
 
@@ -303,7 +304,7 @@ def build_parser() -> argparse.ArgumentParser:
                       help="which applications to assess: "
                            + " | ".join(f"{k} = {v}" for k, v in _SCOPE_HELP.items()))
     scan.add_argument("--activity-days", type=int,
-                      help="sign-in history window, 7-90 (default 90; lower is faster)")
+                      help="sign-in history window, 7-30 (default 30; longer requests are capped to Graph retention)")
     scan.add_argument("--no-connectors", dest="connectors", action="store_false",
                       help="skip the Microsoft AI data sources step")
     scan.add_argument("--open", action="store_true", help="open the dashboard when done")

@@ -30,8 +30,8 @@ Zero Trust Assessment tool:
   - Overview   : hero (tenant/KPI/finding donut) + flow diagrams (for Shadow AI and Agent
                  Identity) + the top 5 highest-scored items estate-wide.
   - Agents     : Agent 365 packages + Entra Agent Identities (assessment table).
-  - Shadow AI  : apps discovered by Defender/MDCA (with user/device/IP COUNTS —
-                 individual identity lists are not in the API, see known_gaps).
+  - Shadow AI  : apps discovered by Defender/MDCA (user/IP counts; device count remains
+                 unknown unless supplied by the source, see known_gaps).
   - Sensitive Data: sensitive data exposure table + Purview interaction log.
   - Findings   : findings.
   - Gaps       : known gaps / API limitations.
@@ -50,20 +50,16 @@ from connectors.base import ConnectorStatus
 from connectors.defender_cloud_apps import metrics as mdca_metrics
 from connectors.entra_agent_id import metrics as entra_agent_metrics
 from connectors.purview_audit import metrics as purview_metrics
+from connectors.sensitive_data import attributed_interactions
 from report import CSS
 
 _CONNECTOR_INFO = {
     "agent365": ("Microsoft Agent 365", "CopilotPackages.Read.All"),
-    "entra_agent_id": ("Microsoft Entra Agent ID", "Application.Read.All + Directory.Read.All"),
+    "entra_agent_id": ("Microsoft Entra Agent ID",
+                       "AgentIdentity.Read.All + AgentIdentityBlueprint.Read.All + "
+                       "Application.Read.All + Directory.Read.All; sponsor reads are optional"),
     "defender_cloud_apps": ("Defender for Cloud Apps (Shadow AI)", "CloudApp-Discovery.Read.All"),
     "purview_audit": ("Microsoft Purview Audit", "AuditLogsQuery.Read.All"),
-    # NOTE: "purview_dspm_import" is deliberately NOT here — it isn't shown in the
-    # dashboard's coverage list. It isn't a real connector, it's a file-path-based
-    # manual import adapter (see connectors/purview_dspm_import.py): on its own it
-    # always shows NOT_CONFIGURED and can't be enabled by itself (requires a Kudu file
-    # upload), so it's hidden here to avoid confusion. The `PURVIEW_DSPM_IMPORT_PATH`
-    # env var still works — it remains usable silently for advanced users, it just
-    # doesn't appear as a row in the coverage/gaps list.
 }
 
 _SOURCE_LABEL = {
@@ -134,7 +130,8 @@ def assessment(result: dict, now=None) -> dict:
         "agent_identities": _agent_identities(identities, entra_agent_metrics(assets)),
         "agent365_packages": _agent365_section(agent365, agent365_metrics(assets)),
         "shadow_ai_usage": _shadow_ai(ai_apps, mdca_metrics(assets)),
-        "sensitive_interactions": _sensitive_interactions(interactions, purview_metrics(assets)),
+        "sensitive_interactions": _sensitive_interactions(
+            attributed_interactions(assets, now), purview_metrics(assets)),
         "findings": _findings(profiles),
         "direction_analysis": _direction_analysis(profiles),
         "correlation_quality": _correlation_quality(assets),
@@ -155,7 +152,10 @@ def _executive(portfolio, health):
 
 def _coverage_section(coverage, health):
     rows = []
-    for name, (label, perm) in _CONNECTOR_INFO.items():
+    sources = dict(_CONNECTOR_INFO)
+    if health.get("purview_dspm_import", {}).get("status", ConnectorStatus.NOT_CONFIGURED) != ConnectorStatus.NOT_CONFIGURED:
+        sources["purview_dspm_import"] = ("Purview DSPM export", "Local file import; export access is separate")
+    for name, (label, perm) in sources.items():
         h = health.get(name, {})
         rows.append({
             "name": name, "label": label, "permission": perm,
@@ -176,10 +176,13 @@ def _agent_identities(identities, m):
     rows = [{
         "display_name": a.get("display_name"),
         "enabled": (a.get("agent_identity") or {}).get("account_enabled"),
-        "owners": [o.get("upn") or o.get("display_name")
-                   for o in (a.get("agent_identity") or {}).get("owners", [])],
-        "sponsors": [s.get("upn") or s.get("display_name")
-                     for s in (a.get("agent_identity") or {}).get("sponsors", [])],
+        "owners": [o.get("upn") or o.get("display_name") or o.get("id") or "Unknown principal"
+                   for o in ((a.get("agent_identity") or {}).get("owners") or [])],
+        "sponsors": [s.get("upn") or s.get("display_name") or s.get("id") or "Unknown principal"
+                     for s in ((a.get("agent_identity") or {}).get("sponsors") or [])],
+        "owners_known": (a.get("agent_identity") or {}).get("owners") is not None,
+        "sponsors_known": (a.get("agent_identity") or {}).get("sponsors") is not None,
+        "collection_status": (a.get("agent_identity") or {}).get("collection_status") or {},
         "app_only_perms": len((a.get("agent_identity") or {}).get("application_permissions", [])),
         "delegated_perms": len((a.get("agent_identity") or {}).get("delegated_permissions", [])),
         "app_only_perm_names": [p.get("resource_display_name") or p.get("resource_id") or "—"
@@ -199,7 +202,10 @@ def _agent365_section(agents, m):
     rows = [{
         "display_name": a.get("display_name"),
         "build_type": (a.get("agent365") or {}).get("build_type"),
+        "publisher": (a.get("agent365") or {}).get("publisher"),
         "blocked": (a.get("agent365") or {}).get("blocked"),
+        "is_agent": (a.get("agent365") or {}).get("is_agent", True),
+        "detail_status": (a.get("agent365") or {}).get("detail_status", "COLLECTED"),
         "available_to": (a.get("agent365") or {}).get("available_to"),
         "deployed_to": (a.get("agent365") or {}).get("deployed_to"),
         "entra_app_id": (a.get("external_ids") or {}).get("entra_app_id"),
@@ -212,15 +218,17 @@ def _agent365_section(agents, m):
 def _shadow_ai(apps, m):
     rows = sorted([{
         "display_name": a.get("display_name"),
-        "vendor": (a.get("mdca") or {}).get("vendor") or a.get("publisher") or "",
+        "vendor": (a.get("mdca") or {}).get("vendor") or a.get("publisher") or None,
         "category": (a.get("mdca") or {}).get("category") or "",
         "sanctioned_state": (a.get("mdca") or {}).get("sanctioned_state"),
         "users": (a.get("mdca") or {}).get("users", 0),
-        "devices": (a.get("mdca") or {}).get("devices", 0),
+        "devices": (a.get("mdca") or {}).get("devices"),
         "ip_addresses": (a.get("mdca") or {}).get("ip_addresses", 0),
         "transactions": (a.get("mdca") or {}).get("transactions", 0),
         "uploaded_bytes": (a.get("mdca") or {}).get("uploaded_bytes", 0),
         "downloaded_bytes": (a.get("mdca") or {}).get("downloaded_bytes", 0),
+        "traffic_bytes": (a.get("mdca") or {}).get("traffic_bytes"),
+        "field_status": (a.get("mdca") or {}).get("field_status") or {},
         "risk_score": (a.get("mdca") or {}).get("risk_score"),
         "data_sensitivity": (a.get("mdca") or {}).get("data_sensitivity"),
         "last_seen": a.get("last_seen"),
@@ -229,13 +237,27 @@ def _shadow_ai(apps, m):
 
 
 def _sensitive_interactions(interactions, m):
-    return {"metrics": m, "sample": [{
-        "user": (i.get("interaction") or {}).get("user"),
-        "app_host": (i.get("interaction") or {}).get("app_host"),
-        "direction": (i.get("interaction") or {}).get("direction"),
-        "sits": [s.get("name") for s in (i.get("interaction") or {}).get("sensitive_info_types", [])],
-        "timestamp": (i.get("interaction") or {}).get("timestamp"),
-    } for i in interactions[:25]]}
+    def counts(records):
+        sensitive = [r for r in records if r["is_sensitive"]]
+        return {
+            "total_records": len(records), "sensitive_count": len(sensitive),
+            "sensitive_blocked_count": sum(r["is_blocked"] for r in sensitive),
+            "sensitive_unblocked_count": sum(r["is_unblocked"] for r in sensitive),
+            "sensitive_unknown_outcome_count": sum(r["block_status"] == "UNKNOWN" for r in sensitive),
+            "sensitive_shared_count": sum(r["is_shared"] for r in sensitive),
+            "sensitive_allowed_count": sum(r["transfer_allowed"] is True for r in sensitive),
+            "sensitive_unknown_count": sum(r["transfer_allowed"] is None for r in sensitive),
+        }
+    return {
+        "schema_version": 2,
+        "metrics": m,
+        "audit_metrics": m,
+        "event_metrics": {**counts(interactions),
+                          "window_30d": counts([r for r in interactions if r["in_window_30d"]])},
+        "records": interactions,
+        "sample": interactions[:25],
+        "sample_truncated": len(interactions) > 25,
+    }
 
 
 def _findings(profiles):
@@ -297,6 +319,7 @@ def _agent_detail(identities, blueprints):
             "account_enabled": ai.get("account_enabled"),
             "owners": ai.get("owners", []),
             "sponsors": ai.get("sponsors", []),
+            "collection_status": ai.get("collection_status") or {},
             "application_permissions": ai.get("application_permissions", []),
             "delegated_permissions": ai.get("delegated_permissions", []),
             "group_memberships": ai.get("group_memberships", []),
@@ -322,7 +345,7 @@ def _users_and_groups(profiles, identities):
     groups_without_owner = [
         {"display_name": a.get("display_name"),
          "groups": [g.get("display_name") for g in (a.get("agent_identity") or {}).get("group_memberships", [])]}
-        for a in identities if not (a.get("agent_identity") or {}).get("owners")
+        for a in identities if (a.get("agent_identity") or {}).get("owners") == []
         and (a.get("agent_identity") or {}).get("group_memberships")
     ]
     return {"top_affected_users": top_users, "identities_without_owner_but_in_groups": groups_without_owner}
@@ -342,10 +365,14 @@ def _known_gaps(coverage):
                "correlation, data_sensitivity stays UNDETERMINED_REQUIRES_PURVIEW.")
     gaps.append("agent_blueprint_id is NOT a merge token (relate-not-merge); multiple identities "
                "derived from the same blueprint remain separate assets.")
-    gaps.append("Defender for Cloud Apps (aggregatedAppsDetails) only returns user/device/IP "
-               "COUNTS — individual user/device/IP identity is NOT in this API; so the "
-               "'which user/device' question can only be answered via Purview interactions "
-               "(which carry real user identity).")
+    gaps.append("The MDCA aggregatedAppsDetails response contains user/IP counts, not individual "
+               "user/device/IP identity. Device count is not in the documented response and remains "
+               "unknown when absent. Separate MDCA users/ipAddresses endpoints exist but are not collected.")
+    gaps.append("Entra sponsor collection is opt-in; unavailable owner/sponsor data is unknown, not absent.")
+    if coverage.get("purview_dspm_import", {}).get("status", ConnectorStatus.NOT_CONFIGURED) != ConnectorStatus.NOT_CONFIGURED:
+        gaps.append("DSPM data comes from a separately produced export, not a live query; verify its freshness and pagination.")
+    gaps.append("Purview interactions include complete event-level evidence in records; sample is presentation-only. "
+               "Unknown direction is not proof of delivery, sharing, or successful DLP enforcement.")
     return gaps
 
 
@@ -716,6 +743,11 @@ def _agent365_items(packages):
             remediation.append("Verify the reason for blocking with the publisher/responsible team; don't remove it unless necessary.")
         else:
             remediation.append("No further action needed; review periodically.")
+        if p.get("detail_status") == "UNAVAILABLE" or p.get("is_agent") is None:
+            status_label, status_c = "Unknown", _SEV["info"]
+            result_line = "Package detail or agent classification is incomplete; this is not a passed assessment."
+            reasons.append((0, "Incomplete package metadata"))
+            remediation.append("Resolve package detail collection before assessing deployment controls.")
 
         facts = [("Build Type", build_type), ("Deployment", deployed_to),
                 ("Entra Correlation", "Yes" if correlated else "No"),
@@ -733,22 +765,23 @@ def _identity_items(identities):
     for idx, i in enumerate(identities):
         name = i["display_name"]
         has_owner, has_sponsor = bool(i["owners"]), bool(i["sponsors"])
+        owners_known, sponsors_known = i.get("owners_known", True), i.get("sponsors_known", True)
         perm_type = ("app-only + delegated" if i["app_only_perms"] and i["delegated_perms"]
                     else "app-only only" if i["app_only_perms"]
                     else "delegated only" if i["delegated_perms"] else "no permissions")
 
         reasons = []
-        if not i["enabled"]:
+        if i["enabled"] is False:
             score = 5
             reasons.append((5, "Disabled — no active access risk"))
             status_label, status_c, result_line = "Disabled", _SEV["info"], "Disabled — no active risk."
             bucket = "Disabled"
         else:
             score = 0
-            if not has_owner:
+            if owners_known and not has_owner:
                 score += 35
                 reasons.append((35, "No owner assigned"))
-            if not has_sponsor:
+            if sponsors_known and not has_sponsor:
                 score += 20
                 reasons.append((20, "No sponsor assigned"))
             if i["app_only_perms"] > 0:
@@ -757,6 +790,8 @@ def _identity_items(identities):
             if not i.get("blueprint_id"):
                 score += 10
                 reasons.append((10, "Not linked to any blueprint"))
+            if not owners_known or not sponsors_known:
+                reasons.append((0, "Owner/sponsor collection is incomplete; absence is not established"))
             if not reasons:
                 reasons.append((0, "Owner/sponsor/blueprint assignment complete"))
             if has_owner and has_sponsor:
@@ -766,27 +801,35 @@ def _identity_items(identities):
             else:
                 status_label, status_c, result_line = "Failed", _SEV["high"], "Owner and sponsor not assigned."
             bucket = "Full" if (has_owner and has_sponsor) else ("Partial" if (has_owner or has_sponsor) else "None")
+            if not owners_known or not sponsors_known or i["enabled"] is None:
+                status_label, status_c = "Unknown", _SEV["info"]
+                result_line = "Identity coverage is incomplete; missing ownership or enabled state is not established."
+                bucket = "Unknown"
 
         app_only_names = _fmt_names(i.get("app_only_perm_names"))
         delegated_names = _fmt_names(i.get("delegated_perm_names"))
         what_checked = (
-            f"{name} is " + ("enabled. " if i["enabled"] else "disabled. ")
-            + f"Owner: {', '.join(i['owners']) if has_owner else 'none assigned'}. "
-            + f"Sponsor: {', '.join(i['sponsors']) if has_sponsor else 'none assigned'}. "
+            f"{name} is " + ("enabled. " if i["enabled"] is True else
+                             "disabled. " if i["enabled"] is False else "in an unknown enabled state. ")
+            + f"Owner: {', '.join(i['owners']) if has_owner else 'none assigned' if owners_known else 'unknown'}. "
+            + f"Sponsor: {', '.join(i['sponsors']) if has_sponsor else 'none assigned' if sponsors_known else 'unknown'}. "
             + f"Has {i['app_only_perms']} app-only ({app_only_names}) and {i['delegated_perms']} delegated "
               f"({delegated_names}) permissions ({perm_type}). "
             + (f"Blueprint: {i['blueprint_id']}." if i.get("blueprint_id") else "Not linked to any blueprint.")
             + f" Sources: {_sources_label(i.get('sources'))}."
         )
         remediation = []
-        if i["enabled"] and not has_owner:
+        if i["enabled"] and owners_known and not has_owner:
             remediation.append("Assign an owner to this agent identity — required for accountability.")
-        if i["enabled"] and not has_sponsor:
+        if i["enabled"] and sponsors_known and not has_sponsor:
             remediation.append("Assign a sponsor (especially if it has app-only permissions).")
+        if not owners_known or not sponsors_known:
+            remediation.append("Review connector coverage; optional sponsor access requires a separate permission review.")
         if not remediation:
             remediation.append("No further action needed.")
 
-        facts = [("Owner", ", ".join(i["owners"]) or "—"), ("Sponsor", ", ".join(i["sponsors"]) or "—"),
+        facts = [("Owner", ", ".join(i["owners"]) or ("—" if owners_known else "Unknown")),
+                ("Sponsor", ", ".join(i["sponsors"]) or ("—" if sponsors_known else "Unknown")),
                 ("App-only Permissions", app_only_names), ("Delegated Permissions", delegated_names),
                 ("Sources", _sources_label(i.get("sources"))),
                 ("Correlation Confidence",
@@ -839,7 +882,8 @@ def _shadow_items(apps, tenant_id=""):
 
         what_checked = (
             f"{name} was discovered by Defender for Cloud Apps over the last 30 days with traffic "
-            f"from {a['users']} users, {a['devices']} devices, and {a['ip_addresses']} distinct IP "
+            f"from {a['users']} users, {a['devices'] if a['devices'] is not None else 'unknown'} devices, "
+            f"and {a['ip_addresses']} distinct IP "
             f"addresses: {a.get('transactions', 0):,} transactions, {a['uploaded_bytes']:,} bytes "
             f"uploaded, {a.get('downloaded_bytes', 0):,} bytes downloaded. Sanction status: {state or 'unknown'}. "
             + (f"MDCA risk score: {a['risk_score']}/10. " if a.get("risk_score") is not None else "")
@@ -856,7 +900,7 @@ def _shadow_items(apps, tenant_id=""):
         else:
             remediation.append("No further action needed; continue monitoring traffic periodically.")
 
-        facts = [("Users (30d)", a["users"]), ("Devices (30d)", a["devices"]),
+        facts = [("Users (30d)", a["users"]), ("Devices (30d)", a["devices"] if a["devices"] is not None else "Unknown"),
                 ("IP Addresses (30d)", a["ip_addresses"])]
         it = _item(f"shadow-{idx}", name, score, reasons, status_label, status_c,
                   facts, result_line, what_checked, remediation, bucket=state or "Unknown")
@@ -868,6 +912,7 @@ def _shadow_items(apps, tenant_id=""):
             "users": a["users"], "devices": a["devices"], "ip_addresses": a["ip_addresses"],
             "transactions": a.get("transactions", 0),
             "uploaded_bytes": a["uploaded_bytes"], "downloaded_bytes": a.get("downloaded_bytes", 0),
+            "traffic_bytes": a.get("traffic_bytes"),
             "last_seen": a.get("last_seen"),
             "defender_url": defender_url,
         }
@@ -1017,7 +1062,9 @@ def _shadow_traffic_section(section_id, title, subtitle, items, empty_msg):
     for it in sorted(items, key=lambda x: x["traffic"]["uploaded_bytes"] + x["traffic"]["downloaded_bytes"],
                      reverse=True):
         t = it["traffic"]
-        total = t["uploaded_bytes"] + t["downloaded_bytes"]
+        total = t.get("traffic_bytes")
+        if total is None:
+            total = t["uploaded_bytes"] + t["downloaded_bytes"]
         detail_json = html.escape(json.dumps(it), quote=True)
         last_seen = (t["last_seen"] or "")[:10] or "—"
         rows.append(
@@ -1039,7 +1086,8 @@ def _shadow_traffic_section(section_id, title, subtitle, items, empty_msg):
             f'<td class="c-num" data-sort="{t["transactions"]}">{t["transactions"]:,}</td>'
             f'<td class="c-num" data-sort="{t["users"]}">{t["users"]}</td>'
             f'<td class="c-num" data-sort="{t["ip_addresses"]}">{t["ip_addresses"]}</td>'
-            f'<td class="c-num" data-sort="{t["devices"]}">{t["devices"]}</td>'
+            f'<td class="c-num" data-sort="{t["devices"] if t["devices"] is not None else -1}">'
+            f'{t["devices"] if t["devices"] is not None else "Unknown"}</td>'
             f'<td class="c-num" data-sort="{_esc(t["last_seen"] or "")}" style="white-space:nowrap">'
             f'{_esc(last_seen)}</td>'
             f"</tr>")
