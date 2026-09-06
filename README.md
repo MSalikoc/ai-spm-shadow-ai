@@ -172,11 +172,35 @@ see [Who can run this](#who-can-run-this). Existing grants are verified before a
 client secret is created. Missing optional roles are listed explicitly, not reported
 as successfully granted.
 
+#### Cloud Shell: three optional sources denied
+
+If you have only run `doctor` or `scan` in Cloud Shell and the heading says
+**delegated token**, you are using the Azure CLI identity, not a Function App's Managed
+Identity. Entra probes may succeed while **Agent 365**, **Defender for Cloud Apps** and
+**Purview Audit** show `DENIED` because their scopes are absent from that token.
+This alone is not evidence of a failed deployment or missing licenses. Being a Global
+Administrator does not add those scopes to the Azure CLI client.
+
+You can enable application authentication directly in Cloud Shell; **no Function App
+is required**.
+
+**1. Create the application registration from the repository directory:**
+
 ```bash
-./scripts/create_app_registration.sh
+bash ./scripts/create_app_registration.sh
 ```
 
-It prints three `export` lines. Paste them, then:
+This creates directory objects and grants permissions, so use the administrator role
+described above.
+
+**2. Run the three `export` lines printed by the script in the same Cloud Shell session.**
+
+They set `AISPM_TENANT_ID`, `AISPM_CLIENT_ID` and `AISPM_CLIENT_SECRET`. Copy the actual
+values printed by the script, not placeholder values. Keep the secret in a password
+manager; do not paste it into chat, issues, screenshots or source control. A new shell
+session needs these variables set again.
+
+**3. Run both commands with application authentication:**
 
 ```bash
 python3 aispm.py doctor --auth app
@@ -185,6 +209,14 @@ python3 aispm.py doctor --auth app
 ```bash
 python3 aispm.py scan --auth app --scope consented --open
 ```
+
+The preflight heading should now say **application token**. Setting the environment
+variables does **not** change the default authentication mode: plain
+`python3 aispm.py doctor` still uses Azure CLI. Keep **`--auth app`** on both doctor and
+scan commands. Allow time for new grants to propagate if access is initially denied.
+
+Successful grants still do not guarantee data: Agent 365 licensing, Defender Cloud
+Discovery ingestion and Purview auditing must also be available and configured.
 
 <details>
 <summary><b>PowerShell / Windows</b></summary>
@@ -558,6 +590,8 @@ doctor does not execute a complete collection.
 | `No module named 'azure'` | `python3 -m pip install -r requirements.txt` — and make sure it is the same interpreter you run `aispm.py` with |
 | `Azure CLI is not installed` | `brew install azure-cli`, or use `--auth app` |
 | `no such file or directory: T` | A `<PLACEHOLDER>` pasted literally — use the `export` lines the script prints |
+| Cloud Shell shows three optional sources denied with a delegated token | [Switch to application authentication](#cloud-shell-three-optional-sources-denied); run the printed exports in the same session and use `--auth app` on doctor and scan |
+| Credentials are set but doctor still reports a delegated token | Environment variables alone do not select application auth; run `python3 aispm.py doctor --auth app` |
 | Only Entra sources connect | [See above](#why-only-entra-connects) — go to option 2 |
 | Option 2 fails partway with `Insufficient privileges` | Your role cannot grant application permissions — see [Who can run this](#who-can-run-this) |
 | Windows PowerShell 5.1: `The string is missing the terminator` | Fixed in current `main` — `git pull` |
